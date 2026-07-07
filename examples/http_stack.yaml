@@ -1,0 +1,21 @@
+# examples/http_stack.yaml
+#
+# 单个 HTTP/1.1 GET 请求包(stack 模型,当前最小链路即可出包)。
+# 完整的 HTTP 会话(握手 + seq/ack + 响应 + 挥手)见 http_get.yaml,属 flows 场景,尚未实现。
+link_type: ethernet
+seed: 42
+packets:
+  - name: http-get
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, flags: [PSH, ACK], seq: 1001, ack: 5001 }
+      - http_request:
+          method: GET
+          target: /index.html
+          version: HTTP/1.1
+          headers:
+            Host: example.com
+            User-Agent: pMaker/0.1
+            Accept: "*/*"
+            Connection: keep-alive

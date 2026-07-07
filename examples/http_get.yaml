@@ -1,0 +1,54 @@
+# examples/http_get.yaml
+#
+# 一次完整的 HTTP/1.1 GET 请求 + 200 响应,跑在真实 TCP 会话之上。
+# 采用 flow 场景(而非逐包 stack):握手、seq/ack、对端 ACK、挥手都由 flow 层自动推导——
+# 这对 NDR/IDS 的会话重组测试很关键;手工填 seq/ack 依赖 payload 字节数,既繁琐又易错。
+#
+# 注意:builder 尚未实现(`pmaker gen` 目前返回占位),本文件先作为 schema 设计样例;
+# 最终字段以 internal/scenario 的类型定义为准。
+
+link_type: ethernet
+seed: 42
+
+flows:
+  - name: http-get-200
+
+    # 端点:以 client -> server 为正向;server.port 即监听端口
+    client: { mac: "00:11:22:33:44:55", ip: "10.0.0.10", port: 49152 }
+    server: { mac: "66:77:88:99:aa:bb", ip: "10.0.0.80", port: 80 }
+
+    tcp:
+      client_isn: 1000        # 可选;缺省由 seed 派生
+      server_isn: 5000
+    handshake: true           # 自动生成 SYN / SYN-ACK / ACK
+    teardown: fin             # 会话收尾:fin(四次挥手)/ rst / none
+
+    # 应用层消息按顺序发送,flow 层自动附带正确的 seq/ack 与对端 ACK
+    messages:
+      - from: client
+        http_request:
+          method: GET
+          target: /index.html
+          version: HTTP/1.1
+          headers:
+            Host: example.com
+            User-Agent: pMaker/0.1
+            Accept: "*/*"
+            Connection: keep-alive
+
+      - from: server
+        http_response:
+          version: HTTP/1.1
+          status: 200
+          reason: OK
+          headers:
+            Server: nginx/1.24.0
+            Content-Type: text/html; charset=utf-8
+            Content-Length: auto    # auto = 由 body 长度自动计算
+          body: |
+            <html><body>Hello from pMaker</body></html>
+
+# ── 变体提示:改造成 IDS 检测/规避用例 ──
+# - 攻击特征:target: "/index.php?id=1'%20OR%20'1'='1"    # SQL 注入
+# - 恶意 UA :User-Agent: "() { :; }; /bin/echo vuln"      # Shellshock
+# - 规避重组:把 http_request 拆成多个乱序/重叠的 tcp 分片(需 flow 层支持分片选项)

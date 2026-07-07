@@ -30,3 +30,10 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Build output
+/bin/
+
+# Generated pcap (keep golden fixtures under testdata/)
+*.pcap
+!**/testdata/*.pcap
