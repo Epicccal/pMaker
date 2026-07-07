@@ -240,7 +240,31 @@ func buildTCP(f *scenario.TCPFields) (*layers.TCP, error) {
 	if f.Checksum != nil {
 		slog.Warn("最小版忽略 tcp checksum 覆盖", "sport", f.SPort, "dport", f.DPort)
 	}
+	if f.MSS != nil {
+		t.Options = append(t.Options, layers.TCPOption{
+			OptionType:   layers.TCPOptionKindMSS,
+			OptionLength: 4,
+			OptionData:   []byte{byte(*f.MSS >> 8), byte(*f.MSS)},
+		})
+	}
 	return t, nil
+}
+
+// PayloadBytes 返回一个 payload 生产层序列化后的字节。
+// 供 flow 展开器取长度并按 MSS 切段(与 buildPacket 内的处理复用同一套序列化)。
+func PayloadBytes(l scenario.Layer) ([]byte, error) {
+	switch f := l.Fields.(type) {
+	case *scenario.HTTPReqFields:
+		return serializeHTTPReq(f), nil
+	case *scenario.HTTPRespFields:
+		return serializeHTTPResp(f), nil
+	case *scenario.PayloadFields:
+		return payloadBytes(f)
+	case scenario.RawHex:
+		return hex.DecodeString(strings.ReplaceAll(string(f), " ", ""))
+	default:
+		return nil, fmt.Errorf("%q 不是 payload 生产层", l.Type)
+	}
 }
 
 func payloadBytes(f *scenario.PayloadFields) ([]byte, error) {

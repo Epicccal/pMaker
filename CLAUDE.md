@@ -109,6 +109,82 @@ out.pcap
 
 6. **长度 / MTU / 分片:** 隧道叠加会增加头部开销。用于规避的分片可能发生在**外层或内层**,两处都要能构造。
 
+## flow 场景设计(待实现)
+
+`flows` 不是一种新包结构,而是一个**有状态展开器**:维护 TCP 连接状态,把一段应用层脚本
+展开成一串 **stack 模型的包**,再喂给现有 builder/writer。握手、四次挥手、多轮请求全部复用
+同一套底座,展开器本身是唯一的新逻辑。
+
+### TCP 状态不变式(务必遵守)
+
+每方向各维护一个 `seq`,`ack` 由推导得到:
+
+- `seq` 前进量 = `len(payload) + SYN(1) + FIN(1)`
+- **纯 ACK 不消耗 seq**(带当前 seq,但不前进)
+- 发包时 `ack` = **对端当前 seq**
+
+握手(SYN → SYN,ACK → ACK)与四次挥手(FIN,ACK → ACK → FIN,ACK → ACK)据此推导。
+`close` 可选 `fin`(四次)/ `rst`(单包)/ `none`;`open` 可选 `handshake` / `none`(已建连)。
+
+### 多轮请求 = 更长的脚本(无需特殊逻辑)
+
+状态在整个脚本里**持续存在**,第 N 轮的 seq/ack 从上一轮继续累加。HTTP keep-alive / 流水线
+不是特例,只是 `messages` 列表更长。展开器负责在前插握手、后插挥手、按 `ack_policy` 插对端 ACK。
+
+### schema(canonical;`examples/http_get.yaml` 待与此对齐)
+
+```yaml
+flows:
+  - name: http-keepalive
+    client: { mac: "...", ip: "10.0.0.10", port: 49152 }
+    server: { mac: "...", ip: "10.0.0.80", port: 80 }
+    tcp:    { client_isn: 1000, server_isn: 5000, mss: 1460 }
+    timing: { rtt_ms: 10 }        # 决定包间时间戳(确定性)
+    open:   handshake             # handshake | none
+    close:  fin                   # fin | rst | none
+    ack_policy: per-message       # per-message | per-segment | none
+    messages:                     # 有序、方向性的应用层消息
+      - { from: client, http_request:  { method: GET, target: /a } }
+      - { from: server, http_response: { status: 200, body: "..." } }
+      - { from: client, http_request:  { method: GET, target: /b } }   # 第 2 轮
+      - { from: server, http_response: { status: 200, body: "..." } }
+```
+
+`from` 指方向,消息体是任意 **payload 生产者**(`http_request` / `http_response` / `raw_hex` / `payload`)。
+
+### 分段与规避(NDR/IDS 测试重点)
+
+每条消息可挂 `segment:` 策略,把一条应用消息切成多个 TCP 段(seq 按字节偏移铺开):
+
+```yaml
+segment: { mss: 8, order: shuffled, overlap: 4, retransmit: [1] }
+#           小段    乱序(seed 派生)  重叠段     重传第 1 段
+```
+
+乱序 / 重叠 / 重传只是"发包顺序与 seq 的组合",状态机本身不变。检测设备的**重组能力**是主战场。
+
+### 落点(一次小重构,新代码集中在 flow)
+
+引入中间态 `PlannedPacket{ Stack []Layer; Time time.Time }`,让 packets 与 flows 汇流到同一处:
+
+```
+scenario(packets 和/或 flows)
+  packets → 直接映射;  flows → flow.Expand(有状态展开)   ← 唯一新逻辑
+      ▼  []PlannedPacket(带显式时间戳)
+  builder.Build:逐 stack 序列化(现有逻辑不动)→ writer
+```
+
+- 新增 `internal/flow`:`Expand(FlowSpec) ([]PlannedPacket, error)` —— 连接状态机 + 分段 + 定时。
+- `builder` 改为消费 `PlannedPacket`;**per-stack 序列化、checksum 伪首部、next-proto 串接全部复用**。
+- 多个 flow 各自展开后按时间戳**归并排序**再写盘。
+
+### 约束
+
+- **确定性**:时间戳由 `base + 累计 rtt` 派生,seed 控制乱序/抖动,不用 `time.Now()`(保持 golden 可比对)。
+- **封装组合**:flow 加 `encap:` 外层栈,展开时 **prepend 到每个包的 stack**,复用已有封装能力(可把整条会话套进 QinQ/GRE)。
+- **UDP**:退化情形——无握手/挥手、无 seq/ack 的一串数据报(DNS、QUIC 探测)走同一抽象。
+- **测试**:每个 flow 出 golden pcap;回读用 gopacket `reassembly` 重组 TCP 流,断言应用层字节与脚本一致、无空洞、握手/挥手标志序列正确。
+
 ## 领域关键约束(最容易踩坑,务必遵守)
 
 1. **畸形包必须能绕过自动修正。** 这是 IDS 测试工具的立身之本。
