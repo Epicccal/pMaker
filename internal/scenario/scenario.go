@@ -11,10 +11,50 @@ import (
 
 // Scenario 是一个场景文件的顶层结构。
 type Scenario struct {
-	LinkType string      `yaml:"link_type"`
-	Seed     int64       `yaml:"seed"`
-	Packets  []Packet    `yaml:"packets"`
-	Flows    []yaml.Node `yaml:"flows"` // 仅用于探测:flows 场景当前尚未实现
+	LinkType string     `yaml:"link_type"`
+	Seed     int64      `yaml:"seed"`
+	Packets  []Packet   `yaml:"packets"`
+	Flows    []FlowSpec `yaml:"flows"`
+}
+
+// FlowSpec 是一条有状态会话;展开器把它降解成一串 Packet(见 internal/flow)。
+type FlowSpec struct {
+	Name     string    `yaml:"name"`
+	Client   Endpoint  `yaml:"client"`
+	Server   Endpoint  `yaml:"server"`
+	TCP      FlowTCP   `yaml:"tcp"`
+	Open     string    `yaml:"open"`  // handshake(默认)| none
+	Close    string    `yaml:"close"` // fin(默认)| none
+	Messages []Message `yaml:"messages"`
+}
+
+// Endpoint 是会话一端的地址。
+type Endpoint struct {
+	MAC  string `yaml:"mac"`
+	IP   string `yaml:"ip"`
+	Port uint16 `yaml:"port"`
+}
+
+// FlowTCP 是会话的 TCP 参数。MSS 为通告值(写进 SYN option),与分段大小无关。
+type FlowTCP struct {
+	ClientISN uint32  `yaml:"client_isn"`
+	ServerISN uint32  `yaml:"server_isn"`
+	MSS       *uint16 `yaml:"mss"`
+}
+
+// Message 是一条方向性的应用层消息;消息体恰好一个 payload 生产者。
+type Message struct {
+	From         string          `yaml:"from"` // client | server
+	HTTPRequest  *HTTPReqFields  `yaml:"http_request"`
+	HTTPResponse *HTTPRespFields `yaml:"http_response"`
+	Payload      *PayloadFields  `yaml:"payload"`
+	RawHex       string          `yaml:"raw_hex"`
+	Segment      *Segment        `yaml:"segment"`
+}
+
+// Segment 是消息的分段策略。MSS 为实际切段大小(0=不切,整条一段)。
+type Segment struct {
+	MSS int `yaml:"mss"`
 }
 
 // Packet 是一个数据包:name 可选 + 由外到内的有序 layer 栈。
@@ -80,6 +120,7 @@ type (
 		Flags    []string `yaml:"flags"`
 		Seq      *uint32  `yaml:"seq"`
 		Ack      *uint32  `yaml:"ack"`
+		MSS      *uint16  `yaml:"mss"`      // SYN 通告 option(展开器仅在 SYN 上设)
 		Checksum *Hex     `yaml:"checksum"` // 解析但忽略
 	}
 	UDPFields struct {
@@ -175,9 +216,6 @@ func Load(path string) (*Scenario, error) {
 	if err := yaml.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("解析 %s: %w", path, err)
 	}
-	if len(s.Flows) > 0 {
-		return nil, fmt.Errorf("检测到 flows 场景(有状态会话),当前仅支持 packets/stack 模型;flows 尚未实现")
-	}
 	if s.LinkType == "" {
 		s.LinkType = "ethernet"
 	}
@@ -186,8 +224,8 @@ func Load(path string) (*Scenario, error) {
 
 // Validate 做语义校验:非空、必填字段存在。
 func Validate(s *Scenario) error {
-	if len(s.Packets) == 0 {
-		return fmt.Errorf("没有 packets 可生成")
+	if len(s.Packets) == 0 && len(s.Flows) == 0 {
+		return fmt.Errorf("没有 packets 或 flows 可生成")
 	}
 	for i, p := range s.Packets {
 		if len(p.Stack) == 0 {
@@ -197,6 +235,40 @@ func Validate(s *Scenario) error {
 			if err := validateLayer(l); err != nil {
 				return fmt.Errorf("packet[%d].%s: %w", i, l.Type, err)
 			}
+		}
+	}
+	for i, f := range s.Flows {
+		if err := validateFlow(f); err != nil {
+			return fmt.Errorf("flow[%d](%s): %w", i, f.Name, err)
+		}
+	}
+	return nil
+}
+
+func validateFlow(f FlowSpec) error {
+	for name, e := range map[string]Endpoint{"client": f.Client, "server": f.Server} {
+		if e.IP == "" || e.Port == 0 {
+			return fmt.Errorf("%s 需要 ip 与 port", name)
+		}
+	}
+	if f.Open != "" && f.Open != "handshake" && f.Open != "none" {
+		return fmt.Errorf("open 只能是 handshake/none,得到 %q", f.Open)
+	}
+	if f.Close != "" && f.Close != "fin" && f.Close != "none" {
+		return fmt.Errorf("close 只能是 fin/none,得到 %q", f.Close)
+	}
+	for j, m := range f.Messages {
+		if m.From != "client" && m.From != "server" {
+			return fmt.Errorf("messages[%d].from 只能是 client/server,得到 %q", j, m.From)
+		}
+		n := 0
+		for _, has := range []bool{m.HTTPRequest != nil, m.HTTPResponse != nil, m.Payload != nil, m.RawHex != ""} {
+			if has {
+				n++
+			}
+		}
+		if n != 1 {
+			return fmt.Errorf("messages[%d] 需恰好一个 payload 生产者(http_request/http_response/payload/raw_hex),得到 %d 个", j, n)
 		}
 	}
 	return nil

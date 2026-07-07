@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/Epicccal/pMaker/internal/builder"
+	"github.com/Epicccal/pMaker/internal/flow"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
@@ -68,6 +69,15 @@ func cmdGen(args []string) int {
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		return 1
 	}
+	// flows 展开成 stack 包,拼到 packets 后走同一条构建链路。
+	for _, f := range s.Flows {
+		fp, err := flow.Expand(f)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "gen:", err)
+			return 1
+		}
+		s.Packets = append(s.Packets, fp...)
+	}
 	pkts, err := builder.Build(s)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gen:", err)
@@ -101,6 +111,6 @@ func cmdValidate(args []string) int {
 		fmt.Fprintln(os.Stderr, "validate:", err)
 		return 1
 	}
-	fmt.Printf("OK: %s,%d 个包\n", *in, len(s.Packets))
+	fmt.Printf("OK: %s,%d 个包,%d 条 flow\n", *in, len(s.Packets), len(s.Flows))
 	return 0
 }
