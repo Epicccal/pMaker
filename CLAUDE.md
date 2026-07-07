@@ -21,7 +21,7 @@
 
 | 用途 | 选型 | 说明 |
 |------|------|------|
-| 语言 | **Go 1.21+** | `go.mod` 里 `go 1.21`;优先用现代标准库(`log/slog`、`errors.Join`、`slices`/`maps`) |
+| 语言 | **Go 1.25+** | `go.mod` 里 `go 1.25`(gopacket v1.7 要求);优先用现代标准库(`log/slog`、`errors.Join`、`slices`/`maps`) |
 | 构包/分层 | **`github.com/gopacket/gopacket`** | 社区维护 fork(Google 原版已归档,**不要**用 `google/gopacket`) |
 | 写 pcap | **`gopacket/pcapgo`** | **纯 Go,无需 libpcap,无 CGO**;跨平台静态编译 |
 | 配置解析 | **`gopkg.in/yaml.v3`** | JSON 用标准库 `encoding/json` |
@@ -46,6 +46,16 @@ testdata/            # golden pcap(逐字节比对的测试基准)
 ```
 
 **不要过早创建 `pkg/`。** 目前是 CLI 工具、无外部导入方;只有出现真实的外部消费者时,才把稳定接口提升到 `pkg/`(YAGNI)。
+
+## 当前实现状态
+
+最小出包链路已打通(**仅 `packets`/`stack` 模型**):`pmaker gen -f <yaml> -o <pcap>` 可真正出包。
+
+- **已实现**:层 eth / vlan(Dot1Q)/ ipv4 / gre / tcp / udp / payload / raw_hex / http_request / http_response;
+  next-proto 自动串接、TCP/UDP checksum 伪首部、确定性时间戳、golden + gopacket 回读测试。
+- **未实现 / 简化**:`flows` 有状态会话(握手 / seq-ack / 完整 HTTP 会话)未做,`http_get.yaml` 暂不出包;
+  畸形开关 `fix_lengths` / `checksum` **解析但忽略**(build 时 `slog.Warn`),真正的畸形 / 原始字节兜底待做;
+  HTTP 头按 key 排序输出(未保留原序)。
 
 ## 核心数据流
 
