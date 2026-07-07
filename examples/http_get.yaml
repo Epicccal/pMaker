@@ -11,7 +11,7 @@ flows:
     server: { mac: "66:77:88:99:aa:bb", ip: "10.0.0.80", port: 80 }
     tcp:   { client_isn: 1000, server_isn: 5000, mss: 1460 }  # mss 为通告值
     open:  handshake     # handshake | none
-    close: fin           # fin | none
+    close: fin           # fin | rst | none
     messages:            # 有序、方向性的应用层消息
       - from: client
         http_request:

@@ -64,14 +64,17 @@ func Expand(f scenario.FlowSpec) ([]scenario.Packet, error) {
 		out = append(out, c.emit(from.peer(), []string{"ACK"}, nil))
 	}
 
-	// 四次挥手(client 发起)
-	if f.Close == "" || f.Close == "fin" {
+	// 关闭:默认四次挥手;rst 表示对端(server)单包中断连接。
+	switch f.Close {
+	case "", "fin":
 		out = append(out,
 			c.emit(sideClient, []string{"FIN", "ACK"}, nil),
 			c.emit(sideServer, []string{"ACK"}, nil),
 			c.emit(sideServer, []string{"FIN", "ACK"}, nil),
 			c.emit(sideClient, []string{"ACK"}, nil),
 		)
+	case "rst":
+		out = append(out, c.emit(sideServer, []string{"RST", "ACK"}, nil))
 	}
 	return out, nil
 }
