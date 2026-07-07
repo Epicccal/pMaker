@@ -1,0 +1,212 @@
+# CLAUDE.md
+
+本文件为 Claude Code 在本仓库工作时的指引。**开工前必读。**
+
+## 项目概述
+
+**pMaker** —— 一个用 Go 编写的 **Pcap 构造工具**,通过声明式配置批量生成各类协议的数据包,
+产出 `.pcap` / `.pcapng` 文件,用于对 **NDR / IDS 等流量监测设备**做检测能力测试。
+
+- **形态**:CLI 工具优先(`pmaker gen -f scenario.yaml -o out.pcap`)。当前不对外暴露库 API,一切实现放在 `internal/`。
+- **场景定义**:声明式 **YAML/JSON** 配置文件驱动。非开发者也应能编写/修改测试用例。
+- **底层构包**:以 `gopacket` 序列化规范包为主,保留**原始字节兜底通道**用于构造畸形包/规避流量。
+
+### 范围与安全边界(重要)
+
+- 本工具**只离线生成 pcap 文件**,**默认不向网络发送任何数据包**。
+- 用途是**授权环境下**对检测设备做能力验证(把生成的 pcap 用 tcpreplay 等回放)。
+- 若将来新增实时注入(raw socket / pcap inject),必须放在**独立的、默认关闭的构建标签**后,并显式提示权限要求 —— 不要顺手把"离线构造器"变成"在线攻击流量发生器"。
+
+## 技术栈与关键依赖
+
+| 用途 | 选型 | 说明 |
+|------|------|------|
+| 语言 | **Go 1.21+** | `go.mod` 里 `go 1.21`;优先用现代标准库(`log/slog`、`errors.Join`、`slices`/`maps`) |
+| 构包/分层 | **`github.com/gopacket/gopacket`** | 社区维护 fork(Google 原版已归档,**不要**用 `google/gopacket`) |
+| 写 pcap | **`gopacket/pcapgo`** | **纯 Go,无需 libpcap,无 CGO**;跨平台静态编译 |
+| 配置解析 | **`gopkg.in/yaml.v3`** | JSON 用标准库 `encoding/json` |
+| CLI | **标准库 `flag`** + 子命令分发 | 子命令树变深再考虑引入 `cobra`,不要一上来就加依赖 |
+
+**构建始终 `CGO_ENABLED=0`** —— 因为写 pcap 走纯 Go 的 pcapgo,无 libpcap 依赖,保证到处能静态编译。
+
+## 目标目录结构
+
+> 当前为新仓库,以下为**目标架构**;新增代码请遵循此布局。
+
+```
+cmd/pmaker/          # main 包:CLI 入口、flag 解析、子命令分发,尽量薄
+internal/
+  scenario/          # YAML/JSON schema 定义、解析、校验(带字段/行号级错误信息)
+  builder/           # scenario 模型 -> gopacket layers -> 字节;序列化选项 & 原始字节兜底
+  flow/              # 有状态流:TCP 握手、seq/ack 递推、时间戳编排
+  proto/             # 各协议/封装层构造助手(eth/vlan/qinq/gre/mpls/vxlan/ip/tcp/udp/dns...),按需拆分
+  writer/            # pcap/pcapng 输出、LinkType、时间戳
+examples/            # 可直接运行的示例场景 YAML
+testdata/            # golden pcap(逐字节比对的测试基准)
+```
+
+**不要过早创建 `pkg/`。** 目前是 CLI 工具、无外部导入方;只有出现真实的外部消费者时,才把稳定接口提升到 `pkg/`(YAGNI)。
+
+## 核心数据流
+
+```
+scenario.yaml
+   │  scenario 层:解析 + 校验(尽早失败,报错带字段路径)
+   ▼
+[]Packet 场景模型(每个 packet = 有序 layer 栈)
+   │  builder 层:有序层栈(外→内)-> gopacket layers;自动串接 next-proto,可原始字节兜底
+   │  flow 层:补全握手 / seq/ack / 时间戳
+   ▼
+gopacket.SerializeBuffer  ──(逐包)──▶  writer 层:pcapgo.Writer
+   ▼
+out.pcap
+```
+
+## 封装与隧道:任意层级栈(核心设计)
+
+本工具必须支持**任意深度的封装嵌套**,而不是固定的 L2/L3/L4 三段式。典型场景:
+
+- **VLAN(802.1Q)**:Ethernet → Dot1Q → IP
+- **QinQ(802.1ad)**:Ethernet → Dot1Q(S-TAG)→ Dot1Q(C-TAG)→ IP —— **双层甚至多层 VLAN**
+- **GRE 隧道**:IP → GRE →(内层完整报文:IP → TCP …)—— **隧道套报文,可递归**
+- 未来同一套模型可扩展:MPLS、VXLAN、GTP-U、IP-in-IP、L2TP、Geneve …
+
+因此有以下强约束:
+
+1. **数据模型是"有序层栈",不是固定字段。** scenario 里每个 packet 是一个**从外到内的有序 layer 列表**,
+   允许**同类型重复**(QinQ 两层 VLAN)和**递归嵌套**(GRE 内层再放一整个报文)。
+   **禁止**把 `eth/ipv4/tcp` 写成固定槽位 —— 那样根本表达不了 QinQ/隧道。
+
+2. **序列化顺序:最外层在前。** `gopacket.SerializeLayers(buf, opts, 最外层, …, 最内层, payload)`,
+   由外到内依次传入,gopacket 内部逐层前置。builder 按层栈顺序喂进去即可。
+
+3. **next-protocol / EtherType 串接是最易错的一环。** 每个封装层必须正确声明"下一层是什么",
+   否则被测设备会在某一层解析断链:
+   - `Ethernet.EthernetType`:后接 VLAN → `0x8100`;QinQ 外层 S-TAG → `0x88a8`(或按被测设备预期设 `0x8100`)
+   - `Dot1Q.Type`:后接内层 VLAN → `0x8100`;后接 IPv4 → `0x0800`
+   - `IPv4/IPv6.Protocol`:后接 GRE → `47`
+   - `GRE.Protocol`:内层 IPv4 → `0x0800`;内层 Ethernet(TEB)→ `0x6558`
+
+   builder 应能**按层栈自动推导**这些字段(默认行为),同时允许**逐层显式覆盖**
+   —— 覆盖能力正是测试"设备对畸形/非标封装如何处理"的关键。
+
+4. **QinQ 的 TPID 必须可配置。** 标准 S-TAG 是 `0x88a8`,但很多设备实现用 `0x8100` 做双层。
+   测试点往往就是"设备认不认非标 TPID",所以 `tpid`/`ethertype` 要能逐层显式指定,**不能写死**。
+
+5. **多层 IP 时,每个传输层的 checksum 绑定到"就近那层 IP"。** 内层 TCP 的
+   `SetNetworkLayerForChecksum` 要指向**内层 IP**,不是外层。builder 按嵌套关系正确配对,
+   否则内层 checksum 全错(除非该用例故意要错)。
+
+6. **长度 / MTU / 分片:** 隧道叠加会增加头部开销。用于规避的分片可能发生在**外层或内层**,两处都要能构造。
+
+## 领域关键约束(最容易踩坑,务必遵守)
+
+1. **畸形包必须能绕过自动修正。** 这是 IDS 测试工具的立身之本。
+   - 规范包:`SerializeOptions{FixLengths: true, ComputeChecksums: true}`。
+   - 畸形/规避包:允许**逐字段关闭** `FixLengths` / `ComputeChecksums`,并允许写入非法的 length、错误 checksum、重叠分片等。
+   - 提供**原始字节注入**(如配置里的 `raw_hex` / `payload_hex`):当 gopacket 无法表达某种畸形时,直接落原始字节。**绝不能**因为"修正了 checksum/length"而让本应畸形的测试包变成合规包 —— 那等于悄悄废掉了这条用例。
+
+2. **TCP/UDP checksum 依赖 IP 伪首部。** 序列化前必须
+   `transportLayer.SetNetworkLayerForChecksum(ipLayer)`,否则 checksum 恒错。除非该用例**故意**要错误 checksum。
+
+3. **输出必须确定性可复现。** 同一份 scenario + 同一 seed → **逐字节相同**的 pcap。
+   - 不要用 `time.Now()`:时间戳从配置读取,或从 seed 派生。
+   - 所有"随机"(随机端口、IP ID、payload 填充)都走**可配置 seed** 的 `math/rand`,禁用全局 `rand`。
+   - 保证 map 遍历等顺序稳定。
+   - 这是 golden-file 测试和"测试用例可归档复现"的前提。
+
+4. **LinkType 要选对。** 含以太头 → `layers.LinkTypeEthernet`;仅 L3 → `LinkTypeRaw`/`LinkTypeIPv4`。写反了监测设备解析会全错。
+
+5. **网络字节序为大端。** gopacket 自动处理;走原始字节通道时自己保证大端。
+
+## 常用命令
+
+```bash
+# 构建(静态、无 CGO)
+CGO_ENABLED=0 go build -o bin/pmaker ./cmd/pmaker
+
+# 运行:从场景生成 pcap
+./bin/pmaker gen -f examples/tcp_handshake.yaml -o out.pcap
+
+# 校验场景文件(不出包,只查 schema)
+./bin/pmaker validate -f examples/tcp_handshake.yaml
+
+# 测试 / 覆盖率
+go test ./...
+go test -race ./...
+go test -cover ./...
+
+# 重新生成 golden 基准(约定用 -update)
+go test ./internal/builder -run TestGolden -update
+
+# 质量门禁(提交前必跑)
+gofmt -l .        # 应无输出
+go vet ./...
+golangci-lint run # 若已安装
+```
+
+## 编码规范
+
+- **格式化**:`gofmt` / `goimports`;命名遵循 Go 惯例(导出加注释、缩写全大写如 `TCP`/`IP`/`ID`)。
+- **错误处理**:一律 `fmt.Errorf("...: %w", err)` 包装并上抛;库代码路径**不 panic**。CLI 在 `cmd/` 层统一打到 stderr 并以非零码退出。
+- **配置校验尽早、报错够具体**:指出是哪个包、哪个字段、期望什么。用户大多不是开发者,错误信息就是他们的调试器。
+- **日志**:用 `log/slog`;正常输出走 stdout,诊断/进度走 stderr。
+- **测试**:表驱动;新协议/新字段都要有对应的 golden pcap;关键路径跑 `-race`。
+- **依赖克制**:标准库能做的不引第三方;新增依赖前先问"是否真需要"(参见构包/CLI 选型说明)。
+
+## 配置文件约定
+
+- YAML 为主,同一 schema 也支持 JSON(便于程序化生成)。
+- 顶层是**有序的 packet 列表**或 **flow 场景**;字段名 `snake_case`。
+- **每个 packet 是一个 `stack`:从外到内的有序 layer 列表**,每个元素是单键 map(`- vlan: {…}`),
+  **允许同类型重复**(QinQ 两层 VLAN)和递归嵌套(GRE 内层再放报文)。
+- 封装层的 next-protocol / ethertype **默认自动推导**,可逐层用 `type` / `tpid` / `ethertype` 显式覆盖(制造断链等畸形)。
+- 缺省字段走合理默认(自动 seq、自动 checksum、自动串接)。
+- 畸形用例通过**显式开关**表达意图:`fix_lengths: false` / `checksum: 0xdead` / 覆盖 `type` 断链 / `raw_hex: "…"`。
+
+示意(最终 schema 以 `internal/scenario` 的类型定义为准):
+
+```yaml
+# examples/qinq_gre.yaml
+link_type: ethernet
+seed: 42
+packets:
+  # ① QinQ:双层 VLAN 承载普通 TCP
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb", ethertype: 0x88a8 }  # S-TAG TPID
+      - vlan: { vid: 100, tpid: 0x8100 }   # 外层 S-TAG,下一层仍是 VLAN
+      - vlan: { vid: 200 }                 # 内层 C-TAG,next 自动推导为 IPv4
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - tcp:  { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }
+
+  # ② GRE 隧道:外层 IP → GRE → 内层完整报文
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "1.1.1.1", dst: "2.2.2.2" }          # 外层,protocol 自动 = GRE(47)
+      - gre:  {}                                           # protocol 自动 = 内层 ethertype
+      - ipv4: { src: "192.168.1.1", dst: "192.168.1.2" }   # 内层 IP
+      - tcp:  { sport: 1234, dport: 443, flags: [SYN] }
+
+  # ③ 畸形用例:故意断链 + 错误 checksum + 原始字节
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb", ethertype: 0x8100 }
+      - vlan: { vid: 100, type: 0xffff }   # 显式覆盖 next-proto,制造解析断链
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", checksum: 0xdead, fix_lengths: false }
+      - raw_hex: "deadbeef"                # gopacket 无法表达时直接落原始字节
+```
+
+## 测试策略
+
+1. **Golden pcap 比对**:`testdata/*.pcap` 逐字节比对(依赖确定性输出);用 `-update` 重生。
+2. **回读校验**:生成的 pcap 能被 gopacket 正确解析(规范包场景)。
+3. **可选集成**:若环境有 `tshark`,可用 `tshark -r out.pcap` 交叉验证协议解析(集成测试,非必需依赖)。
+
+## 新增一个协议的步骤(清单)
+
+1. `internal/proto/` 加该协议的构造助手(优先复用 gopacket 现成 layer)。
+2. `internal/scenario/` 加该协议的 schema 结构体 + 校验规则。
+3. `internal/builder/` 接线:scenario 字段 → layer;暴露畸形开关(关闭 fix/checksum、raw 注入)。
+   **若是封装层**,还须实现 next-proto/ethertype 的自动推导,并允许逐层显式覆盖。
+4. `examples/` 加一个规范用例 + 一个畸形用例;**封装/隧道层再加一个嵌套用例(如 QinQ / GRE 套接)**。
+5. 加 golden 测试并生成基准;`go test -race ./...` 通过。
+6. README/示例文档同步。
