@@ -24,7 +24,7 @@ type FlowSpec struct {
 	Server   Endpoint  `yaml:"server"`
 	TCP      FlowTCP   `yaml:"tcp"`
 	Open     string    `yaml:"open"`  // handshake(默认)| none
-	Close    string    `yaml:"close"` // fin(默认)| none
+	Close    string    `yaml:"close"` // fin(默认)| rst | none
 	Messages []Message `yaml:"messages"`
 }
 
@@ -254,8 +254,8 @@ func validateFlow(f FlowSpec) error {
 	if f.Open != "" && f.Open != "handshake" && f.Open != "none" {
 		return fmt.Errorf("open 只能是 handshake/none,得到 %q", f.Open)
 	}
-	if f.Close != "" && f.Close != "fin" && f.Close != "none" {
-		return fmt.Errorf("close 只能是 fin/none,得到 %q", f.Close)
+	if f.Close != "" && f.Close != "fin" && f.Close != "rst" && f.Close != "none" {
+		return fmt.Errorf("close 只能是 fin/rst/none,得到 %q", f.Close)
 	}
 	for j, m := range f.Messages {
 		if m.From != "client" && m.From != "server" {

@@ -177,6 +177,37 @@ func TestFlowSeqSegmentation(t *testing.T) {
 	}
 }
 
+// TestFlowCloseRST 校验 close:rst 由 server 单包中断,不再生成 FIN 挥手。
+func TestFlowCloseRST(t *testing.T) {
+	f := scenario.FlowSpec{
+		Client: scenario.Endpoint{MAC: "00:00:00:00:00:01", IP: "10.0.0.1", Port: 1111},
+		Server: scenario.Endpoint{MAC: "00:00:00:00:00:02", IP: "10.0.0.2", Port: 80},
+		TCP:    scenario.FlowTCP{ClientISN: 1000, ServerISN: 5000},
+		Open:   "handshake",
+		Close:  "rst",
+		Messages: []scenario.Message{{
+			From:   "client",
+			RawHex: "abcd",
+		}},
+	}
+	pkts, err := flow.Expand(f)
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	if len(pkts) != 6 { // 握手3 + 数据1 + ACK1 + RST1
+		t.Fatalf("期望 6 个包,得到 %d", len(pkts))
+	}
+	last := tcpOf(pkts[len(pkts)-1])
+	if last == nil || !contains(last.Flags, "RST") || !contains(last.Flags, "ACK") {
+		t.Fatalf("最后一个包应为 RST,ACK,得到 %#v", last)
+	}
+	for i, p := range pkts {
+		if tc := tcpOf(p); tc != nil && contains(tc.Flags, "FIN") {
+			t.Fatalf("close:rst 不应生成 FIN,但包%d 含 FIN", i)
+		}
+	}
+}
+
 func mssOption(tc *layers.TCP) uint16 {
 	for _, o := range tc.Options {
 		if o.OptionType == layers.TCPOptionKindMSS && len(o.OptionData) == 2 {

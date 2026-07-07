@@ -49,11 +49,13 @@ testdata/            # golden pcap(逐字节比对的测试基准)
 
 ## 当前实现状态
 
-最小出包链路已打通(**仅 `packets`/`stack` 模型**):`pmaker gen -f <yaml> -o <pcap>` 可真正出包。
+最小出包链路已打通:`pmaker gen -f <yaml> -o <pcap>` 可真正出包。
 
-- **已实现**:层 eth / vlan(Dot1Q)/ ipv4 / gre / tcp / udp / payload / raw_hex / http_request / http_response;
+- **已实现 stack 模型**:层 eth / vlan(Dot1Q)/ ipv4 / gre / tcp / udp / payload / raw_hex / http_request / http_response;
   next-proto 自动串接、TCP/UDP checksum 伪首部、确定性时间戳、golden + gopacket 回读测试。
-- **未实现 / 简化**:`flows` 有状态会话(握手 / seq-ack / 完整 HTTP 会话)未做,`http_get.yaml` 暂不出包;
+- **已实现 flow 最小版**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
+  HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
+- **未实现 / 简化**:flow 的 overlap / 乱序 / 重传 / RTT 定时 / IP 分片 / 多流时间交织未做;
   畸形开关 `fix_lengths` / `checksum` **解析但忽略**(build 时 `slog.Warn`),真正的畸形 / 原始字节兜底待做;
   HTTP 头按 key 排序输出(未保留原序)。
 
