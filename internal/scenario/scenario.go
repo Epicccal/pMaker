@@ -18,38 +18,18 @@ type Scenario struct {
 }
 
 // FlowSpec 是一条有状态会话;展开器把它降解成一串 Packet(见 internal/flow)。
+// flow.stack 中的 src 表示 TCP SYN 发起方,dst 表示 SYN 接收方。
 type FlowSpec struct {
 	Name     string    `yaml:"name"`
-	Client   Endpoint  `yaml:"client"`
-	Server   Endpoint  `yaml:"server"`
-	TCP      FlowTCP   `yaml:"tcp"`
-	Open     string    `yaml:"open"`  // handshake(默认)| none
-	Close    string    `yaml:"close"` // fin(默认)| rst | none
+	Stack    []Layer   `yaml:"stack"`
 	Messages []Message `yaml:"messages"`
 }
 
-// Endpoint 是会话一端的地址。
-type Endpoint struct {
-	MAC  string `yaml:"mac"`
-	IP   string `yaml:"ip"`
-	Port uint16 `yaml:"port"`
-}
-
-// FlowTCP 是会话的 TCP 参数。MSS 为通告值(写进 SYN option),与分段大小无关。
-type FlowTCP struct {
-	ClientISN uint32  `yaml:"client_isn"`
-	ServerISN uint32  `yaml:"server_isn"`
-	MSS       *uint16 `yaml:"mss"`
-}
-
-// Message 是一条方向性的应用层消息;消息体恰好一个 payload 生产者。
+// Message 是一条方向性的应用层消息;当前只支持一个 payload 生产层。
 type Message struct {
-	From         string          `yaml:"from"` // client | server
-	HTTPRequest  *HTTPReqFields  `yaml:"http_request"`
-	HTTPResponse *HTTPRespFields `yaml:"http_response"`
-	Payload      *PayloadFields  `yaml:"payload"`
-	RawHex       string          `yaml:"raw_hex"`
-	Segment      *Segment        `yaml:"segment"`
+	From    string   `yaml:"from"` // src | dst
+	Stack   []Layer  `yaml:"stack"`
+	Segment *Segment `yaml:"segment"`
 }
 
 // Segment 是消息的分段策略。MSS 为实际切段大小(0=不切,整条一段)。
@@ -115,13 +95,19 @@ type (
 	}
 	GREFields struct{}
 	TCPFields struct {
-		SPort    uint16   `yaml:"sport"`
-		DPort    uint16   `yaml:"dport"`
-		Flags    []string `yaml:"flags"`
-		Seq      *uint32  `yaml:"seq"`
-		Ack      *uint32  `yaml:"ack"`
-		MSS      *uint16  `yaml:"mss"`      // SYN 通告 option(展开器仅在 SYN 上设)
-		Checksum *Hex     `yaml:"checksum"` // 解析但忽略
+		SPort     uint16   `yaml:"sport"`
+		DPort     uint16   `yaml:"dport"`
+		Flags     []string `yaml:"flags"`
+		Seq       *uint32  `yaml:"seq"`
+		Ack       *uint32  `yaml:"ack"`
+		ClientISN uint32   `yaml:"client_isn"`
+		ServerISN uint32   `yaml:"server_isn"`
+		MSS       *uint16  `yaml:"mss"`      // SYN 通告 option(展开器仅在 SYN 上设)
+		Checksum  *Hex     `yaml:"checksum"` // 解析但忽略
+	}
+	TCPSessionFields struct {
+		Open  string `yaml:"open"`  // handshake(默认)| none
+		Close string `yaml:"close"` // fin(默认)| rst | none
 	}
 	UDPFields struct {
 		SPort uint16 `yaml:"sport"`
@@ -213,6 +199,9 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 	case "tcp":
 		var f TCPFields
 		return &f, val.Decode(&f)
+	case "tcp_session":
+		var f TCPSessionFields
+		return &f, val.Decode(&f)
 	case "udp":
 		var f UDPFields
 		return &f, val.Decode(&f)
@@ -279,29 +268,39 @@ func Validate(s *Scenario) error {
 }
 
 func validateFlow(f FlowSpec) error {
-	for name, e := range map[string]Endpoint{"client": f.Client, "server": f.Server} {
-		if e.IP == "" || e.Port == 0 {
-			return fmt.Errorf("%s 需要 ip 与 port", name)
-		}
-	}
-	if f.Open != "" && f.Open != "handshake" && f.Open != "none" {
-		return fmt.Errorf("open 只能是 handshake/none,得到 %q", f.Open)
-	}
-	if f.Close != "" && f.Close != "fin" && f.Close != "rst" && f.Close != "none" {
-		return fmt.Errorf("close 只能是 fin/rst/none,得到 %q", f.Close)
-	}
-	for j, m := range f.Messages {
-		if m.From != "client" && m.From != "server" {
-			return fmt.Errorf("messages[%d].from 只能是 client/server,得到 %q", j, m.From)
-		}
-		n := 0
-		for _, has := range []bool{m.HTTPRequest != nil, m.HTTPResponse != nil, m.Payload != nil, m.RawHex != ""} {
-			if has {
-				n++
+	seen := map[string]bool{}
+	for _, l := range f.Stack {
+		seen[l.Type] = true
+		if l.Type != "tcp_session" {
+			if err := validateLayer(l); err != nil {
+				return fmt.Errorf("stack.%s: %w", l.Type, err)
 			}
 		}
-		if n != 1 {
-			return fmt.Errorf("messages[%d] 需恰好一个 payload 生产者(http_request/http_response/payload/raw_hex),得到 %d 个", j, n)
+		if s, ok := l.Fields.(*TCPSessionFields); ok {
+			if s.Open != "" && s.Open != "handshake" && s.Open != "none" {
+				return fmt.Errorf("tcp_session.open 只能是 handshake/none,得到 %q", s.Open)
+			}
+			if s.Close != "" && s.Close != "fin" && s.Close != "rst" && s.Close != "none" {
+				return fmt.Errorf("tcp_session.close 只能是 fin/rst/none,得到 %q", s.Close)
+			}
+		}
+	}
+	for _, required := range []string{"eth", "ipv4", "tcp"} {
+		if !seen[required] {
+			return fmt.Errorf("stack 需要 %s 层", required)
+		}
+	}
+	for j, m := range f.Messages {
+		if m.From != "src" && m.From != "dst" {
+			return fmt.Errorf("messages[%d].from 只能是 src/dst,得到 %q", j, m.From)
+		}
+		if len(m.Stack) != 1 {
+			return fmt.Errorf("messages[%d].stack 当前需恰好一个 payload 生产层,得到 %d 个", j, len(m.Stack))
+		}
+		switch m.Stack[0].Fields.(type) {
+		case *HTTPReqFields, *HTTPRespFields, *PayloadFields, RawHex:
+		default:
+			return fmt.Errorf("messages[%d].stack[0] 不支持 %q", j, m.Stack[0].Type)
 		}
 	}
 	return nil

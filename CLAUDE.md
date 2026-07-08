@@ -133,26 +133,33 @@ out.pcap
 状态在整个脚本里**持续存在**,第 N 轮的 seq/ack 从上一轮继续累加。HTTP keep-alive / 流水线
 不是特例,只是 `messages` 列表更长。展开器负责在前插握手、后插挥手、按 `ack_policy` 插对端 ACK。
 
-### schema(canonical;`examples/http_get.yaml` 待与此对齐)
+### schema(canonical)
 
 ```yaml
 flows:
   - name: http-keepalive
-    client: { mac: "...", ip: "10.0.0.10", port: 49152 }
-    server: { mac: "...", ip: "10.0.0.80", port: 80 }
-    tcp:    { client_isn: 1000, server_isn: 5000, mss: 1460 }
-    timing: { rtt_ms: 10 }        # 决定包间时间戳(确定性)
-    open:   handshake             # handshake | none
-    close:  fin                   # fin | rst | none
-    ack_policy: per-message       # per-message | per-segment | none
-    messages:                     # 有序、方向性的应用层消息
-      - { from: client, http_request:  { method: GET, url: /a } }
-      - { from: server, http_response: { status: 200, body: "..." } }
-      - { from: client, http_request:  { method: GET, url: /b } }   # 第 2 轮
-      - { from: server, http_response: { status: 200, body: "..." } }
+    stack:                         # flow 中 src = TCP SYN 发起方,dst = SYN 接收方
+      - eth:  { src: "...", dst: "..." }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin } # open: handshake|none; close: fin|rst|none
+    messages:                      # 有序、方向性的应用层消息
+      - from: src
+        stack:
+          - http_request: { method: GET, url: /a }
+      - from: dst
+        stack:
+          - http_response: { status: 200, body: "..." }
+      - from: src                 # 第 2 轮
+        stack:
+          - http_request: { method: GET, url: /b }
+      - from: dst
+        stack:
+          - http_response: { status: 200, body: "..." }
 ```
 
-`from` 指方向,消息体是任意 **payload 生产者**(`http_request` / `http_response` / `raw_hex` / `payload`)。
+`from` 指方向(`src`/`dst`),消息体也是一个有序 `stack`;当前 flow message 仅支持一个 **payload 生产层**
+(`http_request` / `http_response` / `raw_hex` / `payload`)。反向消息会自动反转 eth/ipv4/tcp 的 src/dst/sport/dport。
 
 ### 分段与规避(NDR/IDS 测试重点)
 
@@ -183,7 +190,7 @@ scenario(packets 和/或 flows)
 ### 约束
 
 - **确定性**:时间戳由 `base + 累计 rtt` 派生,seed 控制乱序/抖动,不用 `time.Now()`(保持 golden 可比对)。
-- **封装组合**:flow 加 `encap:` 外层栈,展开时 **prepend 到每个包的 stack**,复用已有封装能力(可把整条会话套进 QinQ/GRE)。
+- **封装组合**:当前 flow.stack 先支持 eth/ipv4/tcp/tcp_session;若要把整条会话套进 QinQ/GRE,再升级为更通用的 stack 反转/PlannedPacket。
 - **UDP**:退化情形——无握手/挥手、无 seq/ack 的一串数据报(DNS、QUIC 探测)走同一抽象。
 - **测试**:每个 flow 出 golden pcap;回读用 gopacket `reassembly` 重组 TCP 流,断言应用层字节与脚本一致、无空洞、握手/挥手标志序列正确。
 
