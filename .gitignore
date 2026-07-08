@@ -31,8 +31,12 @@ go.work.sum
 # .idea/
 # .vscode/
 
+# Claude Code local settings
+.claude/settings.local.json
+
 # Build output
 /bin/
+/pmaker
 
 # Generated pcap (keep golden fixtures under testdata/)
 *.pcap
