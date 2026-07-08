@@ -134,6 +134,36 @@ type (
 	// RawHex 对应 `- raw_hex: "deadbeef"`(值是标量,非 map)。
 	RawHex string
 
+	DNSFields struct {
+		ID                 uint16              `yaml:"id"`
+		QR                 string              `yaml:"qr"`
+		Opcode             string              `yaml:"opcode"`
+		RCode              string              `yaml:"rcode"`
+		Authoritative      bool                `yaml:"authoritative"`
+		Truncated          bool                `yaml:"truncated"`
+		RecursionDesired   bool                `yaml:"recursion_desired"`
+		RecursionAvailable bool                `yaml:"recursion_available"`
+		AuthenticatedData  bool                `yaml:"authenticated_data"`
+		CheckingDisabled   bool                `yaml:"checking_disabled"`
+		Questions          []DNSQuestionFields `yaml:"questions"`
+		Answers            []DNSRRFields       `yaml:"answers"`
+		Authorities        []DNSRRFields       `yaml:"authorities"`
+		Additionals        []DNSRRFields       `yaml:"additionals"`
+	}
+	DNSQuestionFields struct {
+		Name  string `yaml:"name"`
+		Type  string `yaml:"type"`
+		Class string `yaml:"class"`
+	}
+	DNSRRFields struct {
+		Name   string    `yaml:"name"`
+		Type   string    `yaml:"type"`
+		Class  string    `yaml:"class"`
+		TTL    uint32    `yaml:"ttl"`
+		Data   yaml.Node `yaml:"data"`
+		RawHex string    `yaml:"raw_hex"` // 预留:畸形/未知 RDATA 后续实现
+	}
+
 	HTTPReqFields struct {
 		Method  string            `yaml:"method"`
 		Url     string            `yaml:"url"`
@@ -195,6 +225,9 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 			return nil, err
 		}
 		return RawHex(s), nil
+	case "dns":
+		var f DNSFields
+		return &f, val.Decode(&f)
 	case "http_request":
 		var f HTTPReqFields
 		return &f, val.Decode(&f)
@@ -291,6 +324,25 @@ func validateLayer(l Layer) error {
 	case *UDPFields:
 		if f.SPort == 0 || f.DPort == 0 {
 			return fmt.Errorf("需要 sport 与 dport")
+		}
+	case *DNSFields:
+		if len(f.Questions)+len(f.Answers)+len(f.Authorities)+len(f.Additionals) == 0 {
+			return fmt.Errorf("需要至少一个 question 或资源记录")
+		}
+		for i, q := range f.Questions {
+			if q.Name == "" {
+				return fmt.Errorf("questions[%d] 需要 name", i)
+			}
+		}
+		for sec, rrs := range map[string][]DNSRRFields{"answers": f.Answers, "authorities": f.Authorities, "additionals": f.Additionals} {
+			for i, rr := range rrs {
+				if rr.Name == "" {
+					return fmt.Errorf("%s[%d] 需要 name", sec, i)
+				}
+				if rr.RawHex == "" && rr.Data.Kind == 0 {
+					return fmt.Errorf("%s[%d] 需要 data", sec, i)
+				}
+			}
 		}
 	}
 	return nil
