@@ -1,0 +1,59 @@
+package builder
+
+import (
+	"fmt"
+	"log/slog"
+	"net"
+
+	"github.com/gopacket/gopacket/layers"
+
+	"github.com/Epicccal/pMaker/internal/scenario"
+)
+
+func ipProtoFor(next string) layers.IPProtocol {
+	switch next {
+	case "tcp":
+		return layers.IPProtocolTCP
+	case "udp":
+		return layers.IPProtocolUDP
+	case "gre":
+		return layers.IPProtocolGRE
+	case "ipv4":
+		return layers.IPProtocolIPv4 // IP-in-IP
+	default:
+		return layers.IPProtocolTCP
+	}
+}
+
+func buildIPv4(f *scenario.IPv4Fields, next string) (*layers.IPv4, error) {
+	src := net.ParseIP(f.Src)
+	dst := net.ParseIP(f.Dst)
+	if src == nil || src.To4() == nil {
+		return nil, fmt.Errorf("src ip %q 不是合法 IPv4", f.Src)
+	}
+	if dst == nil || dst.To4() == nil {
+		return nil, fmt.Errorf("dst ip %q 不是合法 IPv4", f.Dst)
+	}
+	ip := &layers.IPv4{
+		Version:  4,
+		TTL:      64,
+		SrcIP:    src.To4(),
+		DstIP:    dst.To4(),
+		Protocol: ipProtoFor(next),
+	}
+	if f.TTL != nil {
+		ip.TTL = *f.TTL
+	}
+	if f.Protocol != nil {
+		ip.Protocol = ipProtoFor(*f.Protocol)
+	}
+	if f.FixLengths != nil || f.Checksum != nil {
+		slog.Warn("最小版忽略 ipv4 畸形开关(fix_lengths/checksum),序列化为合规包", "src", f.Src, "dst", f.Dst)
+	}
+	return ip, nil
+}
+
+// buildGRE:GRE.Protocol 为其载荷的 EtherType。
+func buildGRE(next string) *layers.GRE {
+	return &layers.GRE{Protocol: ethTypeFor(next)}
+}
