@@ -113,6 +113,15 @@ type (
 		SPort uint16 `yaml:"sport"`
 		DPort uint16 `yaml:"dport"`
 	}
+	ICMPFields struct {
+		Type       yaml.Node `yaml:"type"`
+		Code       yaml.Node `yaml:"code"`
+		ID         *Hex      `yaml:"id"`
+		Seq        uint16    `yaml:"seq"`
+		Payload    string    `yaml:"payload"`
+		PayloadHex string    `yaml:"payload_hex"`
+		Checksum   *Hex      `yaml:"checksum"` // 解析但忽略
+	}
 	PayloadFields struct {
 		Text string `yaml:"text"`
 		Hex  string `yaml:"hex"`
@@ -204,6 +213,9 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 		return &f, val.Decode(&f)
 	case "udp":
 		var f UDPFields
+		return &f, val.Decode(&f)
+	case "icmp":
+		var f ICMPFields
 		return &f, val.Decode(&f)
 	case "payload":
 		var f PayloadFields
@@ -323,6 +335,10 @@ func validateLayer(l Layer) error {
 	case *UDPFields:
 		if f.SPort == 0 || f.DPort == 0 {
 			return fmt.Errorf("需要 sport 与 dport")
+		}
+	case *ICMPFields:
+		if f.Payload != "" && f.PayloadHex != "" {
+			return fmt.Errorf("payload 和 payload_hex 只能配置一个")
 		}
 	case *DNSFields:
 		if len(f.Questions)+len(f.Answers)+len(f.Authorities)+len(f.Additionals) == 0 {

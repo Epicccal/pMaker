@@ -1,0 +1,27 @@
+# examples/icmp_echo.yaml
+#
+# ICMPv4 echo request/reply(ping) 示例。
+link_type: ethernet
+seed: 42
+packets:
+  - name: icmp-echo-request
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64 }
+      - icmp:
+          type: 8
+          code: 0
+          id: 0x1234
+          seq: 1
+          payload: "hello"
+
+  - name: icmp-echo-reply
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: 0
+          code: 0
+          id: 0x1234
+          seq: 1
+          payload_hex: "68656c6c6f"

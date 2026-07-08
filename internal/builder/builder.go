@@ -80,6 +80,15 @@ func buildPacket(p scenario.Packet) ([]byte, error) {
 				_ = u.SetNetworkLayerForChecksum(netLayer)
 			}
 			serLayers = append(serLayers, u)
+		case *scenario.ICMPFields:
+			icmp, payload, err := buildICMP(f)
+			if err != nil {
+				return nil, fmt.Errorf("icmp: %w", err)
+			}
+			serLayers = append(serLayers, icmp)
+			if len(payload) > 0 {
+				serLayers = append(serLayers, gopacket.Payload(payload))
+			}
 		case *scenario.PayloadFields:
 			b, err := payloadBytes(f)
 			if err != nil {
