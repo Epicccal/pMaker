@@ -1,0 +1,210 @@
+# examples/dns_multi.yaml
+#
+# 同一个 pcap 中的多组 UDP DNS 请求/响应。
+# 每种 MVP DNS RR 类型(A/AAAA/CNAME/NS/PTR/MX/TXT)各有一组 query/response。
+link_type: ethernet
+seed: 42
+packets:
+  - name: dns-query-a
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "8.8.8.8", ttl: 64 }
+      - udp:  { sport: 53000, dport: 53 }
+      - dns:
+          id: 0x1234
+          qr: query
+          recursion_desired: true
+          questions:
+            - { name: "example.com.", type: A, class: IN }
+
+  - name: dns-response-a
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53000 }
+      - dns:
+          id: 0x1234
+          qr: response
+          recursion_desired: true
+          recursion_available: true
+          rcode: no_error
+          questions:
+            - { name: "example.com.", type: A, class: IN }
+          answers:
+            - { name: "example.com.", type: A, class: IN, ttl: 300, data: "93.184.216.34" }
+
+  - name: dns-query-aaaa
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "8.8.8.8", ttl: 64 }
+      - udp:  { sport: 53001, dport: 53 }
+      - dns:
+          id: 0x1235
+          qr: query
+          recursion_desired: true
+          questions:
+            - { name: "example.com.", type: AAAA, class: IN }
+
+  - name: dns-response-aaaa
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53001 }
+      - dns:
+          id: 0x1235
+          qr: response
+          recursion_desired: true
+          recursion_available: true
+          rcode: no_error
+          questions:
+            - { name: "example.com.", type: AAAA, class: IN }
+          answers:
+            - { name: "example.com.", type: AAAA, class: IN, ttl: 300, data: "2606:2800:220:1:248:1893:25c8:1946" }
+
+  - name: dns-query-cname
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "8.8.8.8", ttl: 64 }
+      - udp:  { sport: 53002, dport: 53 }
+      - dns:
+          id: 0x1236
+          qr: query
+          recursion_desired: true
+          questions:
+            - { name: "www.example.com.", type: CNAME, class: IN }
+
+  - name: dns-response-cname
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53002 }
+      - dns:
+          id: 0x1236
+          qr: response
+          recursion_desired: true
+          recursion_available: true
+          rcode: no_error
+          questions:
+            - { name: "www.example.com.", type: CNAME, class: IN }
+          answers:
+            - { name: "www.example.com.", type: CNAME, class: IN, ttl: 300, data: "example.com." }
+
+  - name: dns-query-ns
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "8.8.8.8", ttl: 64 }
+      - udp:  { sport: 53003, dport: 53 }
+      - dns:
+          id: 0x1237
+          qr: query
+          recursion_desired: true
+          questions:
+            - { name: "example.com.", type: NS, class: IN }
+
+  - name: dns-response-ns
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53003 }
+      - dns:
+          id: 0x1237
+          qr: response
+          recursion_desired: true
+          recursion_available: true
+          rcode: no_error
+          questions:
+            - { name: "example.com.", type: NS, class: IN }
+          answers:
+            - { name: "example.com.", type: NS, class: IN, ttl: 300, data: "ns1.example.com." }
+
+  - name: dns-query-ptr
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "8.8.8.8", ttl: 64 }
+      - udp:  { sport: 53004, dport: 53 }
+      - dns:
+          id: 0x1238
+          qr: query
+          recursion_desired: true
+          questions:
+            - { name: "34.216.184.93.in-addr.arpa.", type: PTR, class: IN }
+
+  - name: dns-response-ptr
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53004 }
+      - dns:
+          id: 0x1238
+          qr: response
+          recursion_desired: true
+          recursion_available: true
+          rcode: no_error
+          questions:
+            - { name: "34.216.184.93.in-addr.arpa.", type: PTR, class: IN }
+          answers:
+            - { name: "34.216.184.93.in-addr.arpa.", type: PTR, class: IN, ttl: 300, data: "example.com." }
+
+  - name: dns-query-mx
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "8.8.8.8", ttl: 64 }
+      - udp:  { sport: 53005, dport: 53 }
+      - dns:
+          id: 0x1239
+          qr: query
+          recursion_desired: true
+          questions:
+            - { name: "example.com.", type: MX, class: IN }
+
+  - name: dns-response-mx
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53005 }
+      - dns:
+          id: 0x1239
+          qr: response
+          recursion_desired: true
+          recursion_available: true
+          rcode: no_error
+          questions:
+            - { name: "example.com.", type: MX, class: IN }
+          answers:
+            - name: "example.com."
+              type: MX
+              class: IN
+              ttl: 300
+              data: { preference: 10, exchange: "mail.example.com." }
+
+  - name: dns-query-txt
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "8.8.8.8", ttl: 64 }
+      - udp:  { sport: 53006, dport: 53 }
+      - dns:
+          id: 0x123a
+          qr: query
+          recursion_desired: true
+          questions:
+            - { name: "example.com.", type: TXT, class: IN }
+
+  - name: dns-response-txt
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53006 }
+      - dns:
+          id: 0x123a
+          qr: response
+          recursion_desired: true
+          recursion_available: true
+          rcode: no_error
+          questions:
+            - { name: "example.com.", type: TXT, class: IN }
+          answers:
+            - name: "example.com."
+              type: TXT
+              class: IN
+              ttl: 300
+              data: "v=spf1 include:_spf.example.com ~all"
