@@ -16,6 +16,8 @@ func ipProtoFor(next string) layers.IPProtocol {
 		return layers.IPProtocolTCP
 	case "udp":
 		return layers.IPProtocolUDP
+	case "icmp":
+		return layers.IPProtocolICMPv4
 	case "gre":
 		return layers.IPProtocolGRE
 	case "ipv4":

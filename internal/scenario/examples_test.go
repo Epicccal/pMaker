@@ -72,6 +72,43 @@ func TestHTTPKeepaliveLFIContent(t *testing.T) {
 	}
 }
 
+func TestICMPEchoContent(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/icmp_echo.yaml")
+	icmpPackets := readICMPPackets(t, pcap)
+	if len(icmpPackets) != 2 {
+		t.Fatalf("期望 2 个 ICMP 包,得到 %d", len(icmpPackets))
+	}
+
+	req := icmpPackets[0]
+	if req.TypeCode.Type() != 8 || req.TypeCode.Code() != 0 || req.Id != 0x1234 || req.Seq != 1 || string(req.Payload) != "hello" {
+		t.Fatalf("echo request 不符合预期:type=%d code=%d id=%#x seq=%d payload=%q", req.TypeCode.Type(), req.TypeCode.Code(), req.Id, req.Seq, req.Payload)
+	}
+	rep := icmpPackets[1]
+	if rep.TypeCode.Type() != 0 || rep.TypeCode.Code() != 0 || rep.Id != 0x1234 || rep.Seq != 1 || string(rep.Payload) != "hello" {
+		t.Fatalf("echo reply 不符合预期:type=%d code=%d id=%#x seq=%d payload=%q", rep.TypeCode.Type(), rep.TypeCode.Code(), rep.Id, rep.Seq, rep.Payload)
+	}
+}
+
+func readICMPPackets(t *testing.T, data []byte) []*layers.ICMPv4 {
+	t.Helper()
+	r, err := pcapgo.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("pcap reader: %v", err)
+	}
+	var out []*layers.ICMPv4
+	for {
+		raw, _, err := r.ReadPacketData()
+		if err != nil {
+			break
+		}
+		p := gopacket.NewPacket(raw, r.LinkType(), gopacket.Default)
+		if l := p.Layer(layers.LayerTypeICMPv4); l != nil {
+			out = append(out, l.(*layers.ICMPv4))
+		}
+	}
+	return out
+}
+
 func TestDNSMultiContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/dns_multi.yaml")
 	dnsPackets := readDNSPackets(t, pcap)
