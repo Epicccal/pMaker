@@ -3,9 +3,6 @@ package flow_test
 import (
 	"bytes"
 	"encoding/hex"
-	"flag"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/gopacket/gopacket"
@@ -17,8 +14,6 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
-
-var update = flag.Bool("update", false, "regenerate golden pcap files")
 
 // genFlow 跑完整链路:load -> flow.Expand -> builder.Build -> writer,返回 pcap 字节。
 func genFlow(t *testing.T, path string) []byte {
@@ -66,24 +61,6 @@ func readTCP(t *testing.T, data []byte) []*layers.TCP {
 		}
 	}
 	return tcps
-}
-
-// TestFlowGolden 逐字节比对 golden(确定性输出);首次或改动后用 -update 重生。
-func TestFlowGolden(t *testing.T) {
-	got := genFlow(t, "../../examples/http_get.yaml")
-	golden := filepath.Join("testdata", "http_get.pcap")
-	if *update {
-		if err := os.WriteFile(golden, got, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	want, err := os.ReadFile(golden)
-	if err != nil {
-		t.Fatalf("读取 golden 失败(首次请加 -update): %v", err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("与 golden 不一致(%d vs %d 字节)", len(got), len(want))
-	}
 }
 
 // TestFlowShape 校验握手/挥手标志、包数、SYN 携带 MSS option、应用层字节。

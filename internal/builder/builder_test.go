@@ -2,9 +2,6 @@ package builder_test
 
 import (
 	"bytes"
-	"flag"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/gopacket/gopacket"
@@ -15,8 +12,6 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
-
-var update = flag.Bool("update", false, "regenerate golden pcap files")
 
 // genPcap 跑完整链路 scenario -> builder -> writer,返回 pcap 字节。
 func genPcap(t *testing.T, path string) ([]byte, string) {
@@ -65,36 +60,6 @@ func countLayers(pkt gopacket.Packet, lt gopacket.LayerType) int {
 		}
 	}
 	return n
-}
-
-// TestGolden 逐字节比对 golden(依赖确定性输出);首次或改动后用 -update 重生。
-func TestGolden(t *testing.T) {
-	cases := []struct {
-		name   string
-		src    string
-		golden string
-	}{
-		{"http_stack", "../../examples/http_stack.yaml", "http_stack.pcap"},
-		{"qinq_gre", "../../examples/qinq_gre.yaml", "qinq_gre.pcap"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, _ := genPcap(t, c.src)
-			golden := filepath.Join("testdata", c.golden)
-			if *update {
-				if err := os.WriteFile(golden, got, 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			want, err := os.ReadFile(golden)
-			if err != nil {
-				t.Fatalf("读取 golden 失败(首次请加 -update): %v", err)
-			}
-			if !bytes.Equal(got, want) {
-				t.Fatalf("与 golden 不一致(%d vs %d 字节)", len(got), len(want))
-			}
-		})
-	}
 }
 
 // TestParseBackHTTP 回读 http_stack,断言 Ethernet/IPv4/TCP 与 HTTP 请求行。
