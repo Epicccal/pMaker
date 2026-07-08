@@ -119,14 +119,18 @@ func TestFlowShape(t *testing.T) {
 func TestFlowSeqSegmentation(t *testing.T) {
 	mss := uint16(1460)
 	f := scenario.FlowSpec{
-		Client: scenario.Endpoint{MAC: "00:00:00:00:00:01", IP: "10.0.0.1", Port: 1111},
-		Server: scenario.Endpoint{MAC: "00:00:00:00:00:02", IP: "10.0.0.2", Port: 80},
-		TCP:    scenario.FlowTCP{ClientISN: 1000, ServerISN: 5000, MSS: &mss},
-		Open:   "handshake",
-		Close:  "none",
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 1000, ServerISN: 5000, MSS: &mss}},
+			{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "handshake", Close: "none"}},
+		},
 		Messages: []scenario.Message{{
-			From:    "client",
-			RawHex:  hex.EncodeToString(make([]byte, 20)), // 20 字节,mss=8 → 8/8/4 三段
+			From: "src",
+			Stack: []scenario.Layer{{
+				Type:   "raw_hex",
+				Fields: scenario.RawHex(hex.EncodeToString(make([]byte, 20))), // 20 字节,mss=8 → 8/8/4 三段
+			}},
 			Segment: &scenario.Segment{MSS: 8},
 		}},
 	}
@@ -157,14 +161,18 @@ func TestFlowSeqSegmentation(t *testing.T) {
 // TestFlowCloseRST 校验 close:rst 由 server 单包中断,不再生成 FIN 挥手。
 func TestFlowCloseRST(t *testing.T) {
 	f := scenario.FlowSpec{
-		Client: scenario.Endpoint{MAC: "00:00:00:00:00:01", IP: "10.0.0.1", Port: 1111},
-		Server: scenario.Endpoint{MAC: "00:00:00:00:00:02", IP: "10.0.0.2", Port: 80},
-		TCP:    scenario.FlowTCP{ClientISN: 1000, ServerISN: 5000},
-		Open:   "handshake",
-		Close:  "rst",
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 1000, ServerISN: 5000}},
+			{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "handshake", Close: "rst"}},
+		},
 		Messages: []scenario.Message{{
-			From:   "client",
-			RawHex: "abcd",
+			From: "src",
+			Stack: []scenario.Layer{{
+				Type:   "raw_hex",
+				Fields: scenario.RawHex("abcd"),
+			}},
 		}},
 	}
 	pkts, err := flow.Expand(f)

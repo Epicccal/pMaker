@@ -1,38 +1,40 @@
 # examples/http_get.yaml
 #
 # 一次完整的 HTTP/1.1 GET 请求 + 200 响应,跑在真实 TCP 会话之上(flow 场景)。
-# 握手、seq/ack、对端 ACK、四次挥手由 flow 展开器自动推导。
+# flow.stack 里的 src 表示 TCP SYN 发起方,dst 表示 SYN 接收方。
 link_type: ethernet
 seed: 42
 
 flows:
   - name: http-get-200
-    client: { mac: "00:11:22:33:44:55", ip: "10.0.0.10", port: 49152 }
-    server: { mac: "66:77:88:99:aa:bb", ip: "10.0.0.80", port: 80 }
-    tcp:   { client_isn: 1000, server_isn: 5000, mss: 1460 }  # mss 为通告值
-    open:  handshake     # handshake | none
-    close: fin           # fin | rst | none
-    messages:            # 有序、方向性的应用层消息
-      - from: client
-        http_request:
-          method: GET
-          url: /index.html
-          version: HTTP/1.1
-          headers:
-            Host: example.com
-            User-Agent: pMaker/0.1
-            Accept: "*/*"
-            Connection: keep-alive
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /index.html
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                User-Agent: pMaker/0.1
+                Accept: "*/*"
+                Connection: keep-alive
         # segment: { mss: 8 }   # 可选:把这条请求切成多个 TCP 段(实际分段大小,与通告 mss 无关)
 
-      - from: server
-        http_response:
-          version: HTTP/1.1
-          status: 200
-          reason: OK
-          headers:
-            Server: nginx/1.24.0
-            Content-Type: text/html; charset=utf-8
-            Content-Length: auto        # auto = 由 body 长度自动计算
-          body: |
-            <html><body>Hello from pMaker</body></html>
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              headers:
+                Server: nginx/1.24.0
+                Content-Type: text/html; charset=utf-8
+                Content-Length: auto        # auto = 由 body 长度自动计算
+              body: |
+                <html><body>Hello from pMaker</body></html>
