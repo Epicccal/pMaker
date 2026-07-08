@@ -146,9 +146,9 @@ flows:
     close:  fin                   # fin | rst | none
     ack_policy: per-message       # per-message | per-segment | none
     messages:                     # 有序、方向性的应用层消息
-      - { from: client, http_request:  { method: GET, target: /a } }
+      - { from: client, http_request:  { method: GET, url: /a } }
       - { from: server, http_response: { status: 200, body: "..." } }
-      - { from: client, http_request:  { method: GET, target: /b } }   # 第 2 轮
+      - { from: client, http_request:  { method: GET, url: /b } }   # 第 2 轮
       - { from: server, http_response: { status: 200, body: "..." } }
 ```
 

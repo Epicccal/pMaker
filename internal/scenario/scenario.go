@@ -136,7 +136,7 @@ type (
 
 	HTTPReqFields struct {
 		Method  string            `yaml:"method"`
-		Target  string            `yaml:"target"`
+		Url     string            `yaml:"url"`
 		Version string            `yaml:"version"`
 		Headers map[string]string `yaml:"headers"`
 		Body    string            `yaml:"body"`

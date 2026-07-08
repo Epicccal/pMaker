@@ -12,7 +12,7 @@ packets:
       - tcp:  { sport: 49152, dport: 80, flags: [PSH, ACK], seq: 1001, ack: 5001 }
       - http_request:
           method: GET
-          target: /index.html
+          url: /index.html
           version: HTTP/1.1
           headers:
             Host: example.com

@@ -278,11 +278,11 @@ func payloadBytes(f *scenario.PayloadFields) ([]byte, error) {
 // 头按 key 排序输出以保证确定性(保留原序留待后续)。
 func serializeHTTPReq(f *scenario.HTTPReqFields) []byte {
 	method := orDefault(f.Method, "GET")
-	target := orDefault(f.Target, "/")
+	url := orDefault(f.Url, "/")
 	ver := orDefault(f.Version, "HTTP/1.1")
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s %s\r\n", method, target, ver)
+	fmt.Fprintf(&b, "%s %s %s\r\n", method, url, ver)
 	writeHeaders(&b, f.Headers, len(f.Body))
 	b.WriteString("\r\n")
 	b.WriteString(f.Body)
