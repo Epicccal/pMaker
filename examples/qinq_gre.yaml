@@ -24,4 +24,4 @@ packets:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb", ethertype: 0x8100 }
       - vlan: { vid: 100, type: 0xffff }   # 显式覆盖 next-proto,制造解析断链
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", checksum: 0xdead, fix_lengths: false }
-      - raw_hex: "deadbeef"                # gopacket 无法表达时直接落原始字节
+      - payload_hex: 0xdeadbeef                # gopacket 无法表达时直接落原始字节

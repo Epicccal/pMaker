@@ -128,8 +128,8 @@ func TestFlowSeqSegmentation(t *testing.T) {
 		Messages: []scenario.Message{{
 			From: "src",
 			Stack: []scenario.Layer{{
-				Type:   "raw_hex",
-				Fields: scenario.RawHex(hex.EncodeToString(make([]byte, 20))), // 20 字节,mss=8 → 8/8/4 三段
+				Type:   "payload_hex",
+				Fields: scenario.PayloadHex("0x" + hex.EncodeToString(make([]byte, 20))), // 20 字节,mss=8 → 8/8/4 三段
 			}},
 			Segment: &scenario.Segment{MSS: 8},
 		}},
@@ -170,8 +170,8 @@ func TestFlowCloseRST(t *testing.T) {
 		Messages: []scenario.Message{{
 			From: "src",
 			Stack: []scenario.Layer{{
-				Type:   "raw_hex",
-				Fields: scenario.RawHex("abcd"),
+				Type:   "payload_hex",
+				Fields: scenario.PayloadHex("0xabcd"),
 			}},
 		}},
 	}

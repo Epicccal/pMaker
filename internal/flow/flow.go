@@ -161,8 +161,8 @@ func (c *conn) emit(from side, flags []string, chunk []byte) scenario.Packet {
 	}
 	if len(chunk) > 0 {
 		stack = append(stack, scenario.Layer{
-			Type:   "payload",
-			Fields: &scenario.PayloadFields{Hex: hex.EncodeToString(chunk)},
+			Type:   "payload_hex",
+			Fields: scenario.PayloadHex("0x" + hex.EncodeToString(chunk)),
 		})
 	}
 	return scenario.Packet{Stack: stack}

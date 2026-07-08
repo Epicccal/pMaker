@@ -24,4 +24,4 @@ packets:
           code: 0
           id: 0x1234
           seq: 1
-          payload_hex: "68656c6c6f"
+          payload_hex: 0x68656c6c6f

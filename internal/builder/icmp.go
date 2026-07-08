@@ -1,7 +1,6 @@
 package builder
 
 import (
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -47,9 +46,7 @@ func buildICMP(f *scenario.ICMPFields) (*layers.ICMPv4, []byte, error) {
 
 func icmpPayload(f *scenario.ICMPFields) ([]byte, error) {
 	if f.PayloadHex != "" {
-		s := strings.ReplaceAll(f.PayloadHex, " ", "")
-		s = strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "0X")
-		return hex.DecodeString(s)
+		return scenario.ParsePayloadHex(f.PayloadHex)
 	}
 	return []byte(f.Payload), nil
 }

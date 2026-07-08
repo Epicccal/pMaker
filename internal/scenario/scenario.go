@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -72,6 +73,22 @@ func (h *Hex) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// ParsePayloadHex 解析 0x 前缀的十六进制字符串。
+func ParsePayloadHex(s string) ([]byte, error) {
+	s = strings.ReplaceAll(strings.TrimSpace(s), " ", "")
+	if !strings.HasPrefix(s, "0x") && !strings.HasPrefix(s, "0X") {
+		return nil, fmt.Errorf("payload_hex 需要 0x 前缀,例如 0xdeadbeef")
+	}
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "0X")
+	if len(s) == 0 {
+		return nil, fmt.Errorf("payload_hex 不能为空")
+	}
+	if len(s)%2 != 0 {
+		return nil, fmt.Errorf("payload_hex 需要偶数个十六进制字符")
+	}
+	return hex.DecodeString(s)
+}
+
 // 各层字段结构。指针字段表示"可选/是否显式给出"。
 type (
 	EthFields struct {
@@ -123,11 +140,11 @@ type (
 		Checksum   *Hex      `yaml:"checksum"` // 解析但忽略
 	}
 	PayloadFields struct {
-		Text string `yaml:"text"`
-		Hex  string `yaml:"hex"`
+		Payload    string `yaml:"payload"`
+		PayloadHex string `yaml:"payload_hex"`
 	}
-	// RawHex 对应 `- raw_hex: "deadbeef"`(值是标量,非 map)。
-	RawHex string
+	// PayloadHex 对应 `- payload_hex: "0xdeadbeef"`(值是标量,非 map)。
+	PayloadHex string
 
 	DNSFields struct {
 		ID                 uint16              `yaml:"id"`
@@ -151,12 +168,12 @@ type (
 		Class string `yaml:"class"`
 	}
 	DNSRRFields struct {
-		Name   string    `yaml:"name"`
-		Type   string    `yaml:"type"`
-		Class  string    `yaml:"class"`
-		TTL    uint32    `yaml:"ttl"`
-		Data   yaml.Node `yaml:"data"`
-		RawHex string    `yaml:"raw_hex"` // 预留:畸形/未知 RDATA 后续实现
+		Name       string    `yaml:"name"`
+		Type       string    `yaml:"type"`
+		Class      string    `yaml:"class"`
+		TTL        uint32    `yaml:"ttl"`
+		Data       yaml.Node `yaml:"data"`
+		PayloadHex string    `yaml:"payload_hex"` // 预留:畸形/未知 RDATA 后续实现
 	}
 
 	HTTPReqFields struct {
@@ -220,12 +237,12 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 	case "payload":
 		var f PayloadFields
 		return &f, val.Decode(&f)
-	case "raw_hex":
+	case "payload_hex":
 		var s string
 		if err := val.Decode(&s); err != nil {
 			return nil, err
 		}
-		return RawHex(s), nil
+		return PayloadHex(s), nil
 	case "dns":
 		var f DNSFields
 		return &f, val.Decode(&f)
@@ -310,7 +327,7 @@ func validateFlow(f FlowSpec) error {
 			return fmt.Errorf("messages[%d].stack 当前需恰好一个 payload 生产层,得到 %d 个", j, len(m.Stack))
 		}
 		switch m.Stack[0].Fields.(type) {
-		case *HTTPReqFields, *HTTPRespFields, *PayloadFields, RawHex:
+		case *HTTPReqFields, *HTTPRespFields, *PayloadFields, PayloadHex:
 		default:
 			return fmt.Errorf("messages[%d].stack[0] 不支持 %q", j, m.Stack[0].Type)
 		}
@@ -340,6 +357,24 @@ func validateLayer(l Layer) error {
 		if f.Payload != "" && f.PayloadHex != "" {
 			return fmt.Errorf("payload 和 payload_hex 只能配置一个")
 		}
+		if f.PayloadHex != "" {
+			if _, err := ParsePayloadHex(f.PayloadHex); err != nil {
+				return err
+			}
+		}
+	case *PayloadFields:
+		if f.Payload != "" && f.PayloadHex != "" {
+			return fmt.Errorf("payload 和 payload_hex 只能配置一个")
+		}
+		if f.PayloadHex != "" {
+			if _, err := ParsePayloadHex(f.PayloadHex); err != nil {
+				return err
+			}
+		}
+	case PayloadHex:
+		if _, err := ParsePayloadHex(string(f)); err != nil {
+			return err
+		}
 	case *DNSFields:
 		if len(f.Questions)+len(f.Answers)+len(f.Authorities)+len(f.Additionals) == 0 {
 			return fmt.Errorf("需要至少一个 question 或资源记录")
@@ -354,7 +389,12 @@ func validateLayer(l Layer) error {
 				if rr.Name == "" {
 					return fmt.Errorf("%s[%d] 需要 name", sec, i)
 				}
-				if rr.RawHex == "" && rr.Data.Kind == 0 {
+				if rr.PayloadHex != "" {
+					if _, err := ParsePayloadHex(rr.PayloadHex); err != nil {
+						return fmt.Errorf("%s[%d]: %w", sec, i, err)
+					}
+				}
+				if rr.PayloadHex == "" && rr.Data.Kind == 0 {
 					return fmt.Errorf("%s[%d] 需要 data", sec, i)
 				}
 			}

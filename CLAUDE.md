@@ -51,7 +51,7 @@ testdata/            # golden pcap(逐字节比对的测试基准)
 
 最小出包链路已打通:`pmaker gen -f <yaml> -o <pcap>` 可真正出包。
 
-- **已实现 stack 模型**:层 eth / vlan(Dot1Q)/ ipv4 / gre / tcp / udp / icmp / dns / payload / raw_hex / http_request / http_response;
+- **已实现 stack 模型**:层 eth / vlan(Dot1Q)/ ipv4 / gre / tcp / udp / icmp / dns / payload / payload_hex / http_request / http_response;
   next-proto 自动串接、TCP/UDP checksum 伪首部、ICMP echo request/reply、DNS A/AAAA/CNAME/NS/PTR/MX/TXT、确定性时间戳、golden + gopacket 回读测试。
 - **已实现 flow 最小版**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
   HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
@@ -159,7 +159,7 @@ flows:
 ```
 
 `from` 指方向(`src`/`dst`),消息体也是一个有序 `stack`;当前 flow message 仅支持一个 **payload 生产层**
-(`http_request` / `http_response` / `raw_hex` / `payload`)。反向消息会自动反转 eth/ipv4/tcp 的 src/dst/sport/dport。
+(`http_request` / `http_response` / `payload_hex` / `payload`)。反向消息会自动反转 eth/ipv4/tcp 的 src/dst/sport/dport.
 
 ### 分段与规避(NDR/IDS 测试重点)
 
@@ -199,7 +199,7 @@ scenario(packets 和/或 flows)
 1. **畸形包必须能绕过自动修正。** 这是 IDS 测试工具的立身之本。
    - 规范包:`SerializeOptions{FixLengths: true, ComputeChecksums: true}`。
    - 畸形/规避包:允许**逐字段关闭** `FixLengths` / `ComputeChecksums`,并允许写入非法的 length、错误 checksum、重叠分片等。
-   - 提供**原始字节注入**(如配置里的 `raw_hex` / `payload_hex`):当 gopacket 无法表达某种畸形时,直接落原始字节。**绝不能**因为"修正了 checksum/length"而让本应畸形的测试包变成合规包 —— 那等于悄悄废掉了这条用例。
+   - 提供**原始字节注入**(如配置里的 `payload_hex`: `0x...`):当 gopacket 无法表达某种畸形时,直接落原始字节。**绝不能**因为"修正了 checksum/length"而让本应畸形的测试包变成合规包 —— 那等于悄悄废掉了这条用例。
 
 2. **TCP/UDP checksum 依赖 IP 伪首部。** 序列化前必须
    `transportLayer.SetNetworkLayerForChecksum(ipLayer)`,否则 checksum 恒错。除非该用例**故意**要错误 checksum。
@@ -257,7 +257,7 @@ golangci-lint run # 若已安装
   **允许同类型重复**(QinQ 两层 VLAN)和递归嵌套(GRE 内层再放报文)。
 - 封装层的 next-protocol / ethertype **默认自动推导**,可逐层用 `type` / `tpid` / `ethertype` 显式覆盖(制造断链等畸形)。
 - 缺省字段走合理默认(自动 seq、自动 checksum、自动串接)。
-- 畸形用例通过**显式开关**表达意图:`fix_lengths: false` / `checksum: 0xdead` / 覆盖 `type` 断链 / `raw_hex: "…"`。
+- 畸形用例通过**显式开关**表达意图:`fix_lengths: false` / `checksum: 0xdead` / 覆盖 `type` 断链 / `payload_hex: "0x…"`.
 
 示意(最终 schema 以 `internal/scenario` 的类型定义为准):
 
@@ -287,7 +287,7 @@ packets:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb", ethertype: 0x8100 }
       - vlan: { vid: 100, type: 0xffff }   # 显式覆盖 next-proto,制造解析断链
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", checksum: 0xdead, fix_lengths: false }
-      - raw_hex: "deadbeef"                # gopacket 无法表达时直接落原始字节
+      - payload_hex: 0xdeadbeef                # gopacket 无法表达时直接落原始字节
 ```
 
 ## 测试策略

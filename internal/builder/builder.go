@@ -95,10 +95,10 @@ func buildPacket(p scenario.Packet) ([]byte, error) {
 				return nil, fmt.Errorf("payload: %w", err)
 			}
 			serLayers = append(serLayers, gopacket.Payload(b))
-		case scenario.RawHex:
-			b, err := rawHexBytes(f)
+		case scenario.PayloadHex:
+			b, err := scenario.ParsePayloadHex(string(f))
 			if err != nil {
-				return nil, fmt.Errorf("raw_hex: %w", err)
+				return nil, fmt.Errorf("payload_hex: %w", err)
 			}
 			serLayers = append(serLayers, gopacket.Payload(b))
 		case *scenario.DNSFields:

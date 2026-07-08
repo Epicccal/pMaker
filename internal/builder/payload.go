@@ -1,9 +1,7 @@
 package builder
 
 import (
-	"encoding/hex"
 	"fmt"
-	"strings"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
@@ -18,20 +16,16 @@ func PayloadBytes(l scenario.Layer) ([]byte, error) {
 		return serializeHTTPResp(f), nil
 	case *scenario.PayloadFields:
 		return payloadBytes(f)
-	case scenario.RawHex:
-		return rawHexBytes(f)
+	case scenario.PayloadHex:
+		return scenario.ParsePayloadHex(string(f))
 	default:
 		return nil, fmt.Errorf("%q 不是 payload 生产层", l.Type)
 	}
 }
 
 func payloadBytes(f *scenario.PayloadFields) ([]byte, error) {
-	if f.Hex != "" {
-		return hex.DecodeString(strings.ReplaceAll(f.Hex, " ", ""))
+	if f.PayloadHex != "" {
+		return scenario.ParsePayloadHex(f.PayloadHex)
 	}
-	return []byte(f.Text), nil
-}
-
-func rawHexBytes(h scenario.RawHex) ([]byte, error) {
-	return hex.DecodeString(strings.ReplaceAll(string(h), " ", ""))
+	return []byte(f.Payload), nil
 }
