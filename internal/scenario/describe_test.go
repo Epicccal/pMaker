@@ -1,6 +1,9 @@
 package scenario
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSummarizePackets(t *testing.T) {
 	pkts := []Packet{
@@ -68,5 +71,15 @@ func TestSummarizePackets(t *testing.T) {
 		if line := FormatPacketSummary(i+1, got[i]); line != w {
 			t.Errorf("第%d行=%q,期望 %q", i+1, line, w)
 		}
+	}
+}
+
+func TestValidateQuoteFromReference(t *testing.T) {
+	s := &Scenario{Packets: []Packet{{
+		Stack: []Layer{{Type: "icmp", Fields: &ICMPFields{QuoteFrom: "missing"}}},
+	}}}
+	err := Validate(s)
+	if err == nil || !strings.Contains(err.Error(), `quote_from 引用未知 packet "missing"`) {
+		t.Fatalf("Validate() error=%v,期望 quote_from 未知引用", err)
 	}
 }

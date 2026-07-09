@@ -139,6 +139,7 @@ type (
 		Payload    string    `yaml:"payload"`
 		PayloadHex string    `yaml:"payload_hex"`
 		Quote      *Packet   `yaml:"quote"`
+		QuoteFrom  string    `yaml:"quote_from"`
 		Checksum   *Hex      `yaml:"checksum"` // 解析但忽略
 	}
 	PayloadFields struct {
@@ -280,6 +281,7 @@ func Validate(s *Scenario) error {
 	if len(s.Packets) == 0 && len(s.Flows) == 0 {
 		return fmt.Errorf("没有 packets 或 flows 可生成")
 	}
+	packetNames := packetNameCounts(s.Packets)
 	for i, p := range s.Packets {
 		if len(p.Stack) == 0 {
 			return fmt.Errorf("packet[%d] 的 stack 为空", i)
@@ -288,12 +290,40 @@ func Validate(s *Scenario) error {
 			if err := validateLayer(l); err != nil {
 				return fmt.Errorf("packet[%d].%s: %w", i, l.Type, err)
 			}
+			if err := validateQuoteFrom(l, packetNames); err != nil {
+				return fmt.Errorf("packet[%d].%s: %w", i, l.Type, err)
+			}
 		}
 	}
 	for i, f := range s.Flows {
 		if err := validateFlow(f); err != nil {
 			return fmt.Errorf("flow[%d](%s): %w", i, f.Name, err)
 		}
+	}
+	return nil
+}
+
+func packetNameCounts(pkts []Packet) map[string]int {
+	out := map[string]int{}
+	for _, p := range pkts {
+		if p.Name != "" {
+			out[p.Name]++
+		}
+	}
+	return out
+}
+
+func validateQuoteFrom(l Layer, packetNames map[string]int) error {
+	f, ok := l.Fields.(*ICMPFields)
+	if !ok || f.QuoteFrom == "" {
+		return nil
+	}
+	count := packetNames[f.QuoteFrom]
+	if count == 0 {
+		return fmt.Errorf("quote_from 引用未知 packet %q", f.QuoteFrom)
+	}
+	if count > 1 {
+		return fmt.Errorf("quote_from 引用的 packet %q 不唯一", f.QuoteFrom)
 	}
 	return nil
 }
@@ -356,11 +386,14 @@ func validateLayer(l Layer) error {
 			return fmt.Errorf("需要 sport 与 dport")
 		}
 	case *ICMPFields:
-		if f.Payload != "" && f.PayloadHex != "" {
-			return fmt.Errorf("payload 和 payload_hex 只能配置一个")
+		payloadKinds := 0
+		for _, present := range []bool{f.Payload != "", f.PayloadHex != "", f.Quote != nil, f.QuoteFrom != ""} {
+			if present {
+				payloadKinds++
+			}
 		}
-		if f.Quote != nil && (f.Payload != "" || f.PayloadHex != "") {
-			return fmt.Errorf("quote 与 payload/payload_hex 只能配置一个")
+		if payloadKinds > 1 {
+			return fmt.Errorf("quote/quote_from/payload/payload_hex 只能配置一个")
 		}
 		if f.PayloadHex != "" {
 			if _, err := ParsePayloadHex(f.PayloadHex); err != nil {

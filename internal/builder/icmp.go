@@ -6,13 +6,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-func buildICMP(f *scenario.ICMPFields) (*layers.ICMPv4, []byte, error) {
+func buildICMP(ctx buildContext, f *scenario.ICMPFields) (*layers.ICMPv4, []byte, error) {
 	typ, err := icmpType(f.Type)
 	if err != nil {
 		return nil, nil, err
@@ -21,7 +22,7 @@ func buildICMP(f *scenario.ICMPFields) (*layers.ICMPv4, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	payload, err := icmpPayload(f)
+	payload, err := icmpPayload(ctx, f)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -44,14 +45,59 @@ func buildICMP(f *scenario.ICMPFields) (*layers.ICMPv4, []byte, error) {
 	return icmp, payload, nil
 }
 
-func icmpPayload(f *scenario.ICMPFields) ([]byte, error) {
+func icmpPayload(ctx buildContext, f *scenario.ICMPFields) ([]byte, error) {
+	if f.QuoteFrom != "" {
+		return icmpQuoteFrom(ctx, f.QuoteFrom)
+	}
 	if f.Quote != nil {
-		return serializeStack(f.Quote.Stack)
+		return serializeStack(ctx, f.Quote.Stack)
 	}
 	if f.PayloadHex != "" {
 		return scenario.ParsePayloadHex(f.PayloadHex)
 	}
 	return []byte(f.Payload), nil
+}
+
+func icmpQuoteFrom(ctx buildContext, name string) ([]byte, error) {
+	p, ok := ctx.packetsByName[name]
+	if !ok {
+		return nil, fmt.Errorf("quote_from 引用未知 packet %q", name)
+	}
+	stack, err := ipv4Stack(p)
+	if err != nil {
+		return nil, fmt.Errorf("quote_from %q: %w", name, err)
+	}
+	b, err := serializeStack(ctx, stack)
+	if err != nil {
+		return nil, err
+	}
+	pkt := gopacket.NewPacket(b, layers.LayerTypeIPv4, gopacket.Default)
+	l := pkt.Layer(layers.LayerTypeIPv4)
+	if l == nil {
+		return nil, fmt.Errorf("未解析出 IPv4 quote")
+	}
+	ip := l.(*layers.IPv4)
+	headerLen := int(ip.IHL) * 4
+	if headerLen == 0 {
+		headerLen = 20
+	}
+	if len(b) < headerLen {
+		return nil, fmt.Errorf("IPv4 quote 长度不足: %d < %d", len(b), headerLen)
+	}
+	quoteLen := headerLen + 8
+	if quoteLen > len(b) {
+		quoteLen = len(b)
+	}
+	return append([]byte(nil), b[:quoteLen]...), nil
+}
+
+func ipv4Stack(p scenario.Packet) ([]scenario.Layer, error) {
+	for i, l := range p.Stack {
+		if l.Type == "ipv4" {
+			return p.Stack[i:], nil
+		}
+	}
+	return nil, fmt.Errorf("被引用 packet 缺少 ipv4 层")
 }
 
 func icmpType(node yaml.Node) (uint8, error) {
