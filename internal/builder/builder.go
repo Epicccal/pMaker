@@ -37,14 +37,14 @@ func Build(s *scenario.Scenario) ([]OutPacket, error) {
 	return out, nil
 }
 
-func buildPacket(p scenario.Packet) ([]byte, error) {
-	serLayers := make([]gopacket.SerializableLayer, 0, len(p.Stack))
+func serializeStack(stack []scenario.Layer) ([]byte, error) {
+	serLayers := make([]gopacket.SerializableLayer, 0, len(stack))
 	var netLayer gopacket.NetworkLayer // 最近的 IP 层,供传输层 checksum 伪首部使用
 
-	for j, l := range p.Stack {
+	for j, l := range stack {
 		next := ""
-		if j+1 < len(p.Stack) {
-			next = p.Stack[j+1].Type
+		if j+1 < len(stack) {
+			next = stack[j+1].Type
 		}
 
 		switch f := l.Fields.(type) {
@@ -121,4 +121,8 @@ func buildPacket(p scenario.Packet) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func buildPacket(p scenario.Packet) ([]byte, error) {
+	return serializeStack(p.Stack)
 }

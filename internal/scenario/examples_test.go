@@ -89,6 +89,90 @@ func TestICMPEchoContent(t *testing.T) {
 	}
 }
 
+func TestICMPAbnormalContent(t *testing.T) {
+	t.Run("named", func(t *testing.T) {
+		pkts := readPackets(t, generatePcap(t, "../../examples/icmp_abnormal_named.yaml"))
+		cases := []icmpQuoteCase{
+			{typ: 3, code: 0, src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, sport: 40000, dport: 65000, payload: []byte("probe net")},
+			{typ: 3, code: 1, src: "10.0.0.10", dst: "10.0.0.2", ttl: 64, sport: 40000, dport: 65001, payload: []byte("probe host")},
+			{typ: 3, code: 2, src: "10.0.0.10", dst: "10.0.0.3", ttl: 64, sport: 40000, dport: 65002, payload: []byte("probe protocol")},
+			{typ: 3, code: 3, src: "10.0.0.10", dst: "10.0.0.4", ttl: 64, sport: 40000, dport: 65003, payload: []byte("probe port")},
+			{typ: 3, code: 4, src: "10.0.0.10", dst: "10.0.0.5", ttl: 64, sport: 40000, dport: 65004, payload: []byte("probe frag")},
+			{typ: 3, code: 5, src: "10.0.0.10", dst: "10.0.0.6", ttl: 64, sport: 40000, dport: 65005, payload: []byte("probe route")},
+			{typ: 11, code: 0, src: "10.0.0.10", dst: "8.8.8.8", ttl: 1, sport: 40000, dport: 65006, payload: []byte("probe ttl")},
+			{typ: 11, code: 1, src: "10.0.0.10", dst: "8.8.4.4", ttl: 64, sport: 40000, dport: 65007, payload: []byte("probe reassembly")},
+		}
+		assertICMPQuoteCases(t, pkts, cases)
+	})
+
+	t.Run("numeric", func(t *testing.T) {
+		pkts := readPackets(t, generatePcap(t, "../../examples/icmp_abnormal_numeric.yaml"))
+		cases := []icmpQuoteCase{
+			{typ: 5, code: 1, src: "10.0.0.10", dst: "10.0.0.20", ttl: 64, sport: 40000, dport: 65000, payload: []byte("probe redirect")},
+			{typ: 12, code: 0, src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, sport: 40000, dport: 65001, payload: []byte{0xde, 0xad, 0xbe, 0xef}},
+		}
+		assertICMPQuoteCases(t, pkts, cases)
+	})
+}
+
+type icmpQuoteCase struct {
+	typ, code    uint8
+	src, dst     string
+	ttl          uint8
+	sport, dport uint16
+	payload      []byte
+}
+
+func assertICMPQuoteCases(t *testing.T, pkts []gopacket.Packet, cases []icmpQuoteCase) {
+	t.Helper()
+	if len(pkts) != len(cases)*2 {
+		t.Fatalf("期望 %d 个包,得到 %d", len(cases)*2, len(pkts))
+	}
+	for i, tc := range cases {
+		assertNoICMP(t, pkts[i*2])
+		assertQuotedICMP(t, pkts[i*2+1], tc)
+	}
+}
+
+func assertNoICMP(t *testing.T, p gopacket.Packet) {
+	t.Helper()
+	if p.Layer(layers.LayerTypeICMPv4) != nil {
+		t.Fatal("触发包不应带 ICMP 层")
+	}
+}
+
+func assertQuotedICMP(t *testing.T, p gopacket.Packet, want icmpQuoteCase) {
+	t.Helper()
+	l := p.Layer(layers.LayerTypeICMPv4)
+	if l == nil {
+		t.Fatal("期望 ICMP 层")
+	}
+	icmp := l.(*layers.ICMPv4)
+	if icmp.TypeCode.Type() != want.typ || icmp.TypeCode.Code() != want.code {
+		t.Fatalf("type/code 不符合预期:type=%d code=%d", icmp.TypeCode.Type(), icmp.TypeCode.Code())
+	}
+	inner := gopacket.NewPacket(icmp.Payload, layers.LayerTypeIPv4, gopacket.Default)
+	ipL := inner.Layer(layers.LayerTypeIPv4)
+	if ipL == nil {
+		t.Fatalf("ICMP payload 未解析出内层 IPv4: %x", icmp.Payload)
+	}
+	ip := ipL.(*layers.IPv4)
+	if ip.SrcIP.String() != want.src || ip.DstIP.String() != want.dst || ip.TTL != want.ttl {
+		t.Fatalf("内层 IPv4 不符合预期:src=%s dst=%s ttl=%d", ip.SrcIP, ip.DstIP, ip.TTL)
+	}
+	udpL := inner.Layer(layers.LayerTypeUDP)
+	if udpL == nil {
+		t.Fatal("ICMP payload 未解析出内层 UDP")
+	}
+	udp := udpL.(*layers.UDP)
+	if uint16(udp.SrcPort) != want.sport || uint16(udp.DstPort) != want.dport {
+		t.Fatalf("内层 UDP 不符合预期:sport=%d dport=%d", udp.SrcPort, udp.DstPort)
+	}
+	if !bytes.Equal(udp.Payload, want.payload) {
+		t.Fatalf("内层 payload 不符合预期: got=%x want=%x", udp.Payload, want.payload)
+	}
+}
+
 func readICMPPackets(t *testing.T, data []byte) []*layers.ICMPv4 {
 	t.Helper()
 	r, err := pcapgo.NewReader(bytes.NewReader(data))
@@ -107,6 +191,23 @@ func readICMPPackets(t *testing.T, data []byte) []*layers.ICMPv4 {
 		}
 	}
 	return out
+}
+
+func readPackets(t *testing.T, data []byte) []gopacket.Packet {
+	t.Helper()
+	r, err := pcapgo.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("pcap reader: %v", err)
+	}
+	var pkts []gopacket.Packet
+	for {
+		raw, _, err := r.ReadPacketData()
+		if err != nil {
+			break
+		}
+		pkts = append(pkts, gopacket.NewPacket(raw, r.LinkType(), gopacket.Default))
+	}
+	return pkts
 }
 
 func TestDNSMultiContent(t *testing.T) {
