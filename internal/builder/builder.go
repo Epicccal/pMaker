@@ -15,7 +15,7 @@ type OutPacket struct {
 	Time time.Time
 }
 
-// serOpts:最小版恒开自动修正;畸形开关(逐层关闭)是后续项。
+// serOpts 当前统一修正长度并计算 checksum;逐字段覆盖尚未应用。
 var serOpts = gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
 
 // baseTime:固定基准,配合 index 偏移保证输出确定性(不使用 time.Now)。

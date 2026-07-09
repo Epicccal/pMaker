@@ -1,5 +1,5 @@
-// Package proto 提供各协议与封装层的构造助手,优先复用 gopacket 现成 layer。
+// Package proto 预留给协议与封装层的构造助手。
 //
-// 覆盖以太/VLAN/QinQ/GRE/MPLS/VXLAN 等封装层,以及 IP/TCP/UDP/DNS 等协议层。
-// 封装层须实现 next-proto / EtherType 的自动推导,并允许逐层显式覆盖(构造非标/畸形封装)。
+// 当前协议构造逻辑主要集中在 internal/builder;当某类协议 helper 需要复用或拆分时,
+// 再迁移到本包。
 package proto

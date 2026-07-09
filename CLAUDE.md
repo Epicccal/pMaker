@@ -5,7 +5,7 @@
 ## 项目概述
 
 **pMaker** —— 一个用 Go 编写的 **Pcap 构造工具**,通过声明式配置批量生成各类协议的数据包,
-产出 `.pcap` / `.pcapng` 文件,用于对 **NDR / IDS 等流量监测设备**做检测能力测试。
+产出 `.pcap` 文件(后续可扩展 `.pcapng`),用于对 **NDR / IDS 等流量监测设备**做检测能力测试。
 
 - **形态**:CLI 工具优先(`pmaker gen -f scenario.yaml -o out.pcap`)。当前不对外暴露库 API,一切实现放在 `internal/`。
 - **场景定义**:声明式 **YAML/JSON** 配置文件驱动。非开发者也应能编写/修改测试用例。
@@ -40,7 +40,7 @@ internal/
   builder/           # scenario 模型 -> gopacket layers -> 字节;序列化选项 & 原始字节兜底
   flow/              # 有状态流:TCP 握手、seq/ack 递推、时间戳编排
   proto/             # 各协议/封装层构造助手(eth/vlan/qinq/gre/mpls/vxlan/ip/tcp/udp/dns...),按需拆分
-  writer/            # pcap/pcapng 输出、LinkType、时间戳
+  writer/            # pcap 输出、LinkType、时间戳
 examples/            # 可直接运行的示例场景 YAML
 testdata/            # golden pcap(逐字节比对的测试基准)
 ```
@@ -53,7 +53,7 @@ testdata/            # golden pcap(逐字节比对的测试基准)
 
 - **已实现 stack 模型**:层 eth / vlan(Dot1Q)/ ipv4 / gre / tcp / udp / icmp / dns / payload / payload_hex / http_request / http_response;
   next-proto 自动串接、TCP/UDP checksum 伪首部、ICMP echo request/reply、DNS A/AAAA/CNAME/NS/PTR/MX/TXT、确定性时间戳、golden + gopacket 回读测试。
-- **已实现 flow 最小版**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
+- **已实现 flow 基础版**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
   HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
 - **未实现 / 简化**:flow 的 overlap / 乱序 / 重传 / RTT 定时 / IP 分片 / 多流时间交织未做;
   畸形开关 `fix_lengths` / `checksum` **解析但忽略**(build 时 `slog.Warn`),真正的畸形 / 原始字节兜底待做;
@@ -111,7 +111,7 @@ out.pcap
 
 6. **长度 / MTU / 分片:** 隧道叠加会增加头部开销。用于规避的分片可能发生在**外层或内层**,两处都要能构造。
 
-## flow 场景设计(待实现)
+## flow 场景设计(已实现基础版;后续扩展)
 
 `flows` 不是一种新包结构,而是一个**有状态展开器**:维护 TCP 连接状态,把一段应用层脚本
 展开成一串 **stack 模型的包**,再喂给现有 builder/writer。握手、四次挥手、多轮请求全部复用
@@ -172,25 +172,18 @@ segment: { mss: 8, order: shuffled, overlap: 4, retransmit: [1] }
 
 乱序 / 重叠 / 重传只是"发包顺序与 seq 的组合",状态机本身不变。检测设备的**重组能力**是主战场。
 
-### 落点(一次小重构,新代码集中在 flow)
+### 后续扩展
 
-引入中间态 `PlannedPacket{ Stack []Layer; Time time.Time }`,让 packets 与 flows 汇流到同一处:
+当前 flow 已支持基础 TCP 会话展开。后续若要支持多流按显式时间戳交织、
+更通用的封装 stack 反转或外层/内层分片,可引入类似 `PlannedPacket{ Stack []Layer; Time time.Time }` 的中间态,
+让 packets 与 flows 汇流后统一排序再写盘。
 
-```
-scenario(packets 和/或 flows)
-  packets → 直接映射;  flows → flow.Expand(有状态展开)   ← 唯一新逻辑
-      ▼  []PlannedPacket(带显式时间戳)
-  builder.Build:逐 stack 序列化(现有逻辑不动)→ writer
-```
-
-- 新增 `internal/flow`:`Expand(FlowSpec) ([]PlannedPacket, error)` —— 连接状态机 + 分段 + 定时。
-- `builder` 改为消费 `PlannedPacket`;**per-stack 序列化、checksum 伪首部、next-proto 串接全部复用**。
-- 多个 flow 各自展开后按时间戳**归并排序**再写盘。
+当前 `flow.Expand` 返回 `[]scenario.Packet`,builder 继续消费 stack 模型并复用 per-stack 序列化、checksum 伪首部和 next-proto 串接逻辑。
 
 ### 约束
 
 - **确定性**:时间戳由 `base + 累计 rtt` 派生,seed 控制乱序/抖动,不用 `time.Now()`(保持 golden 可比对)。
-- **封装组合**:当前 flow.stack 先支持 eth/ipv4/tcp/tcp_session;若要把整条会话套进 QinQ/GRE,再升级为更通用的 stack 反转/PlannedPacket。
+- **封装组合**:当前 flow.stack 先支持 eth/ipv4/tcp/tcp_session;若要把整条会话套进 QinQ/GRE,后续再升级为更通用的 stack 反转。
 - **UDP**:退化情形——无握手/挥手、无 seq/ack 的一串数据报(DNS、QUIC 探测)走同一抽象。
 - **测试**:每个 flow 出 golden pcap;回读用 gopacket `reassembly` 重组 TCP 流,断言应用层字节与脚本一致、无空洞、握手/挥手标志序列正确。
 
@@ -221,10 +214,10 @@ scenario(packets 和/或 flows)
 CGO_ENABLED=0 go build -o bin/pmaker ./cmd/pmaker
 
 # 运行:从场景生成 pcap
-./bin/pmaker gen -f examples/tcp_handshake.yaml -o out.pcap
+./bin/pmaker gen -f examples/http_get.yaml -o out.pcap
 
 # 校验场景文件(不出包,只查 schema)
-./bin/pmaker validate -f examples/tcp_handshake.yaml
+./bin/pmaker validate -f examples/http_get.yaml
 
 # 测试 / 覆盖率
 go test ./...

@@ -1,5 +1,5 @@
 # 示例场景:QinQ 双层 VLAN、GRE 隧道、畸形断链。
-# schema 仍在设计中,最终以 internal/scenario 的类型定义为准。
+# schema 以 internal/scenario 的类型定义为准。
 link_type: ethernet
 seed: 42
 packets:

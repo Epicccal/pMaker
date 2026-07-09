@@ -44,8 +44,7 @@ type conn struct {
 
 // Expand 把一条 flow 展开成有序的 stack 包。
 //
-// ponytail: 当前 flow.stack 只支持 eth/ipv4/tcp/tcp_session;要支持 VLAN/GRE 封装时,
-// 升级为 PlannedPacket + 通用 stack 反转(见 CLAUDE.md「flow 场景设计」)。
+// 当前 flow.stack 支持 eth/ipv4/tcp/tcp_session;VLAN/GRE 等会话封装后续扩展。
 func Expand(f scenario.FlowSpec) ([]scenario.Packet, error) {
 	c, err := parseFlowStack(f.Stack)
 	if err != nil {

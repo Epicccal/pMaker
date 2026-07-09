@@ -106,7 +106,7 @@ type (
 		Dst      string  `yaml:"dst"`
 		TTL      *uint8  `yaml:"ttl"`
 		Protocol *string `yaml:"protocol"` // 覆盖:tcp/udp/gre/ipv4
-		// 畸形开关:最小版解析但忽略(build 时告警)。
+		// 畸形开关:当前解析但构建时忽略并告警。
 		Checksum   *Hex  `yaml:"checksum"`
 		FixLengths *bool `yaml:"fix_lengths"`
 	}
@@ -258,7 +258,7 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 	}
 }
 
-// Load 读取并解析场景文件;顶层若是 flows 则明确报未实现。
+// Load 读取并解析场景文件,并为缺省 link_type 设置 ethernet。
 func Load(path string) (*Scenario, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -1,6 +1,5 @@
-// Package writer 将构造好的数据包写入 pcap/pcapng。
+// Package writer 使用 pcapgo 将已构造的数据包写入 pcap。
 //
-// 使用纯 Go 的 gopacket/pcapgo,无需 libpcap、无 CGO,保证跨平台静态编译。
-// 须正确设置 LinkType(含以太头用 LinkTypeEthernet,仅 L3 用 LinkTypeRaw/IPv4);
-// 时间戳来自配置或由 seed 派生,不使用 time.Now()。
+// 写出时根据场景的 link_type 设置 LinkType;每个包的时间戳由上游构造好的
+// builder.OutPacket.Time 提供,writer 不自行生成时间。
 package writer
