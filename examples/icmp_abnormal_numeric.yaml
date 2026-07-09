@@ -1,0 +1,47 @@
+# examples/icmp_abnormal_numeric.yaml
+#
+# ICMPv4 异常响应示例:使用数字 code,并在每条响应前放置触发包。
+link_type: ethernet
+seed: 42
+packets:
+  - name: udp-probe-redirect
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.20", ttl: 64 }
+      - udp:  { sport: 40000, dport: 65000 }
+      - payload:
+          payload: "probe redirect"
+
+  - name: icmp-redirect
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: redirect
+          code: 1
+          quote:
+            stack:
+              - ipv4: { src: "10.0.0.10", dst: "10.0.0.20", ttl: 64 }
+              - udp: { sport: 40000, dport: 65000 }
+              - payload:
+                  payload: "probe redirect"
+
+  - name: ip-probe-parameter-problem
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, protocol: udp, checksum: 0xdead, fix_lengths: false }
+      - udp:  { sport: 40000, dport: 65001 }
+      - payload_hex: 0xdeadbeef
+
+  - name: icmp-parameter-problem
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: parameter_problem
+          code: 0
+          quote:
+            stack:
+              - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, protocol: udp, checksum: 0xdead, fix_lengths: false }
+              - udp: { sport: 40000, dport: 65001 }
+              - payload_hex: 0xdeadbeef
