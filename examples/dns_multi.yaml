@@ -1,7 +1,7 @@
 # examples/dns_multi.yaml
 #
 # 同一个 pcap 中的多组 UDP DNS 请求/响应。
-# 每种 MVP DNS RR 类型(A/AAAA/CNAME/NS/PTR/MX/TXT)各有一组 query/response。
+# 当前支持的 DNS RR 类型(A/AAAA/CNAME/NS/PTR/MX/TXT)各有一组 query/response。
 link_type: ethernet
 seed: 42
 packets:

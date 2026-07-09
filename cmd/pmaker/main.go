@@ -48,7 +48,7 @@ func usage() {
 `)
 }
 
-// cmdGen 串接:internal/scenario.Load -> internal/builder.Build -> internal/writer.Write。
+// cmdGen 串接:Load -> Validate -> flow.Expand -> Build -> Write。
 func cmdGen(args []string) int {
 	fs := flag.NewFlagSet("gen", flag.ExitOnError)
 	in := fs.String("f", "", "输入场景文件 (YAML/JSON)")

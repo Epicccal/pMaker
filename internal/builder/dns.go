@@ -22,7 +22,7 @@ func buildDNS(f *scenario.DNSFields) (*layers.DNS, error) {
 		RA:           f.RecursionAvailable,
 		ResponseCode: dnsRCode(f.RCode),
 	}
-	// gopacket 的 DNS.Z 承载 AD/CD 位所在的保留字段;MVP 先不编码 AD/CD。
+	// gopacket 的 DNS.Z 承载 AD/CD 位所在的保留字段;当前暂不编码 AD/CD。
 	if f.AuthenticatedData || f.CheckingDisabled {
 		slog.Warn("最小版暂不编码 DNS authenticated_data/checking_disabled 标志")
 	}
