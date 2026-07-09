@@ -21,11 +21,16 @@ var serOpts = gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true
 // baseTime:固定基准,配合 index 偏移保证输出确定性(不使用 time.Now)。
 var baseTime = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
+type buildContext struct {
+	packetsByName map[string]scenario.Packet
+}
+
 // Build 把场景模型逐包序列化为字节。
 func Build(s *scenario.Scenario) ([]OutPacket, error) {
+	ctx := buildContext{packetsByName: packetsByName(s.Packets)}
 	out := make([]OutPacket, 0, len(s.Packets))
 	for i, p := range s.Packets {
-		data, err := buildPacket(p)
+		data, err := buildPacket(ctx, p)
 		if err != nil {
 			return nil, fmt.Errorf("packet[%d]: %w", i, err)
 		}
@@ -37,7 +42,17 @@ func Build(s *scenario.Scenario) ([]OutPacket, error) {
 	return out, nil
 }
 
-func serializeStack(stack []scenario.Layer) ([]byte, error) {
+func packetsByName(pkts []scenario.Packet) map[string]scenario.Packet {
+	out := map[string]scenario.Packet{}
+	for _, p := range pkts {
+		if p.Name != "" {
+			out[p.Name] = p
+		}
+	}
+	return out
+}
+
+func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 	serLayers := make([]gopacket.SerializableLayer, 0, len(stack))
 	var netLayer gopacket.NetworkLayer // 最近的 IP 层,供传输层 checksum 伪首部使用
 
@@ -81,7 +96,7 @@ func serializeStack(stack []scenario.Layer) ([]byte, error) {
 			}
 			serLayers = append(serLayers, u)
 		case *scenario.ICMPFields:
-			icmp, payload, err := buildICMP(f)
+			icmp, payload, err := buildICMP(ctx, f)
 			if err != nil {
 				return nil, fmt.Errorf("icmp: %w", err)
 			}
@@ -123,6 +138,6 @@ func serializeStack(stack []scenario.Layer) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func buildPacket(p scenario.Packet) ([]byte, error) {
-	return serializeStack(p.Stack)
+func buildPacket(ctx buildContext, p scenario.Packet) ([]byte, error) {
+	return serializeStack(ctx, p.Stack)
 }
