@@ -40,8 +40,9 @@ type Segment struct {
 
 // Packet 是一个数据包:name 可选 + 由外到内的有序 layer 栈。
 type Packet struct {
-	Name  string  `yaml:"name"`
-	Stack []Layer `yaml:"stack"`
+	Name          string   `yaml:"name"`
+	Stack         []Layer  `yaml:"stack"`
+	SummaryLayers []string `yaml:"-"` // flow 展开后保留应用层协议语义,仅用于 CLI 摘要
 }
 
 // Layer 是层栈中的一层:类型名 + 已按类型解码的字段结构(见各 *Fields)。
