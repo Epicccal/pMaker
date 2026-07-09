@@ -193,6 +193,37 @@ func TestFlowCloseRST(t *testing.T) {
 	}
 }
 
+func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
+	s, err := scenario.Load("../../examples/http_get.yaml")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	for _, f := range s.Flows {
+		fp, err := flow.Expand(f)
+		if err != nil {
+			t.Fatalf("expand: %v", err)
+		}
+		s.Packets = append(s.Packets, fp...)
+	}
+
+	summaries := scenario.SummarizePackets(s.Packets)
+	if len(summaries) < 6 {
+		t.Fatalf("摘要数量=%d,期望至少 6", len(summaries))
+	}
+	want := map[int]string{
+		4: "[4] 10.0.0.10 -> 10.0.0.80  eth/ipv4/tcp/http",
+		6: "[6] 10.0.0.10 <- 10.0.0.80  eth/ipv4/tcp/http",
+	}
+	for n, w := range want {
+		if line := scenario.FormatPacketSummary(n, summaries[n-1]); line != w {
+			t.Errorf("第%d行=%q,期望 %q", n, line, w)
+		}
+	}
+}
+
 func mssOption(tc *layers.TCP) uint16 {
 	for _, o := range tc.Options {
 		if o.OptionType == layers.TCPOptionKindMSS && len(o.OptionData) == 2 {

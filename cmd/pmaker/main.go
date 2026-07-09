@@ -39,11 +39,11 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `pmaker — 从声明式场景文件生成 pcap,用于 NDR/IDS 检测测试
+	fmt.Fprint(os.Stderr, `pmaker — 从声明式场景文件生成 pcap
 
 用法:
-  pmaker gen      -f <scenario.yaml> -o <out.pcap>   从场景生成 pcap
-  pmaker validate -f <scenario.yaml>                 仅校验场景文件(不出包)
+  pmaker gen      -f <scenario.yaml> -o <out.pcap>   从场景文件生成 pcap
+  pmaker validate -f <scenario.yaml>                 校验场景文件
   pmaker version                                     打印版本
 `)
 }
@@ -51,7 +51,7 @@ func usage() {
 // cmdGen 串接:Load -> Validate -> flow.Expand -> Build -> Write。
 func cmdGen(args []string) int {
 	fs := flag.NewFlagSet("gen", flag.ExitOnError)
-	in := fs.String("f", "", "输入场景文件 (YAML/JSON)")
+	in := fs.String("f", "", "输入场景文件 (YAML)")
 	out := fs.String("o", "", "输出 pcap 文件")
 	_ = fs.Parse(args)
 
@@ -87,8 +87,17 @@ func cmdGen(args []string) int {
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		return 1
 	}
-	fmt.Printf("已生成 %s:%d 个包\n", *out, len(pkts))
+	printGenerationSummary(*out, s.Packets, len(pkts))
 	return 0
+}
+
+func printGenerationSummary(path string, packets []scenario.Packet, count int) {
+	fmt.Printf("生成文件: %s\n", path)
+	fmt.Println("Pcap组成:")
+	for i, summary := range scenario.SummarizePackets(packets) {
+		fmt.Println(scenario.FormatPacketSummary(i+1, summary))
+	}
+	fmt.Printf("已生成 %d 个包\n", count)
 }
 
 // cmdValidate 串接:internal/scenario.Load + 校验。

@@ -55,9 +55,9 @@ func Expand(f scenario.FlowSpec) ([]scenario.Packet, error) {
 	// 三次握手(SYN / SYN,ACK 携带通告 MSS)
 	if c.session.open == "" || c.session.open == "handshake" {
 		out = append(out,
-			c.emit(sideSrc, []string{"SYN"}, nil),
-			c.emit(sideDst, []string{"SYN", "ACK"}, nil),
-			c.emit(sideSrc, []string{"ACK"}, nil),
+			c.emit(sideSrc, []string{"SYN"}, nil, nil),
+			c.emit(sideDst, []string{"SYN", "ACK"}, nil, nil),
+			c.emit(sideSrc, []string{"ACK"}, nil, nil),
 		)
 	}
 
@@ -68,23 +68,24 @@ func Expand(f scenario.FlowSpec) ([]scenario.Packet, error) {
 			return nil, err
 		}
 		from := sideOf(m.From)
+		summaryLayers := scenario.SummaryLayerNames(m.Stack)
 		for _, seg := range split(b, segMSS(m)) {
-			out = append(out, c.emit(from, []string{"PSH", "ACK"}, seg))
+			out = append(out, c.emit(from, []string{"PSH", "ACK"}, seg, summaryLayers))
 		}
-		out = append(out, c.emit(from.peer(), []string{"ACK"}, nil))
+		out = append(out, c.emit(from.peer(), []string{"ACK"}, nil, nil))
 	}
 
 	// 关闭:默认四次挥手;rst 表示对端(dst)单包中断连接。
 	switch c.session.close {
 	case "", "fin":
 		out = append(out,
-			c.emit(sideSrc, []string{"FIN", "ACK"}, nil),
-			c.emit(sideDst, []string{"ACK"}, nil),
-			c.emit(sideDst, []string{"FIN", "ACK"}, nil),
-			c.emit(sideSrc, []string{"ACK"}, nil),
+			c.emit(sideSrc, []string{"FIN", "ACK"}, nil, nil),
+			c.emit(sideDst, []string{"ACK"}, nil, nil),
+			c.emit(sideDst, []string{"FIN", "ACK"}, nil, nil),
+			c.emit(sideSrc, []string{"ACK"}, nil, nil),
 		)
 	case "rst":
-		out = append(out, c.emit(sideDst, []string{"RST", "ACK"}, nil))
+		out = append(out, c.emit(sideDst, []string{"RST", "ACK"}, nil, nil))
 	}
 	return out, nil
 }
@@ -115,7 +116,7 @@ func parseFlowStack(stack []scenario.Layer) (*conn, error) {
 }
 
 // emit 发一个方向的段:填 seq/ack、推进状态,产出一个 stack 包。
-func (c *conn) emit(from side, flags []string, chunk []byte) scenario.Packet {
+func (c *conn) emit(from side, flags []string, chunk []byte, summaryLayers []string) scenario.Packet {
 	var seq, ack uint32
 	if from == sideSrc {
 		seq, ack = c.srcSeq, c.dstSeq
@@ -164,7 +165,7 @@ func (c *conn) emit(from side, flags []string, chunk []byte) scenario.Packet {
 			Fields: scenario.PayloadHex("0x" + hex.EncodeToString(chunk)),
 		})
 	}
-	return scenario.Packet{Stack: stack}
+	return scenario.Packet{Stack: stack, SummaryLayers: summaryLayers}
 }
 
 func messagePayload(m scenario.Message) ([]byte, error) {
