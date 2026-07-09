@@ -137,6 +137,7 @@ type (
 		Seq        uint16    `yaml:"seq"`
 		Payload    string    `yaml:"payload"`
 		PayloadHex string    `yaml:"payload_hex"`
+		Quote      *Packet   `yaml:"quote"`
 		Checksum   *Hex      `yaml:"checksum"` // 解析但忽略
 	}
 	PayloadFields struct {
@@ -357,9 +358,25 @@ func validateLayer(l Layer) error {
 		if f.Payload != "" && f.PayloadHex != "" {
 			return fmt.Errorf("payload 和 payload_hex 只能配置一个")
 		}
+		if f.Quote != nil && (f.Payload != "" || f.PayloadHex != "") {
+			return fmt.Errorf("quote 与 payload/payload_hex 只能配置一个")
+		}
 		if f.PayloadHex != "" {
 			if _, err := ParsePayloadHex(f.PayloadHex); err != nil {
 				return err
+			}
+		}
+		if f.Quote != nil {
+			if len(f.Quote.Stack) == 0 {
+				return fmt.Errorf("quote.stack 不能为空")
+			}
+			for _, l := range f.Quote.Stack {
+				if err := validateLayer(l); err != nil {
+					return fmt.Errorf("quote.%s: %w", l.Type, err)
+				}
+			}
+			if len(f.Quote.Stack) == 0 || f.Quote.Stack[0].Type != "ipv4" {
+				return fmt.Errorf("quote.stack 目前必须以 ipv4 开头")
 			}
 		}
 	case *PayloadFields:

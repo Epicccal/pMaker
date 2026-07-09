@@ -45,6 +45,9 @@ func buildICMP(f *scenario.ICMPFields) (*layers.ICMPv4, []byte, error) {
 }
 
 func icmpPayload(f *scenario.ICMPFields) ([]byte, error) {
+	if f.Quote != nil {
+		return serializeStack(f.Quote.Stack)
+	}
 	if f.PayloadHex != "" {
 		return scenario.ParsePayloadHex(f.PayloadHex)
 	}
