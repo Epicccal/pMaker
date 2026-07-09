@@ -8,7 +8,7 @@
 产出 `.pcap` 文件(后续可扩展 `.pcapng`),用于对 **NDR / IDS 等流量监测设备**做检测能力测试。
 
 - **形态**:CLI 工具优先(`pmaker gen -f scenario.yaml -o out.pcap`)。当前不对外暴露库 API,一切实现放在 `internal/`。
-- **场景定义**:声明式 **YAML/JSON** 配置文件驱动。非开发者也应能编写/修改测试用例。
+- **场景定义**:声明式 **YAML** 配置文件驱动。非开发者也应能编写/修改测试用例。
 - **底层构包**:以 `gopacket` 序列化规范包为主,保留**原始字节兜底通道**用于构造畸形包/规避流量。
 
 ### 范围与安全边界(重要)
@@ -24,7 +24,7 @@
 | 语言 | **Go 1.25+** | `go.mod` 里 `go 1.25`(gopacket v1.7 要求);优先用现代标准库(`log/slog`、`errors.Join`、`slices`/`maps`) |
 | 构包/分层 | **`github.com/gopacket/gopacket`** | 社区维护 fork(Google 原版已归档,**不要**用 `google/gopacket`) |
 | 写 pcap | **`gopacket/pcapgo`** | **纯 Go,无需 libpcap,无 CGO**;跨平台静态编译 |
-| 配置解析 | **`gopkg.in/yaml.v3`** | JSON 用标准库 `encoding/json` |
+| 配置解析 | **`gopkg.in/yaml.v3`** | 只支持 YAML 格式配置文件 |
 | CLI | **标准库 `flag`** + 子命令分发 | 子命令树变深再考虑引入 `cobra`,不要一上来就加依赖 |
 
 **构建始终 `CGO_ENABLED=0`** —— 因为写 pcap 走纯 Go 的 pcapgo,无 libpcap 依赖,保证到处能静态编译。
@@ -36,7 +36,7 @@
 ```
 cmd/pmaker/          # main 包:CLI 入口、flag 解析、子命令分发,尽量薄
 internal/
-  scenario/          # YAML/JSON schema 定义、解析、校验(带字段/行号级错误信息)
+  scenario/          # YAML schema 定义、解析、校验(带字段/行号级错误信息)
   builder/           # scenario 模型 -> gopacket layers -> 字节;序列化选项 & 原始字节兜底
   flow/              # 有状态流:TCP 握手、seq/ack 递推、时间戳编排
   proto/             # 各协议/封装层构造助手(eth/vlan/qinq/gre/mpls/vxlan/ip/tcp/udp/dns...),按需拆分
@@ -244,7 +244,7 @@ golangci-lint run # 若已安装
 
 ## 配置文件约定
 
-- YAML 为主,同一 schema 也支持 JSON(便于程序化生成)。
+- 只支持 YAML 格式配置文件。
 - 顶层是**有序的 packet 列表**或 **flow 场景**;字段名 `snake_case`。
 - **每个 packet 是一个 `stack`:从外到内的有序 layer 列表**,每个元素是单键 map(`- vlan: {…}`),
   **允许同类型重复**(QinQ 两层 VLAN)和递归嵌套(GRE 内层再放报文)。

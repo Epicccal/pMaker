@@ -1,4 +1,4 @@
-// Command pmaker 从声明式场景文件(YAML/JSON)生成 pcap,
+// Command pmaker 从声明式场景文件(YAML)生成 pcap,
 // 用于对 NDR/IDS 等流量监测设备做检测能力测试。设计见仓库根目录 CLAUDE.md。
 package main
 
@@ -103,7 +103,7 @@ func printGenerationSummary(path string, packets []scenario.Packet, count int) {
 // cmdValidate 串接:internal/scenario.Load + 校验。
 func cmdValidate(args []string) int {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
-	in := fs.String("f", "", "输入场景文件 (YAML/JSON)")
+	in := fs.String("f", "", "输入场景文件 (YAML)")
 	_ = fs.Parse(args)
 
 	if *in == "" {
