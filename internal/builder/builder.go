@@ -111,6 +111,24 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			if len(payload) > 0 {
 				serLayers = append(serLayers, gopacket.Payload(payload))
 			}
+		case *scenario.ICMPv6Fields:
+			icmp, echo, payload, err := buildICMPv6(ctx, f)
+			if err != nil {
+				return nil, fmt.Errorf("icmpv6: %w", err)
+			}
+			// ICMPv6 校验和依赖 IPv6 伪首部;就近绑定最近的 IP 层(内层 IPv6)。
+			if netLayer != nil {
+				if err := icmp.SetNetworkLayerForChecksum(netLayer); err != nil {
+					return nil, fmt.Errorf("icmpv6: %w", err)
+				}
+			}
+			serLayers = append(serLayers, icmp)
+			if echo != nil {
+				serLayers = append(serLayers, echo)
+			}
+			if len(payload) > 0 {
+				serLayers = append(serLayers, gopacket.Payload(payload))
+			}
 		case *scenario.PayloadFields:
 			b, err := payloadBytes(f)
 			if err != nil {

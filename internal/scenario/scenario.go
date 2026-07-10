@@ -150,6 +150,18 @@ type (
 		QuoteFrom  string    `yaml:"quote_from"`
 		Checksum   *Hex      `yaml:"checksum"` // 解析但忽略
 	}
+	// ICMPv6Fields 镜像 ICMPFields;校验和依赖 IPv6 伪首部(见 builder)。
+	ICMPv6Fields struct {
+		Type       yaml.Node `yaml:"type"`
+		Code       yaml.Node `yaml:"code"`
+		ID         *Hex      `yaml:"id"`
+		Seq        uint16    `yaml:"seq"`
+		Payload    string    `yaml:"payload"`
+		PayloadHex string    `yaml:"payload_hex"`
+		Quote      *Packet   `yaml:"quote"`
+		QuoteFrom  string    `yaml:"quote_from"`
+		Checksum   *Hex      `yaml:"checksum"` // 解析但忽略
+	}
 	PayloadFields struct {
 		Payload    string `yaml:"payload"`
 		PayloadHex string `yaml:"payload_hex"`
@@ -248,6 +260,9 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 	case "icmp":
 		var f ICMPFields
 		return &f, val.Decode(&f)
+	case "icmpv6", "icmp6":
+		var f ICMPv6Fields
+		return &f, val.Decode(&f)
 	case "payload":
 		var f PayloadFields
 		return &f, val.Decode(&f)
@@ -325,16 +340,24 @@ func packetNameCounts(pkts []Packet) map[string]int {
 }
 
 func validateQuoteFrom(l Layer, packetNames map[string]int) error {
-	f, ok := l.Fields.(*ICMPFields)
-	if !ok || f.QuoteFrom == "" {
+	var name string
+	switch f := l.Fields.(type) {
+	case *ICMPFields:
+		name = f.QuoteFrom
+	case *ICMPv6Fields:
+		name = f.QuoteFrom
+	default:
 		return nil
 	}
-	count := packetNames[f.QuoteFrom]
+	if name == "" {
+		return nil
+	}
+	count := packetNames[name]
 	if count == 0 {
-		return fmt.Errorf("quote_from 引用未知 packet %q", f.QuoteFrom)
+		return fmt.Errorf("quote_from 引用未知 packet %q", name)
 	}
 	if count > 1 {
-		return fmt.Errorf("quote_from 引用的 packet %q 不唯一", f.QuoteFrom)
+		return fmt.Errorf("quote_from 引用的 packet %q 不唯一", name)
 	}
 	return nil
 }
@@ -426,6 +449,34 @@ func validateLayer(l Layer) error {
 			}
 			if len(f.Quote.Stack) == 0 || f.Quote.Stack[0].Type != "ipv4" {
 				return fmt.Errorf("quote.stack 目前必须以 ipv4 开头")
+			}
+		}
+	case *ICMPv6Fields:
+		payloadKinds := 0
+		for _, present := range []bool{f.Payload != "", f.PayloadHex != "", f.Quote != nil, f.QuoteFrom != ""} {
+			if present {
+				payloadKinds++
+			}
+		}
+		if payloadKinds > 1 {
+			return fmt.Errorf("quote/quote_from/payload/payload_hex 只能配置一个")
+		}
+		if f.PayloadHex != "" {
+			if _, err := ParsePayloadHex(f.PayloadHex); err != nil {
+				return err
+			}
+		}
+		if f.Quote != nil {
+			if len(f.Quote.Stack) == 0 {
+				return fmt.Errorf("quote.stack 不能为空")
+			}
+			for _, l := range f.Quote.Stack {
+				if err := validateLayer(l); err != nil {
+					return fmt.Errorf("quote.%s: %w", l.Type, err)
+				}
+			}
+			if len(f.Quote.Stack) == 0 || f.Quote.Stack[0].Type != "ipv6" {
+				return fmt.Errorf("quote.stack 目前必须以 ipv6 开头")
 			}
 		}
 	case *PayloadFields:

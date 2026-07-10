@@ -1,0 +1,27 @@
+# examples/icmpv6_echo.yaml
+#
+# ICMPv6 echo request/reply(ping6) 示例。镜像 icmp_echo.yaml。
+link_type: ethernet
+seed: 42
+packets:
+  - name: icmpv6-echo-request
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::1", hop_limit: 64 }
+      - icmpv6:
+          type: 128
+          code: 0
+          id: 0x1234
+          seq: 1
+          payload_hex: 0x68656c6c6f
+
+  - name: icmpv6-echo-reply
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv6: { src: "2001:db8::1", dst: "2001:db8::10", hop_limit: 64 }
+      - icmpv6:
+          type: 129
+          code: 0
+          id: 0x1234
+          seq: 1
+          payload_hex: 0x68656c6c6f

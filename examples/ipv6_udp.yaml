@@ -1,0 +1,12 @@
+# examples/ipv6_udp.yaml
+#
+# 纯 IPv6/UDP 规范用例:eth/ipv6/udp/payload。补上纯 IPv6 规范闭环。
+link_type: ethernet
+seed: 42
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::20", hop_limit: 64 }
+      - udp:  { sport: 53000, dport: 53 }
+      - payload:
+          payload: "v6-udp-probe"

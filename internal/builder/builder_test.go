@@ -271,3 +271,68 @@ func TestParseBackIPv6InGRE(t *testing.T) {
 		t.Errorf("缺少内层 TCP(就近 IPv6 checksum 绑定)")
 	}
 }
+
+// TestParseBackICMPv6 构造 eth/ipv6/icmpv6 echo 并回读,验证 LayerTypeICMPv6 +
+// LayerTypeICMPv6Echo、IPv6 NextHeader 串接与伪首部 checksum 绑定。
+func TestParseBackICMPv6(t *testing.T) {
+	id := scenario.Hex(0x1234)
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Packets: []scenario.Packet{{
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+				{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2"}},
+				{Type: "icmpv6", Fields: &scenario.ICMPv6Fields{
+					Type:       yaml.Node{Kind: yaml.ScalarNode, Value: "echo_request"},
+					ID:         &id,
+					Seq:        1,
+					PayloadHex: "0x68656c6c6f",
+				}},
+			},
+		}},
+	}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	pkts, err := builder.Build(s)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := readPackets(t, buf.Bytes())
+	if len(got) != 1 {
+		t.Fatalf("期望 1 个包,得到 %d", len(got))
+	}
+	ip := got[0].Layer(layers.LayerTypeIPv6).(*layers.IPv6)
+	if ip.NextHeader != layers.IPProtocolICMPv6 {
+		t.Errorf("IPv6 next header = %v,期望 ICMPv6", ip.NextHeader)
+	}
+	icmpL := got[0].Layer(layers.LayerTypeICMPv6)
+	if icmpL == nil {
+		t.Fatalf("缺少 ICMPv6 层")
+	}
+	icmp := icmpL.(*layers.ICMPv6)
+	if icmp.TypeCode.Type() != 128 || icmp.TypeCode.Code() != 0 {
+		t.Errorf("ICMPv6 type/code = %d/%d,期望 128/0", icmp.TypeCode.Type(), icmp.TypeCode.Code())
+	}
+	// 校验和依赖 IPv6 伪首部;非零证明已就近绑定内层 IPv6。
+	if icmp.Checksum == 0 {
+		t.Errorf("ICMPv6 checksum=0,期望已用 IPv6 伪首部计算")
+	}
+	echoL := got[0].Layer(layers.LayerTypeICMPv6Echo)
+	if echoL == nil {
+		t.Fatalf("缺少 ICMPv6Echo 层")
+	}
+	echo := echoL.(*layers.ICMPv6Echo)
+	if echo.Identifier != 0x1234 || echo.SeqNumber != 1 {
+		t.Errorf("echo id/seq = %#x/%d,期望 0x1234/1", echo.Identifier, echo.SeqNumber)
+	}
+	// echo 数据跟在 4 字节 echo 头之后;gopacket 的 ICMPv6Echo 未设置 BaseLayer,
+	// 数据落在 ICMPv6 层 payload 中。
+	if !bytes.Equal(icmp.LayerPayload()[4:], []byte("hello")) {
+		t.Errorf("echo payload = %q,期望 hello", icmp.LayerPayload()[4:])
+	}
+}

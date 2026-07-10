@@ -32,7 +32,7 @@ go.work.sum
 # .vscode/
 
 # Claude Code local settings
-.claude/settings.local.json
+.claude/
 
 # Build output
 /bin/

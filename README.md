@@ -58,7 +58,7 @@
 
 - 单层 VLAN / QinQ
 - GRE 隧道
-- 外层 / 内层 IPv4
+- 外层 / 内层 IPv4 / IPv6
 - next-proto / EtherType 自动串接
 - 显式覆盖协议字段制造解析断链
 
@@ -81,9 +81,10 @@
 
 ### 网络层 / 传输层 / 应用层
 
+- IPv4 / IPv6
 - TCP
 - UDP
-- ICMP 
+- ICMPv4 / ICMPv6
 - HTTP
 - DNS
 - ...
@@ -122,6 +123,7 @@ eth / vlan / vlan / ipv4 / tcp
 eth / ipv4 / gre / ipv4 / tcp
 eth / ipv4 / udp / dns
 eth / ipv4 / icmp
+eth / ipv6 / icmpv6
 ```
 
 这让 QinQ、GRE、隧道内层协议、重复封装都成为自然的一等能力，而不是后补的特殊 case。

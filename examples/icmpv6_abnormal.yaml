@@ -1,0 +1,33 @@
+# examples/icmpv6_abnormal.yaml
+#
+# ICMPv6 畸形/规避用例。镜像现有 icmp_abnormal_*.yaml 风格:
+# ① next_header 显式覆盖制造解析断链(IPv6 声称后接 UDP,实际载荷为 ICMPv6);
+# ② checksum 覆盖(解析但构建时忽略并告警,序列化为合规包)。
+link_type: ethernet
+seed: 42
+packets:
+  # ① 断链:IPv6 NextHeader 显式指向 udp,但内层实为 ICMPv6。
+  #    被测设备按 UDP 解析载荷会失败 —— 测试其对 next-header 不一致的处理。
+  - name: icmpv6-next-header-break
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::1", next_header: udp }
+      - icmpv6:
+          type: echo_request
+          code: 0
+          id: 0x1234
+          seq: 1
+          payload_hex: 0x68656c6c6f
+
+  # ② checksum 覆盖:解析但忽略(对齐畸形开关现状,序列化为合规包)。
+  - name: icmpv6-checksum-ignored
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::1", hop_limit: 64 }
+      - icmpv6:
+          type: echo_request
+          code: 0
+          id: 0x1234
+          seq: 1
+          checksum: 0xdead
+          payload_hex: 0x68656c6c6f
