@@ -58,6 +58,10 @@ func icmpPayload(ctx buildContext, f *scenario.ICMPFields) ([]byte, error) {
 	return []byte(f.Payload), nil
 }
 
+// icmpQuoteFrom 按 RFC 792 从触发包提取 quote:internet 头(IPv4 头,IHL×4 字节)
+// + 原始数据报数据的前 64 位(8 字节)。从序列化后的 IPv4 stack 回解析 IHL 以
+// 兼容带选项的头;触发包短于头+8 时截到可用长度。(区别于 ICMPv6 RFC 4443 的
+// "尽量包含整个触发包,上限 1280 字节"。)
 func icmpQuoteFrom(ctx buildContext, name string) ([]byte, error) {
 	p, ok := ctx.packetsByName[name]
 	if !ok {

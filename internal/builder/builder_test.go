@@ -2,6 +2,7 @@ package builder_test
 
 import (
 	"bytes"
+	"net"
 	"testing"
 
 	"github.com/gopacket/gopacket"
@@ -163,5 +164,175 @@ func TestParseBackQinQGRE(t *testing.T) {
 	}
 	if got := countLayers(pkts[1], layers.LayerTypeIPv4); got != 2 {
 		t.Errorf("包②期望 2 层 IPv4(外层+隧道内层),得到 %d", got)
+	}
+}
+
+// TestParseBackIPv6 构造 IPv6/UDP 包并回读,验证 IPv6 层字段、next-header 串接与 checksum 绑定。
+func TestParseBackIPv6(t *testing.T) {
+	hopLimit := uint8(64)
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Packets: []scenario.Packet{{
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+				{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2", HopLimit: &hopLimit}},
+				{Type: "udp", Fields: &scenario.UDPFields{SPort: 53000, DPort: 53}},
+				{Type: "payload", Fields: &scenario.PayloadFields{Payload: "v6probe"}},
+			},
+		}},
+	}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	pkts, err := builder.Build(s)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := readPackets(t, buf.Bytes())
+	if len(got) != 1 {
+		t.Fatalf("期望 1 个包,得到 %d", len(got))
+	}
+	ipL := got[0].Layer(layers.LayerTypeIPv6)
+	if ipL == nil {
+		t.Fatalf("缺少 IPv6 层")
+	}
+	ip := ipL.(*layers.IPv6)
+	if ip.Version != 6 || ip.HopLimit != 64 {
+		t.Errorf("IPv6 version/hoplimit = %d/%d,期望 6/64", ip.Version, ip.HopLimit)
+	}
+	if !ip.SrcIP.Equal(net.ParseIP("2001:db8::1")) || !ip.DstIP.Equal(net.ParseIP("2001:db8::2")) {
+		t.Errorf("IPv6 src/dst = %s/%s", ip.SrcIP, ip.DstIP)
+	}
+	if ip.NextHeader != layers.IPProtocolUDP {
+		t.Errorf("IPv6 next header = %v,期望 UDP", ip.NextHeader)
+	}
+	udpL := got[0].Layer(layers.LayerTypeUDP)
+	if udpL == nil {
+		t.Fatalf("缺少 UDP 层(next-header 串接失败)")
+	}
+	udp := udpL.(*layers.UDP)
+	// UDP checksum 依赖 IPv6 伪首部;gopacket 解析后校验位应非零且正确。
+	if udp.Checksum == 0 {
+		t.Errorf("UDP checksum=0,期望已用 IPv6 伪首部计算")
+	}
+	if !bytes.Equal(udp.Payload, []byte("v6probe")) {
+		t.Errorf("UDP payload = %q,期望 v6probe", udp.Payload)
+	}
+}
+
+// TestParseBackIPv6InGRE 验证 GRE 隧道承载内层 IPv6(外层 IPv4 → GRE → IPv6 → TCP)。
+func TestParseBackIPv6InGRE(t *testing.T) {
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Packets: []scenario.Packet{{
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "1.1.1.1", Dst: "2.2.2.2"}},
+				{Type: "gre", Fields: &scenario.GREFields{}},
+				{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::10", Dst: "2001:db8::20"}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1234, DPort: 443, Flags: []string{"SYN"}}},
+			},
+		}},
+	}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	pkts, err := builder.Build(s)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := readPackets(t, buf.Bytes())
+	if len(got) != 1 {
+		t.Fatalf("期望 1 个包,得到 %d", len(got))
+	}
+	if got[0].Layer(layers.LayerTypeGRE) == nil {
+		t.Errorf("缺少 GRE 层")
+	}
+	// 外层 IPv4 + 内层 IPv6 各一层
+	if got[0].Layer(layers.LayerTypeIPv4) == nil {
+		t.Errorf("缺少外层 IPv4")
+	}
+	inner := got[0].Layer(layers.LayerTypeIPv6)
+	if inner == nil {
+		t.Fatalf("缺少内层 IPv6")
+	}
+	if inner.(*layers.IPv6).NextHeader != layers.IPProtocolTCP {
+		t.Errorf("内层 IPv6 next header = %v,期望 TCP", inner.(*layers.IPv6).NextHeader)
+	}
+	if got[0].Layer(layers.LayerTypeTCP) == nil {
+		t.Errorf("缺少内层 TCP(就近 IPv6 checksum 绑定)")
+	}
+}
+
+// TestParseBackICMPv6 构造 eth/ipv6/icmpv6 echo 并回读,验证 LayerTypeICMPv6 +
+// LayerTypeICMPv6Echo、IPv6 NextHeader 串接与伪首部 checksum 绑定。
+func TestParseBackICMPv6(t *testing.T) {
+	id := scenario.Hex(0x1234)
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Packets: []scenario.Packet{{
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+				{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2"}},
+				{Type: "icmpv6", Fields: &scenario.ICMPv6Fields{
+					Type:       yaml.Node{Kind: yaml.ScalarNode, Value: "echo_request"},
+					ID:         &id,
+					Seq:        1,
+					PayloadHex: "0x68656c6c6f",
+				}},
+			},
+		}},
+	}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	pkts, err := builder.Build(s)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := readPackets(t, buf.Bytes())
+	if len(got) != 1 {
+		t.Fatalf("期望 1 个包,得到 %d", len(got))
+	}
+	ip := got[0].Layer(layers.LayerTypeIPv6).(*layers.IPv6)
+	if ip.NextHeader != layers.IPProtocolICMPv6 {
+		t.Errorf("IPv6 next header = %v,期望 ICMPv6", ip.NextHeader)
+	}
+	icmpL := got[0].Layer(layers.LayerTypeICMPv6)
+	if icmpL == nil {
+		t.Fatalf("缺少 ICMPv6 层")
+	}
+	icmp := icmpL.(*layers.ICMPv6)
+	if icmp.TypeCode.Type() != 128 || icmp.TypeCode.Code() != 0 {
+		t.Errorf("ICMPv6 type/code = %d/%d,期望 128/0", icmp.TypeCode.Type(), icmp.TypeCode.Code())
+	}
+	// 校验和依赖 IPv6 伪首部;非零证明已就近绑定内层 IPv6。
+	if icmp.Checksum == 0 {
+		t.Errorf("ICMPv6 checksum=0,期望已用 IPv6 伪首部计算")
+	}
+	echoL := got[0].Layer(layers.LayerTypeICMPv6Echo)
+	if echoL == nil {
+		t.Fatalf("缺少 ICMPv6Echo 层")
+	}
+	echo := echoL.(*layers.ICMPv6Echo)
+	if echo.Identifier != 0x1234 || echo.SeqNumber != 1 {
+		t.Errorf("echo id/seq = %#x/%d,期望 0x1234/1", echo.Identifier, echo.SeqNumber)
+	}
+	// echo 数据跟在 4 字节 echo 头之后;gopacket 的 ICMPv6Echo 未设置 BaseLayer,
+	// 数据落在 ICMPv6 层 payload 中。
+	if !bytes.Equal(icmp.LayerPayload()[4:], []byte("hello")) {
+		t.Errorf("echo payload = %q,期望 hello", icmp.LayerPayload()[4:])
 	}
 }

@@ -89,6 +89,94 @@ func TestICMPEchoContent(t *testing.T) {
 	}
 }
 
+func TestICMPv6EchoContent(t *testing.T) {
+	pkts := readPackets(t, generatePcap(t, "../../examples/icmpv6_echo.yaml"))
+	icmpv6Pkts := []*layers.ICMPv6{}
+	for _, p := range pkts {
+		if l := p.Layer(layers.LayerTypeICMPv6); l != nil {
+			icmpv6Pkts = append(icmpv6Pkts, l.(*layers.ICMPv6))
+		}
+	}
+	if len(icmpv6Pkts) != 2 {
+		t.Fatalf("期望 2 个 ICMPv6 包,得到 %d", len(icmpv6Pkts))
+	}
+
+	for i, want := range []struct{ typ uint8 }{{128}, {129}} {
+		p := pkts[i]
+		icmp := icmpv6Pkts[i]
+		if icmp.TypeCode.Type() != want.typ || icmp.TypeCode.Code() != 0 {
+			t.Fatalf("包%d type/code 不符合预期:type=%d code=%d", i, icmp.TypeCode.Type(), icmp.TypeCode.Code())
+		}
+		// 校验和依赖 IPv6 伪首部;非零证明伪首部已绑定生效。
+		if icmp.Checksum == 0 {
+			t.Fatalf("包%d ICMPv6 checksum=0,期望已用 IPv6 伪首部计算", i)
+		}
+		echoL := p.Layer(layers.LayerTypeICMPv6Echo)
+		if echoL == nil {
+			t.Fatalf("包%d 缺少 ICMPv6Echo 层", i)
+		}
+		echo := echoL.(*layers.ICMPv6Echo)
+		if echo.Identifier != 0x1234 || echo.SeqNumber != 1 {
+			t.Fatalf("包%d echo 不符合预期:id=%#x seq=%d", i, echo.Identifier, echo.SeqNumber)
+		}
+		// echo 数据跟在 4 字节 echo 头(identifier/seq)之后;
+		// gopacket 的 ICMPv6Echo 未设置 BaseLayer,echo 数据落在 ICMPv6 层 payload 中。
+		echoData := icmp.LayerPayload()[4:]
+		if !bytes.Equal(echoData, []byte("hello")) {
+			t.Fatalf("包%d echo payload=%q,期望 hello", i, echoData)
+		}
+	}
+}
+
+func TestICMPv6QuoteContent(t *testing.T) {
+	pkts := readPackets(t, generatePcap(t, "../../examples/icmpv6_quote_from.yaml"))
+	if len(pkts) != 2 {
+		t.Fatalf("期望 2 个包,得到 %d", len(pkts))
+	}
+
+	// RFC 4443 §2.4(c):quote 尽量包含整个触发包(从 IPv6 头起整段)。
+	// 触发包:eth/ipv6/udp/payload → quote = IPv6(40)+ UDP(8)+ payload(16)= 64B。
+	orig := pkts[0]
+	origIP := orig.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
+	wantQuote := append([]byte{}, origIP.Contents...) // IPv6 头 40B
+	wantQuote = append(wantQuote, origIP.Payload...)  // UDP 头 + 整段 payload
+
+	reply := pkts[1]
+	icmpL := reply.Layer(layers.LayerTypeICMPv6)
+	if icmpL == nil {
+		t.Fatal("响应包缺少 ICMPv6 层")
+	}
+	icmp := icmpL.(*layers.ICMPv6)
+	if icmp.TypeCode.Type() != 1 || icmp.TypeCode.Code() != 4 { // dest_unreachable / port_unreachable
+		t.Fatalf("type/code 不符合预期:type=%d code=%d", icmp.TypeCode.Type(), icmp.TypeCode.Code())
+	}
+	if icmp.Checksum == 0 {
+		t.Fatal("ICMPv6 checksum=0,期望已用 IPv6 伪首部计算")
+	}
+	if len(icmp.Payload) != 64 {
+		t.Fatalf("quote 长度=%d,期望 64(IPv6 头 40 + UDP 头 8 + payload 16)", len(icmp.Payload))
+	}
+	if !bytes.Equal(icmp.Payload, wantQuote) {
+		t.Fatalf("quote payload=%x,期望 %x", icmp.Payload, wantQuote)
+	}
+	inner := gopacket.NewPacket(icmp.Payload, layers.LayerTypeIPv6, gopacket.Default)
+	if inner.Layer(layers.LayerTypeIPv6) == nil {
+		t.Fatalf("quote 未解析出内层 IPv6: %x", icmp.Payload)
+	}
+	udp := inner.Layer(layers.LayerTypeUDP)
+	if udp == nil {
+		t.Fatal("quote 未解析出内层 UDP")
+	}
+	u := udp.(*layers.UDP)
+	if uint16(u.SrcPort) != 40000 || uint16(u.DstPort) != 65000 {
+		t.Fatalf("内层 UDP 端口不符合预期:sport=%d dport=%d", u.SrcPort, u.DstPort)
+	}
+	// quote 未截断,应包含完整 payload。
+	if !bytes.Equal(u.Payload, []byte("abcdefghijklmnop")) {
+		t.Fatalf("内层 payload 不符合预期: got=%q want=%q", u.Payload, "abcdefghijklmnop")
+	}
+}
+
 func TestICMPAbnormalContent(t *testing.T) {
 	t.Run("named", func(t *testing.T) {
 		pkts := readPackets(t, generatePcap(t, "../../examples/icmp_abnormal_named.yaml"))

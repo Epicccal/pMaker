@@ -18,10 +18,14 @@ func ipProtoFor(next string) layers.IPProtocol {
 		return layers.IPProtocolUDP
 	case "icmp":
 		return layers.IPProtocolICMPv4
+	case "icmpv6", "icmp6":
+		return layers.IPProtocolICMPv6
 	case "gre":
 		return layers.IPProtocolGRE
 	case "ipv4":
 		return layers.IPProtocolIPv4 // IP-in-IP
+	case "ipv6":
+		return layers.IPProtocolIPv6 // IPv6-in-IPv6
 	default:
 		return layers.IPProtocolTCP
 	}
@@ -51,6 +55,37 @@ func buildIPv4(f *scenario.IPv4Fields, next string) (*layers.IPv4, error) {
 	}
 	if f.FixLengths != nil || f.Checksum != nil {
 		slog.Warn("最小版忽略 ipv4 畸形开关(fix_lengths/checksum),序列化为合规包", "src", f.Src, "dst", f.Dst)
+	}
+	return ip, nil
+}
+
+func buildIPv6(f *scenario.IPv6Fields, next string) (*layers.IPv6, error) {
+	src := net.ParseIP(f.Src)
+	dst := net.ParseIP(f.Dst)
+	if src == nil || src.To4() != nil {
+		return nil, fmt.Errorf("src ip %q 不是合法 IPv6", f.Src)
+	}
+	if dst == nil || dst.To4() != nil {
+		return nil, fmt.Errorf("dst ip %q 不是合法 IPv6", f.Dst)
+	}
+	ip := &layers.IPv6{
+		Version:    6,
+		HopLimit:   64,
+		SrcIP:      src.To16(),
+		DstIP:      dst.To16(),
+		NextHeader: ipProtoFor(next),
+	}
+	if f.HopLimit != nil {
+		ip.HopLimit = *f.HopLimit
+	}
+	if f.TrafficClass != nil {
+		ip.TrafficClass = *f.TrafficClass
+	}
+	if f.FlowLabel != nil {
+		ip.FlowLabel = *f.FlowLabel
+	}
+	if f.NextHeader != nil {
+		ip.NextHeader = ipProtoFor(*f.NextHeader)
 	}
 	return ip, nil
 }

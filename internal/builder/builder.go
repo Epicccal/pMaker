@@ -78,6 +78,13 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			}
 			netLayer = ip
 			serLayers = append(serLayers, ip)
+		case *scenario.IPv6Fields:
+			ip, err := buildIPv6(f, next)
+			if err != nil {
+				return nil, fmt.Errorf("ipv6: %w", err)
+			}
+			netLayer = ip
+			serLayers = append(serLayers, ip)
 		case *scenario.GREFields:
 			serLayers = append(serLayers, buildGRE(next))
 		case *scenario.TCPFields:
@@ -101,6 +108,24 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 				return nil, fmt.Errorf("icmp: %w", err)
 			}
 			serLayers = append(serLayers, icmp)
+			if len(payload) > 0 {
+				serLayers = append(serLayers, gopacket.Payload(payload))
+			}
+		case *scenario.ICMPv6Fields:
+			icmp, echo, payload, err := buildICMPv6(ctx, f)
+			if err != nil {
+				return nil, fmt.Errorf("icmpv6: %w", err)
+			}
+			// ICMPv6 校验和依赖 IPv6 伪首部;就近绑定最近的 IP 层(内层 IPv6)。
+			if netLayer != nil {
+				if err := icmp.SetNetworkLayerForChecksum(netLayer); err != nil {
+					return nil, fmt.Errorf("icmpv6: %w", err)
+				}
+			}
+			serLayers = append(serLayers, icmp)
+			if echo != nil {
+				serLayers = append(serLayers, echo)
+			}
 			if len(payload) > 0 {
 				serLayers = append(serLayers, gopacket.Payload(payload))
 			}

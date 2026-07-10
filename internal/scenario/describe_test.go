@@ -53,6 +53,20 @@ func TestSummarizePackets(t *testing.T) {
 				{Type: "http_response"},
 			},
 		},
+		{
+			Stack: []Layer{
+				{Type: "eth"},
+				{Type: "ipv6", Fields: &IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2"}},
+				{Type: "tcp"},
+			},
+		},
+		{
+			Stack: []Layer{
+				{Type: "eth"},
+				{Type: "ipv6", Fields: &IPv6Fields{Src: "2001:db8::2", Dst: "2001:db8::1"}},
+				{Type: "icmpv6"},
+			},
+		},
 	}
 
 	got := SummarizePackets(pkts)
@@ -63,6 +77,8 @@ func TestSummarizePackets(t *testing.T) {
 		"[4] - -> -  eth",
 		"[5] 10.0.0.1 -> 10.0.0.2  eth/ipv4/tcp/http",
 		"[6] - -> -  http",
+		"[7] 2001:db8::1 -> 2001:db8::2  eth/ipv6/tcp",
+		"[8] 2001:db8::2 -> 2001:db8::1  eth/ipv6/icmpv6",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("摘要数量=%d,期望 %d", len(got), len(want))

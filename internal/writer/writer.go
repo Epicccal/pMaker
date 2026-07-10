@@ -23,8 +23,10 @@ func linkType(name string) (layers.LinkType, error) {
 		return layers.LinkTypeRaw, nil
 	case "ipv4":
 		return layers.LinkTypeIPv4, nil
+	case "ipv6":
+		return layers.LinkTypeIPv6, nil
 	default:
-		return 0, fmt.Errorf("未知 link_type %q(支持 ethernet/raw/ipv4)", name)
+		return 0, fmt.Errorf("未知 link_type %q(支持 ethernet/raw/ipv4/ipv6)", name)
 	}
 }
 

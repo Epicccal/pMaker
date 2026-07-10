@@ -1,0 +1,24 @@
+# examples/icmpv6_quote_from.yaml
+#
+# ICMPv6 Destination Unreachable 标准 quote 示例:quote_from 自动按 RFC 4443
+# 从触发包提取 IPv6 头(40 字节)+ 原始数据前 8 字节。
+# 镜像 icmp_quote_from.yaml。
+link_type: ethernet
+seed: 42
+packets:
+  - name: udp-probe
+    stack:
+      - eth:  { src: "00:00:00:00:00:01", dst: "00:00:00:00:00:02" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::1", hop_limit: 64 }
+      - udp:  { sport: 40000, dport: 65000 }
+      - payload:
+          payload: "abcdefghijklmnop"
+
+  - name: icmpv6-port-unreachable
+    stack:
+      - eth:  { src: "00:00:00:00:00:02", dst: "00:00:00:00:00:01" }
+      - ipv6: { src: "2001:db8::1", dst: "2001:db8::10", hop_limit: 64 }
+      - icmpv6:
+          type: destination_unreachable
+          code: port_unreachable
+          quote_from: udp-probe
