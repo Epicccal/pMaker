@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  用声明式 YAML 构造可复现的离线流量样本，让 NDR / IDS 检测验证流量像代码一样可读、可审、可回归。
+  用声明式文件构造可复现的离线流量样本，让验证流量像代码一样可读、可审、可回归。
 </p>
 
 <p align="center">
@@ -46,7 +46,7 @@
 
 **pMaker 是一个离线 pcap 构造器：用 YAML 描述协议栈和会话行为，输出确定性 `.pcap` 文件。**
 
-它不抓包、不发包、不打开 raw socket，而是把检测验证中的“临时造流量”变成可以沉淀在仓库里的测试资产。
+它不抓包、不发包、不打开 raw socket，而是把 “临时造流量” 变成可以沉淀在仓库里的测试资产。
 
 ## 适合构造什么？
 
@@ -79,13 +79,14 @@
 <tr>
 <td width="50%">
 
-### ICMP / DNS / 应用层
+### 网络层 / 传输层 / 应用层
 
-- ICMP echo
-- ICMP Destination Unreachable
-- RFC 792 quote 自动生成
-- DNS 多类型记录
-- HTTP 请求 / 响应序列化
+- TCP
+- UDP
+- ICMP 
+- HTTP
+- DNS
+- ...
 
 </td>
 <td width="50%">
@@ -195,90 +196,6 @@ client                                             server
 - MSS 分段
 - 多轮请求 / 响应
 
-## ICMP quote_from：把 RFC 792 变成一个字段
-
-ICMP error message 的 quoted datagram 不需要重复手写。
-
-```yaml
-packets:
-  - name: udp-probe
-    stack:
-      - eth:  { src: "00:00:00:00:00:01", dst: "00:00:00:00:00:02" }
-      - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64 }
-      - udp:  { sport: 40000, dport: 65000 }
-      - payload:
-          payload: "abcdefghijklmnop"
-
-  - name: icmp-port-unreachable
-    stack:
-      - eth:  { src: "00:00:00:00:00:02", dst: "00:00:00:00:00:01" }
-      - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
-      - icmp:
-          type: destination_unreachable
-          code: port_unreachable
-          quote_from: udp-probe
-```
-
-pMaker 会自动生成：
-
-```text
-IPv4 header + first 64 bits of original datagram
-```
-
-需要刻意构造异常 quote 时，也可以继续使用低层 `quote` 手工指定。
-
-## raw bytes 是一等公民
-
-结构化协议层适合构造规范包：
-
-```yaml
-- http_request:
-    method: GET
-    url: /index.html
-```
-
-原始字节适合构造边界和异常：
-
-```yaml
-- payload_hex: 0xdeadbeef
-```
-
-这意味着 pMaker 不只适合“正常协议样本”，也适合沉淀 IDS / NDR 场景中的规避、畸形、截断和未知协议片段。
-
-## 生成结果先给你一个摘要
-
-```bash
-./bin/pmaker gen -f examples/http_get.yaml -o out.pcap
-```
-
-```text
-生成文件: out.pcap
-Pcap组成:
-[1] 10.0.0.10 -> 10.0.0.80  eth/ipv4/tcp
-[2] 10.0.0.10 <- 10.0.0.80  eth/ipv4/tcp
-[3] 10.0.0.10 -> 10.0.0.80  eth/ipv4/tcp/http
-已生成 3 个包
-```
-
-摘要关注协议层组成，不把 raw payload 误展示成应用协议。
-
-## 支持矩阵
-
-| 分类 | 当前能力 |
-| --- | --- |
-| 配置格式 | YAML |
-| 输出格式 | pcap |
-| LinkType | Ethernet |
-| L2 / 封装 | Ethernet, VLAN, QinQ, GRE |
-| L3 | IPv4 |
-| L4 | TCP, UDP, ICMPv4 |
-| 应用层 | DNS, HTTP request, HTTP response |
-| 原始载荷 | text payload, hex payload |
-| TCP flow | handshake, seq/ack, MSS segment, FIN, RST |
-| ICMP error | named type/code, RFC 792 `quote_from`, manual quote |
-| 确定性 | fixed base timestamp, stable serialization |
-| 网络行为 | offline only |
-
 ## 快速开始
 
 ### 构建
@@ -342,7 +259,7 @@ pMaker 是离线 pcap 构造工具：
 - 不执行实时注入
 - 默认不触碰网络接口
 
-生成的 `.pcap` 可交给 `tcpreplay`、NDR / IDS 测试环境或分析工具使用。
+生成的 `.pcap` 可交给 `tcpreplay`、网络安全设备或分析工具使用。
 
 如果未来增加实时注入能力，应放在独立且默认关闭的构建标签后，并显式提示权限要求。
 
@@ -352,5 +269,3 @@ pMaker 是离线 pcap 构造工具：
 不是流量黑盒生成器
 而是可声明、可审查、可复现、可回归的 pcap 构造器
 ```
-
-pMaker 的目标不是“临时生成一个包”，而是把检测能力验证样本沉淀为长期维护的 YAML 资产。
