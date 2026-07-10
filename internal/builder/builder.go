@@ -78,6 +78,13 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			}
 			netLayer = ip
 			serLayers = append(serLayers, ip)
+		case *scenario.IPv6Fields:
+			ip, err := buildIPv6(f, next)
+			if err != nil {
+				return nil, fmt.Errorf("ipv6: %w", err)
+			}
+			netLayer = ip
+			serLayers = append(serLayers, ip)
 		case *scenario.GREFields:
 			serLayers = append(serLayers, buildGRE(next))
 		case *scenario.TCPFields:

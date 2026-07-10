@@ -111,6 +111,14 @@ type (
 		Checksum   *Hex  `yaml:"checksum"`
 		FixLengths *bool `yaml:"fix_lengths"`
 	}
+	IPv6Fields struct {
+		Src          string  `yaml:"src"`
+		Dst          string  `yaml:"dst"`
+		HopLimit     *uint8  `yaml:"hop_limit"`     // 跳数限制(类比 IPv4 ttl),缺省 64
+		TrafficClass *uint8  `yaml:"traffic_class"` // 缺省 0
+		FlowLabel    *uint32 `yaml:"flow_label"`    // 缺省 0
+		NextHeader   *string `yaml:"next_header"`   // 覆盖:tcp/udp/icmpv6/ipv4/ipv6(制造断链)
+	}
 	GREFields struct{}
 	TCPFields struct {
 		SPort     uint16   `yaml:"sport"`
@@ -221,6 +229,9 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 		return &f, val.Decode(&f)
 	case "ipv4":
 		var f IPv4Fields
+		return &f, val.Decode(&f)
+	case "ipv6":
+		var f IPv6Fields
 		return &f, val.Decode(&f)
 	case "gre":
 		var f GREFields
@@ -374,6 +385,10 @@ func validateLayer(l Layer) error {
 			return fmt.Errorf("需要 src 与 dst")
 		}
 	case *IPv4Fields:
+		if f.Src == "" || f.Dst == "" {
+			return fmt.Errorf("需要 src 与 dst")
+		}
+	case *IPv6Fields:
 		if f.Src == "" || f.Dst == "" {
 			return fmt.Errorf("需要 src 与 dst")
 		}

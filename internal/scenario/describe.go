@@ -15,11 +15,11 @@ type PacketSummary struct {
 
 // SummarizePackets 从已展开的包列表生成展示用摘要。
 func SummarizePackets(pkts []Packet) []PacketSummary {
-	baseSrc, baseDst, hasBase := firstIPv4Pair(pkts)
+	baseSrc, baseDst, hasBase := firstIPPair(pkts)
 
 	out := make([]PacketSummary, 0, len(pkts))
 	for _, p := range pkts {
-		src, dst, ok := packetIPv4Pair(p)
+		src, dst, ok := packetIPPair(p)
 		left, right, arrow := "-", "-", "->"
 		if ok {
 			switch {
@@ -46,20 +46,24 @@ func FormatPacketSummary(index int, s PacketSummary) string {
 	return fmt.Sprintf("[%d] %s %s %s  %s", index, s.LeftIP, s.Arrow, s.RightIP, s.Stack)
 }
 
-func firstIPv4Pair(pkts []Packet) (string, string, bool) {
+func firstIPPair(pkts []Packet) (string, string, bool) {
 	for _, p := range pkts {
-		if src, dst, ok := packetIPv4Pair(p); ok {
+		if src, dst, ok := packetIPPair(p); ok {
 			return src, dst, true
 		}
 	}
 	return "", "", false
 }
 
-func packetIPv4Pair(p Packet) (string, string, bool) {
+// packetIPPair 返回包里最近一层 IP(IPv4 或 IPv6)的 src/dst 文本,供摘要展示。
+func packetIPPair(p Packet) (string, string, bool) {
 	var src, dst string
 	ok := false
 	for _, l := range p.Stack {
-		if f, isIPv4 := l.Fields.(*IPv4Fields); isIPv4 {
+		switch f := l.Fields.(type) {
+		case *IPv4Fields:
+			src, dst, ok = f.Src, f.Dst, true
+		case *IPv6Fields:
 			src, dst, ok = f.Src, f.Dst, true
 		}
 	}
