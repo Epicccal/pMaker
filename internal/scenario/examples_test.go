@@ -134,11 +134,12 @@ func TestICMPv6QuoteContent(t *testing.T) {
 		t.Fatalf("期望 2 个包,得到 %d", len(pkts))
 	}
 
-	// 触发包:eth/ipv6/udp/payload,取其 IPv6 头(40B)+ 后续 8B 作期望 quote。
+	// RFC 4443 §2.4(c):quote 尽量包含整个触发包(从 IPv6 头起整段)。
+	// 触发包:eth/ipv6/udp/payload → quote = IPv6(40)+ UDP(8)+ payload(16)= 64B。
 	orig := pkts[0]
 	origIP := orig.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
-	wantQuote := append([]byte{}, origIP.Contents...)
-	wantQuote = append(wantQuote, origIP.Payload[:8]...)
+	wantQuote := append([]byte{}, origIP.Contents...) // IPv6 头 40B
+	wantQuote = append(wantQuote, origIP.Payload...)  // UDP 头 + 整段 payload
 
 	reply := pkts[1]
 	icmpL := reply.Layer(layers.LayerTypeICMPv6)
@@ -152,9 +153,8 @@ func TestICMPv6QuoteContent(t *testing.T) {
 	if icmp.Checksum == 0 {
 		t.Fatal("ICMPv6 checksum=0,期望已用 IPv6 伪首部计算")
 	}
-	// RFC 4443 quote = IPv6 头(40)+ 8 字节。
-	if len(icmp.Payload) != 48 {
-		t.Fatalf("quote 长度=%d,期望 48", len(icmp.Payload))
+	if len(icmp.Payload) != 64 {
+		t.Fatalf("quote 长度=%d,期望 64(IPv6 头 40 + UDP 头 8 + payload 16)", len(icmp.Payload))
 	}
 	if !bytes.Equal(icmp.Payload, wantQuote) {
 		t.Fatalf("quote payload=%x,期望 %x", icmp.Payload, wantQuote)
@@ -165,10 +165,15 @@ func TestICMPv6QuoteContent(t *testing.T) {
 	}
 	udp := inner.Layer(layers.LayerTypeUDP)
 	if udp == nil {
-		t.Fatal("quote 未解析出内层 UDP(8 字节应含 UDP 头)")
+		t.Fatal("quote 未解析出内层 UDP")
 	}
-	if uint16(udp.(*layers.UDP).SrcPort) != 40000 || uint16(udp.(*layers.UDP).DstPort) != 65000 {
-		t.Fatalf("内层 UDP 端口不符合预期:sport=%d dport=%d", udp.(*layers.UDP).SrcPort, udp.(*layers.UDP).DstPort)
+	u := udp.(*layers.UDP)
+	if uint16(u.SrcPort) != 40000 || uint16(u.DstPort) != 65000 {
+		t.Fatalf("内层 UDP 端口不符合预期:sport=%d dport=%d", u.SrcPort, u.DstPort)
+	}
+	// quote 未截断,应包含完整 payload。
+	if !bytes.Equal(u.Payload, []byte("abcdefghijklmnop")) {
+		t.Fatalf("内层 payload 不符合预期: got=%q want=%q", u.Payload, "abcdefghijklmnop")
 	}
 }
 

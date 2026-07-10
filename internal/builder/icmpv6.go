@@ -63,8 +63,10 @@ func icmpv6Payload(ctx buildContext, f *scenario.ICMPv6Fields) ([]byte, error) {
 	return []byte(f.Payload), nil
 }
 
-// icmpv6QuoteFrom 按 RFC 4443 从触发包提取 quote:IPv6 固定头(40 字节,
-// 当前 IPv6 层不带扩展头)+ 触发包后续 8 字节。
+// icmpv6QuoteFrom 按 RFC 4443 §2.4(c) 从触发包提取 quote:错误消息须尽量包含
+// 整个触发包,仅受"整个错误包不超过最小 IPv6 MTU(1280 字节)"限制。外层 IPv6
+// 头(40)+ ICMPv6 头(4)共 44 字节开销,故 quote 上限 1236 字节。当前 IPv6 层不
+// 带扩展头,从 IPv6 固定头起整段截取。(区别于 ICMPv4 RFC 792 的"头+8 字节"。)
 func icmpv6QuoteFrom(ctx buildContext, name string) ([]byte, error) {
 	p, ok := ctx.packetsByName[name]
 	if !ok {
@@ -82,9 +84,10 @@ func icmpv6QuoteFrom(ctx buildContext, name string) ([]byte, error) {
 	if len(b) < headerLen {
 		return nil, fmt.Errorf("IPv6 quote 长度不足: %d < %d", len(b), headerLen)
 	}
-	quoteLen := headerLen + 8
-	if quoteLen > len(b) {
-		quoteLen = len(b)
+	const maxQuote = 1280 - 40 - 4 // 1236;最小 IPv6 MTU 减去外层 IPv6 头与 ICMPv6 头开销
+	quoteLen := len(b)
+	if quoteLen > maxQuote {
+		quoteLen = maxQuote
 	}
 	return append([]byte(nil), b[:quoteLen]...), nil
 }
