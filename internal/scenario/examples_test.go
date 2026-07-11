@@ -21,10 +21,21 @@ import (
 
 var update = flag.Bool("update", false, "regenerate golden pcap files")
 
-// TestExamplesGolden 把 examples/ 下每个 YAML 都作为正式测试用例。
-// 新增示例时,这里会自动要求生成对应的 testdata/<name>.pcap。
+// TestExamplesGolden 把 examples/<协议>/ 下每个 YAML 都作为正式测试用例。
+// 子目录按协议组织(icmp/icmpv6/http/dns/ipv6/tunnel ...),golden 镜像到
+// testdata/<协议>/<name>.pcap,避免跨协议同名文件冲突。
+// 新增示例时,这里会自动要求生成对应的 golden。
 func TestExamplesGolden(t *testing.T) {
-	files, err := filepath.Glob("../../examples/*.yaml")
+	var files []string
+	err := filepath.WalkDir("../../examples", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && filepath.Ext(path) == ".yaml" {
+			files = append(files, path)
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +44,12 @@ func TestExamplesGolden(t *testing.T) {
 	}
 
 	for _, src := range files {
-		name := strings.TrimSuffix(filepath.Base(src), filepath.Ext(src))
+		// 子测试名用相对 examples/ 的路径(去扩展名),如 "icmp/echo"。
+		rel, err := filepath.Rel("../../examples", src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := filepath.ToSlash(strings.TrimSuffix(rel, filepath.Ext(rel)))
 		t.Run(name, func(t *testing.T) {
 			got := generatePcap(t, src)
 			golden := filepath.Join("testdata", name+".pcap")
@@ -58,7 +74,7 @@ func TestExamplesGolden(t *testing.T) {
 }
 
 func TestHTTPKeepaliveLFIContent(t *testing.T) {
-	pcap := generatePcap(t, "../../examples/http_keepalive_lfi.yaml")
+	pcap := generatePcap(t, "../../examples/http/keepalive_lfi.yaml")
 	for _, want := range [][]byte{
 		[]byte("GET /robots.txt HTTP/1.1"),
 		[]byte("HTTP/1.1 404 Not Found"),
@@ -73,7 +89,7 @@ func TestHTTPKeepaliveLFIContent(t *testing.T) {
 }
 
 func TestICMPEchoContent(t *testing.T) {
-	pcap := generatePcap(t, "../../examples/icmp_echo.yaml")
+	pcap := generatePcap(t, "../../examples/icmp/echo.yaml")
 	icmpPackets := readICMPPackets(t, pcap)
 	if len(icmpPackets) != 2 {
 		t.Fatalf("期望 2 个 ICMP 包,得到 %d", len(icmpPackets))
@@ -90,7 +106,7 @@ func TestICMPEchoContent(t *testing.T) {
 }
 
 func TestICMPv6EchoContent(t *testing.T) {
-	pkts := readPackets(t, generatePcap(t, "../../examples/icmpv6_echo.yaml"))
+	pkts := readPackets(t, generatePcap(t, "../../examples/icmpv6/echo.yaml"))
 	icmpv6Pkts := []*layers.ICMPv6{}
 	for _, p := range pkts {
 		if l := p.Layer(layers.LayerTypeICMPv6); l != nil {
@@ -129,7 +145,7 @@ func TestICMPv6EchoContent(t *testing.T) {
 }
 
 func TestICMPv6QuoteContent(t *testing.T) {
-	pkts := readPackets(t, generatePcap(t, "../../examples/icmpv6_quote_from.yaml"))
+	pkts := readPackets(t, generatePcap(t, "../../examples/icmpv6/dest_unreachable.yaml"))
 	if len(pkts) != 2 {
 		t.Fatalf("期望 2 个包,得到 %d", len(pkts))
 	}
@@ -184,23 +200,28 @@ func TestICMPv6QuoteContent(t *testing.T) {
 }
 
 func TestICMPAbnormalContent(t *testing.T) {
-	t.Run("named", func(t *testing.T) {
-		pkts := readPackets(t, generatePcap(t, "../../examples/icmp_abnormal_named.yaml"))
+	t.Run("dest_unreachable", func(t *testing.T) {
+		pkts := readPackets(t, generatePcap(t, "../../examples/icmp/dest_unreachable.yaml"))
 		cases := []icmpQuoteCase{
-			{typ: 3, code: 0, src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, sport: 40000, dport: 65000, payload: []byte("probe net")},
-			{typ: 3, code: 1, src: "10.0.0.10", dst: "10.0.0.2", ttl: 64, sport: 40000, dport: 65001, payload: []byte("probe host")},
-			{typ: 3, code: 2, src: "10.0.0.10", dst: "10.0.0.3", ttl: 64, sport: 40000, dport: 65002, payload: []byte("probe protocol")},
-			{typ: 3, code: 3, src: "10.0.0.10", dst: "10.0.0.4", ttl: 64, sport: 40000, dport: 65003, payload: []byte("probe port")},
-			{typ: 3, code: 4, src: "10.0.0.10", dst: "10.0.0.5", ttl: 64, sport: 40000, dport: 65004, payload: []byte("probe frag")},
-			{typ: 3, code: 5, src: "10.0.0.10", dst: "10.0.0.6", ttl: 64, sport: 40000, dport: 65005, payload: []byte("probe route")},
-			{typ: 11, code: 0, src: "10.0.0.10", dst: "8.8.8.8", ttl: 1, sport: 40000, dport: 65006, payload: []byte("probe ttl")},
-			{typ: 11, code: 1, src: "10.0.0.10", dst: "8.8.4.4", ttl: 64, sport: 40000, dport: 65007, payload: []byte("probe reassembly")},
+			{typ: 3, code: 0, src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, sport: 40000, dport: 65000},
+			{typ: 3, code: 1, src: "10.0.0.10", dst: "10.0.0.2", ttl: 64, sport: 40000, dport: 65001},
+			{typ: 3, code: 2, src: "10.0.0.10", dst: "10.0.0.3", ttl: 64, sport: 40000, dport: 65002},
+			{typ: 3, code: 3, src: "10.0.0.10", dst: "10.0.0.4", ttl: 64, sport: 40000, dport: 65003},
+		}
+		assertICMPQuoteCases(t, pkts, cases)
+	})
+
+	t.Run("time_exceeded", func(t *testing.T) {
+		pkts := readPackets(t, generatePcap(t, "../../examples/icmp/time_exceeded.yaml"))
+		cases := []icmpQuoteCase{
+			{typ: 11, code: 0, src: "10.0.0.10", dst: "8.8.8.8", ttl: 1, sport: 40000, dport: 65006},
+			{typ: 11, code: 1, src: "10.0.0.10", dst: "8.8.4.4", ttl: 64, sport: 40000, dport: 65007},
 		}
 		assertICMPQuoteCases(t, pkts, cases)
 	})
 
 	t.Run("numeric", func(t *testing.T) {
-		pkts := readPackets(t, generatePcap(t, "../../examples/icmp_abnormal_numeric.yaml"))
+		pkts := readPackets(t, generatePcap(t, "../../examples/icmp/abnormal_numeric.yaml"))
 		cases := []icmpQuoteCase{
 			{typ: 5, code: 1, src: "10.0.0.10", dst: "10.0.0.20", ttl: 64, sport: 40000, dport: 65000, payload: []byte("probe redirect")},
 			{typ: 12, code: 0, src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, sport: 40000, dport: 65001, payload: []byte{0xde, 0xad, 0xbe, 0xef}},
@@ -262,7 +283,9 @@ func assertQuotedICMP(t *testing.T, p gopacket.Packet, want icmpQuoteCase) {
 	if uint16(udp.SrcPort) != want.sport || uint16(udp.DstPort) != want.dport {
 		t.Fatalf("内层 UDP 不符合预期:sport=%d dport=%d", udp.SrcPort, udp.DstPort)
 	}
-	if !bytes.Equal(udp.Payload, want.payload) {
+	// payload 仅在内联 quote(含完整数据)时断言;quote_from 按 RFC 792 只取头+8 字节,
+	// 不含 UDP payload,此时 want.payload 为 nil,跳过检查。
+	if want.payload != nil && !bytes.Equal(udp.Payload, want.payload) {
 		t.Fatalf("内层 payload 不符合预期: got=%x want=%x", udp.Payload, want.payload)
 	}
 }
@@ -305,7 +328,7 @@ func readPackets(t *testing.T, data []byte) []gopacket.Packet {
 }
 
 func TestDNSMultiContent(t *testing.T) {
-	pcap := generatePcap(t, "../../examples/dns_multi.yaml")
+	pcap := generatePcap(t, "../../examples/dns/multi.yaml")
 	dnsPackets := readDNSPackets(t, pcap)
 	if len(dnsPackets) != 14 {
 		t.Fatalf("期望 14 个 DNS 包(7 组 query/response),得到 %d", len(dnsPackets))

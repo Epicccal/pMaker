@@ -1,0 +1,13 @@
+# examples/tunnel/gre_ipv6.yaml
+#
+# GRE 隧道承载内层 IPv6:外层 IPv4 → GRE → 内层 IPv6 → TCP。
+# 演示跨地址族封装与就近 IPv6 checksum 绑定(内层 TCP 绑内层 IPv6)。
+link_type: ethernet
+seed: 42
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "1.1.1.1", dst: "2.2.2.2", ttl: 64 }   # 外层,protocol 自动 = GRE(47)
+      - gre:  {}                                             # protocol 自动 = 内层 ethertype(0x86dd)
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::20", hop_limit: 64 }
+      - tcp:  { sport: 1234, dport: 443, flags: [SYN] }

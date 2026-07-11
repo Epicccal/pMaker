@@ -1,4 +1,4 @@
-# examples/ipv6_udp.yaml
+# examples/ipv6/udp.yaml
 #
 # 纯 IPv6/UDP 规范用例:eth/ipv6/udp/payload。补上纯 IPv6 规范闭环。
 link_type: ethernet

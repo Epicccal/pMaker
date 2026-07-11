@@ -41,7 +41,7 @@ internal/
   flow/              # 有状态流:TCP 握手、seq/ack 递推、时间戳编排
   proto/             # 各协议/封装层构造助手(eth/vlan/qinq/gre/mpls/vxlan/ip/tcp/udp/dns...),按需拆分
   writer/            # pcap 输出、LinkType、时间戳
-examples/            # 可直接运行的示例场景 YAML
+examples/            # 可直接运行的示例场景 YAML,按协议分目录:examples/<协议>/<name>.yaml
 testdata/            # golden pcap(逐字节比对的测试基准)
 ```
 
@@ -214,10 +214,10 @@ segment: { mss: 8, order: shuffled, overlap: 4, retransmit: [1] }
 CGO_ENABLED=0 go build -o bin/pmaker ./cmd/pmaker
 
 # 运行:从场景生成 pcap
-./bin/pmaker gen -f examples/http_get.yaml -o out.pcap
+./bin/pmaker gen -f examples/http/get.yaml -o out.pcap
 
 # 校验场景文件(不出包,只查 schema)
-./bin/pmaker validate -f examples/http_get.yaml
+./bin/pmaker validate -f examples/http/get.yaml
 
 # 测试 / 覆盖率
 go test ./...
@@ -255,7 +255,7 @@ golangci-lint run # 若已安装
 示意(最终 schema 以 `internal/scenario` 的类型定义为准):
 
 ```yaml
-# examples/qinq_gre.yaml
+# examples/tunnel/qinq_gre.yaml
 link_type: ethernet
 seed: 42
 packets:
@@ -295,6 +295,6 @@ packets:
 2. `internal/scenario/` 加该协议的 schema 结构体 + 校验规则。
 3. `internal/builder/` 接线:scenario 字段 → layer;暴露畸形开关(关闭 fix/checksum、raw 注入)。
    **若是封装层**,还须实现 next-proto/ethertype 的自动推导,并允许逐层显式覆盖。
-4. `examples/` 加一个规范用例 + 一个畸形用例;**封装/隧道层再加一个嵌套用例(如 QinQ / GRE 套接)**。
+4. `examples/<协议>/` 加一个规范用例 + 一个畸形用例(单职责、小而聚焦);**封装/隧道层再加一个嵌套用例(如 QinQ / GRE 套接)**。
 5. 加 golden 测试并生成基准;`go test -race ./...` 通过。
 6. README/示例文档同步。

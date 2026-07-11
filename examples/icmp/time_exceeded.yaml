@@ -1,0 +1,40 @@
+# examples/icmp/time_exceeded.yaml
+#
+# ICMPv4 Time Exceeded(Type 11)codes 0/1 示例(RFC 792)。
+# code 0 = TTL 超时(触发包 ttl=1),code 1 = 分片重组超时。
+link_type: ethernet
+seed: 42
+packets:
+  # code 0: TTL exceeded in transit
+  - name: udp-probe-ttl
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "8.8.8.8", ttl: 1 }
+      - udp:  { sport: 40000, dport: 65006 }
+      - payload:
+          payload: "probe ttl"
+  - name: icmp-ttl-exceeded
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.254", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: time_exceeded
+          code: ttl_exceeded
+          quote_from: udp-probe-ttl
+
+  # code 1: fragment reassembly time exceeded
+  - name: udp-probe-reassembly
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "8.8.4.4", ttl: 64 }
+      - udp:  { sport: 40000, dport: 65007 }
+      - payload:
+          payload: "probe reassembly"
+  - name: icmp-reassembly-exceeded
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.254", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: time_exceeded
+          code: fragment_reassembly_time_exceeded
+          quote_from: udp-probe-reassembly

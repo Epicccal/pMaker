@@ -1,0 +1,24 @@
+# examples/icmp/frag_needed.yaml
+#
+# ICMPv4 Destination Unreachable code 4(Fragmentation Needed)携带下一跳 MTU
+# (RFC 1191,MTU 在 bytes 6-7)。演示 code 4 + mtu 字段。
+link_type: ethernet
+seed: 42
+packets:
+  - name: udp-probe-frag
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.5", ttl: 64 }
+      - udp:  { sport: 40000, dport: 65004 }
+      - payload:
+          payload: "probe frag"
+
+  - name: icmp-fragmentation-needed
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: destination_unreachable
+          code: fragmentation_needed
+          mtu: 1492
+          quote_from: udp-probe-frag

@@ -1,0 +1,23 @@
+# examples/icmp/parameter_problem.yaml
+#
+# ICMPv4 Parameter Problem(Type 12)携带 Pointer(byte 4,出错字节偏移,RFC 792)。
+link_type: ethernet
+seed: 42
+packets:
+  - name: udp-probe-parameter
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64 }
+      - udp:  { sport: 40000, dport: 65001 }
+      - payload:
+          payload: "probe parameter"
+
+  - name: icmp-parameter-problem
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: parameter_problem
+          code: 0
+          pointer: 8
+          quote_from: udp-probe-parameter
