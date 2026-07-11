@@ -1,6 +1,8 @@
-# examples/icmp_abnormal_numeric.yaml
+# examples/icmp/abnormal_numeric.yaml
 #
-# ICMPv4 异常响应示例:使用数字 code,并在每条响应前放置触发包。
+# ICMPv4 异常响应示例:使用数字 type/code(非命名),并用内联 quote.stack。
+# 与 dest_unreachable/redirect/parameter_problem 的"命名 code + quote_from"风格互补,
+# 演示"数字写法"这条不同维度。
 link_type: ethernet
 seed: 42
 packets:
@@ -17,7 +19,7 @@ packets:
       - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
       - icmp:
-          type: redirect
+          type: 5
           code: 1
           quote:
             stack:
@@ -38,7 +40,7 @@ packets:
       - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
       - icmp:
-          type: parameter_problem
+          type: 12
           code: 0
           quote:
             stack:

@@ -1,0 +1,42 @@
+# examples/icmpv6/time_exceeded.yaml
+#
+# ICMPv6 Time Exceeded(Type 3)codes 0/1 示例(RFC 4443 §3.3)。
+# code 0 = Hop Limit Exceeded in transit(触发包 hop_limit=1),
+# code 1 = Fragment Reassembly Time Exceeded。
+# 错误报文含 4 字节 Unused 字段 + quote。
+link_type: ethernet
+seed: 42
+packets:
+  # code 0: hop limit exceeded
+  - name: udp-probe-hop-limit
+    stack:
+      - eth:  { src: "00:00:00:00:00:01", dst: "00:00:00:00:00:02" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::1", hop_limit: 1 }
+      - udp:  { sport: 40000, dport: 65006 }
+      - payload:
+          payload: "probe hop limit"
+  - name: icmpv6-hop-limit-exceeded
+    stack:
+      - eth:  { src: "00:00:00:00:00:02", dst: "00:00:00:00:00:01" }
+      - ipv6: { src: "2001:db8::1", dst: "2001:db8::10", hop_limit: 64 }
+      - icmpv6:
+          type: time_exceeded
+          code: hop_limit_exceeded
+          quote_from: udp-probe-hop-limit
+
+  # code 1: fragment reassembly time exceeded
+  - name: udp-probe-reassembly
+    stack:
+      - eth:  { src: "00:00:00:00:00:01", dst: "00:00:00:00:00:02" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::1", hop_limit: 64 }
+      - udp:  { sport: 40000, dport: 65007 }
+      - payload:
+          payload: "probe reassembly"
+  - name: icmpv6-reassembly-exceeded
+    stack:
+      - eth:  { src: "00:00:00:00:00:02", dst: "00:00:00:00:00:01" }
+      - ipv6: { src: "2001:db8::1", dst: "2001:db8::10", hop_limit: 64 }
+      - icmpv6:
+          type: time_exceeded
+          code: fragment_reassembly_time_exceeded
+          quote_from: udp-probe-reassembly

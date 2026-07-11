@@ -1,4 +1,4 @@
-# examples/http_keepalive_lfi.yaml
+# examples/http/keepalive_lfi.yaml
 #
 # 同一条 HTTP keep-alive 流中的两轮请求/响应:
 # 1) GET /robots.txt -> 404 Not Found
@@ -83,7 +83,7 @@ flows:
                 _apt:x:42:65534::/nonexistent:/usr/sbin/nologin
                 nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin
                 systemd-network:x:998:998:systemd Network Management:/:/usr/sbin/nologin
-                dhcpcd:x:996:996:DHCP Client Daemon:/usr/lib/dhcpcd:/bin/false
+                dhcpcd:x:996:996:DHCP Client Daemon:/lib/dhcpcd:/bin/false
                 messagebus:x:995:995:System Message Bus:/nonexistent:/usr/sbin/nologin
                 syslog:x:100:101::/nonexistent:/usr/sbin/nologin
                 systemd-resolve:x:989:989:systemd Resolver:/:/usr/sbin/nologin

@@ -1,7 +1,8 @@
-# examples/icmpv6_parameter_problem.yaml
+# examples/icmpv6/dest_unreachable.yaml
 #
-# ICMPv6 Parameter Problem(RFC 4443 §3.4)规范示例:
-# Checksum 之后携带 4 字节 Pointer 字段(出错字节偏移),之后为触发包 quote。
+# ICMPv6 Destination Unreachable(Type 1,code 4 port_unreachable)示例。
+# quote_from 自动按 RFC 4443 从触发包提取 IPv6 头 + 后续数据(尽力含整包,≤1280)。
+# 错误报文在 Checksum 与 quote 之间含 4 字节 Unused 字段(RFC 4443 §3)。
 link_type: ethernet
 seed: 42
 packets:
@@ -13,12 +14,11 @@ packets:
       - payload:
           payload: "abcdefghijklmnop"
 
-  - name: icmpv6-parameter-problem
+  - name: icmpv6-port-unreachable
     stack:
       - eth:  { src: "00:00:00:00:00:02", dst: "00:00:00:00:00:01" }
       - ipv6: { src: "2001:db8::1", dst: "2001:db8::10", hop_limit: 64 }
       - icmpv6:
-          type: parameter_problem
-          code: 0
-          pointer: 6
+          type: destination_unreachable
+          code: port_unreachable
           quote_from: udp-probe

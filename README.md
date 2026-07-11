@@ -211,13 +211,13 @@ pMaker 使用纯 Go 的 `pcapgo` 写文件，无需 libpcap / CGO。
 ### 生成 pcap
 
 ```bash
-./bin/pmaker gen -f examples/http_get.yaml -o out.pcap
+./bin/pmaker gen -f examples/http/get.yaml -o out.pcap
 ```
 
 ### 校验 YAML
 
 ```bash
-./bin/pmaker validate -f examples/qinq_gre.yaml
+./bin/pmaker validate -f examples/tunnel/qinq_gre.yaml
 ```
 
 ## YAML 约定

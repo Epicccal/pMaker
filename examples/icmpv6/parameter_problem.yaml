@@ -1,7 +1,7 @@
-# examples/icmpv6_packet_too_big.yaml
+# examples/icmpv6/parameter_problem.yaml
 #
-# ICMPv6 Packet Too Big(RFC 4443 §3.2)规范示例:
-# Checksum 之后携带 4 字节 MTU 字段(下一跳 MTU),之后为触发包 quote。
+# ICMPv6 Parameter Problem(RFC 4443 §3.4):
+# Checksum 之后携带 4 字节 Pointer 字段(出错字节偏移),之后为触发包 quote。
 link_type: ethernet
 seed: 42
 packets:
@@ -13,12 +13,12 @@ packets:
       - payload:
           payload: "abcdefghijklmnop"
 
-  - name: icmpv6-packet-too-big
+  - name: icmpv6-parameter-problem
     stack:
       - eth:  { src: "00:00:00:00:00:02", dst: "00:00:00:00:00:01" }
       - ipv6: { src: "2001:db8::1", dst: "2001:db8::10", hop_limit: 64 }
       - icmpv6:
-          type: packet_too_big
+          type: parameter_problem
           code: 0
-          mtu: 1280
+          pointer: 6
           quote_from: udp-probe

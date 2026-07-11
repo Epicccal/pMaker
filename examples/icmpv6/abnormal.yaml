@@ -1,6 +1,6 @@
-# examples/icmpv6_abnormal.yaml
+# examples/icmpv6/abnormal.yaml
 #
-# ICMPv6 畸形/规避用例。镜像现有 icmp_abnormal_*.yaml 风格:
+# ICMPv6 畸形/规避用例:
 # ① next_header 显式覆盖制造解析断链(IPv6 声称后接 UDP,实际载荷为 ICMPv6);
 # ② checksum 覆盖(解析但构建时忽略并告警,序列化为合规包)。
 link_type: ethernet

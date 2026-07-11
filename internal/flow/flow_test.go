@@ -65,7 +65,7 @@ func readTCP(t *testing.T, data []byte) []*layers.TCP {
 
 // TestFlowShape 校验握手/挥手标志、包数、SYN 携带 MSS option、应用层字节。
 func TestFlowShape(t *testing.T) {
-	data := genFlow(t, "../../examples/http_get.yaml")
+	data := genFlow(t, "../../examples/http/get.yaml")
 	tcps := readTCP(t, data)
 	if len(tcps) != 11 {
 		t.Fatalf("期望 11 个 TCP 包,得到 %d", len(tcps))
@@ -194,7 +194,7 @@ func TestFlowCloseRST(t *testing.T) {
 }
 
 func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
-	s, err := scenario.Load("../../examples/http_get.yaml")
+	s, err := scenario.Load("../../examples/http/get.yaml")
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}

@@ -123,7 +123,7 @@ func u8ptr(v uint8) *uint8 { return &v }
 
 // TestParseBackHTTP 回读 http_stack,断言 Ethernet/IPv4/TCP 与 HTTP 请求行。
 func TestParseBackHTTP(t *testing.T) {
-	data, _ := genPcap(t, "../../examples/http_stack.yaml")
+	data, _ := genPcap(t, "../../examples/http/stack.yaml")
 	pkts := readPackets(t, data)
 	if len(pkts) != 1 {
 		t.Fatalf("期望 1 个包,得到 %d", len(pkts))
@@ -145,7 +145,7 @@ func TestParseBackHTTP(t *testing.T) {
 
 // TestParseBackQinQGRE 回读 qinq_gre,验证封装链正确解码(证明 next-proto 串接)。
 func TestParseBackQinQGRE(t *testing.T) {
-	data, _ := genPcap(t, "../../examples/qinq_gre.yaml")
+	data, _ := genPcap(t, "../../examples/tunnel/qinq_gre.yaml")
 	pkts := readPackets(t, data)
 	if len(pkts) != 3 {
 		t.Fatalf("期望 3 个包,得到 %d", len(pkts))

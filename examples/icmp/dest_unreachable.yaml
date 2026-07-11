@@ -1,0 +1,74 @@
+# examples/icmp/dest_unreachable.yaml
+#
+# ICMPv4 Destination Unreachable(Type 3)各 code 示例(RFC 792)。
+# 每条响应前放触发包,响应用 quote_from 自动按 RFC 792 提取 IPv4 头 + 8 字节。
+link_type: ethernet
+seed: 42
+packets:
+  # code 0: net unreachable
+  - name: udp-probe-net
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64 }
+      - udp:  { sport: 40000, dport: 65000 }
+      - payload:
+          payload: "probe net"
+  - name: icmp-net-unreachable
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: destination_unreachable
+          code: net_unreachable
+          quote_from: udp-probe-net
+
+  # code 1: host unreachable
+  - name: udp-probe-host
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.2", ttl: 64 }
+      - udp:  { sport: 40000, dport: 65001 }
+      - payload:
+          payload: "probe host"
+  - name: icmp-host-unreachable
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: destination_unreachable
+          code: host_unreachable
+          quote_from: udp-probe-host
+
+  # code 2: protocol unreachable
+  - name: udp-probe-protocol
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.3", ttl: 64 }
+      - udp:  { sport: 40000, dport: 65002 }
+      - payload:
+          payload: "probe protocol"
+  - name: icmp-protocol-unreachable
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: destination_unreachable
+          code: protocol_unreachable
+          quote_from: udp-probe-protocol
+
+  # code 3: port unreachable
+  - name: udp-probe-port
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.4", ttl: 64 }
+      - udp:  { sport: 40000, dport: 65003 }
+      - payload:
+          payload: "probe port"
+  - name: icmp-port-unreachable
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: destination_unreachable
+          code: port_unreachable
+          quote_from: udp-probe-port

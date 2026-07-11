@@ -1,0 +1,42 @@
+# examples/http/post.yaml
+#
+# 一次完整的 HTTP/1.1 POST 请求 + 201 响应,跑在 TCP 会话之上(flow 场景)。
+# 演示带 body 的提交:Content-Length 由 auto 自动计算。
+link_type: ethernet
+seed: 42
+
+flows:
+  - name: http-post-201
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49153, dport: 8080, client_isn: 2000, server_isn: 6000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: POST
+              url: /api/login
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                User-Agent: pMaker/0.1
+                Content-Type: application/json
+                Content-Length: auto
+              body: |
+                {"user":"alice","pass":"correct horse battery staple"}
+
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 201
+              reason: Created
+              headers:
+                Server: nginx/1.24.0
+                Content-Type: application/json
+                Content-Length: auto
+                Connection: keep-alive
+              body: |
+                {"ok":true,"token":"abc123"}

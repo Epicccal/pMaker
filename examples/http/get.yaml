@@ -1,4 +1,4 @@
-# examples/http_get.yaml
+# examples/http/get.yaml
 #
 # 一次完整的 HTTP/1.1 GET 请求 + 200 响应,跑在真实 TCP 会话之上(flow 场景)。
 # flow.stack 里的 src 表示 TCP SYN 发起方,dst 表示 SYN 接收方。

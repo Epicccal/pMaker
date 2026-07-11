@@ -1,3 +1,5 @@
+# examples/tunnel/qinq_gre.yaml
+#
 # 示例场景:QinQ 双层 VLAN、GRE 隧道、畸形断链。
 # schema 以 internal/scenario 的类型定义为准。
 link_type: ethernet
