@@ -153,15 +153,21 @@ func TestICMPv6QuoteContent(t *testing.T) {
 	if icmp.Checksum == 0 {
 		t.Fatal("ICMPv6 checksum=0,期望已用 IPv6 伪首部计算")
 	}
-	if len(icmp.Payload) != 64 {
-		t.Fatalf("quote 长度=%d,期望 64(IPv6 头 40 + UDP 头 8 + payload 16)", len(icmp.Payload))
+	// RFC 4443 §3:错误报文在 Checksum 后有 4 字节类型相关字段(Dest Unreachable=Unused=0),
+	// 之后才是 quote。故 ICMPv6 payload = Unused(4) + quote(64) = 68。
+	if len(icmp.Payload) != 68 {
+		t.Fatalf("ICMPv6 payload 长度=%d,期望 68(Unused 4 + IPv6 40 + UDP 8 + payload 16)", len(icmp.Payload))
 	}
-	if !bytes.Equal(icmp.Payload, wantQuote) {
-		t.Fatalf("quote payload=%x,期望 %x", icmp.Payload, wantQuote)
+	if !bytes.Equal(icmp.Payload[:4], make([]byte, 4)) {
+		t.Fatalf("Unused 字段非零: %x", icmp.Payload[:4])
 	}
-	inner := gopacket.NewPacket(icmp.Payload, layers.LayerTypeIPv6, gopacket.Default)
+	quote := icmp.Payload[4:]
+	if !bytes.Equal(quote, wantQuote) {
+		t.Fatalf("quote payload=%x,期望 %x", quote, wantQuote)
+	}
+	inner := gopacket.NewPacket(quote, layers.LayerTypeIPv6, gopacket.Default)
 	if inner.Layer(layers.LayerTypeIPv6) == nil {
-		t.Fatalf("quote 未解析出内层 IPv6: %x", icmp.Payload)
+		t.Fatalf("quote 未解析出内层 IPv6: %x", quote)
 	}
 	udp := inner.Layer(layers.LayerTypeUDP)
 	if udp == nil {

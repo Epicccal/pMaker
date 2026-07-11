@@ -112,7 +112,7 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 				serLayers = append(serLayers, gopacket.Payload(payload))
 			}
 		case *scenario.ICMPv6Fields:
-			icmp, echo, payload, err := buildICMPv6(ctx, f)
+			icmp, echo, reserved, payload, err := buildICMPv6(ctx, f)
 			if err != nil {
 				return nil, fmt.Errorf("icmpv6: %w", err)
 			}
@@ -125,6 +125,11 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			serLayers = append(serLayers, icmp)
 			if echo != nil {
 				serLayers = append(serLayers, echo)
+			}
+			// 错误报文(非 echo)的 4 字节类型相关字段,置于 ICMPv6 头与 quote 之间。
+			// 作为独立 Payload 层,gopacket 的 ICMPv6 checksum 会自动将其纳入计算。
+			if len(reserved) > 0 {
+				serLayers = append(serLayers, gopacket.Payload(reserved))
 			}
 			if len(payload) > 0 {
 				serLayers = append(serLayers, gopacket.Payload(payload))
