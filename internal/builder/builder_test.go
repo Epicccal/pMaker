@@ -2,6 +2,7 @@ package builder_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"net"
 	"testing"
 
@@ -334,5 +335,280 @@ func TestParseBackICMPv6(t *testing.T) {
 	// 数据落在 ICMPv6 层 payload 中。
 	if !bytes.Equal(icmp.LayerPayload()[4:], []byte("hello")) {
 		t.Errorf("echo payload = %q,期望 hello", icmp.LayerPayload()[4:])
+	}
+}
+
+// buildScenarioPcap 跑 scenario -> builder -> writer,返回 pcap 字节。
+func buildScenarioPcap(t *testing.T, s *scenario.Scenario) []byte {
+	t.Helper()
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	pkts, err := builder.Build(s)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// readPcapPackets 用 pcapgo 回读 pcap 字节为 gopacket.Packet 列表。
+func readPcapPackets(t *testing.T, data []byte) []gopacket.Packet {
+	t.Helper()
+	r, err := pcapgo.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("pcapgo reader: %v", err)
+	}
+	var out []gopacket.Packet
+	for {
+		raw, _, err := r.ReadPacketData()
+		if err != nil {
+			break
+		}
+		out = append(out, gopacket.NewPacket(raw, r.LinkType(), gopacket.Default))
+	}
+	return out
+}
+
+// icmpv6ProbeStack:eth/ipv6/udp/payload,供 quote_from 引用。
+func icmpv6ProbeStack() []scenario.Layer {
+	return []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+		{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::10", Dst: "2001:db8::1"}},
+		{Type: "udp", Fields: &scenario.UDPFields{SPort: 40000, DPort: 65000}},
+		{Type: "payload", Fields: &scenario.PayloadFields{Payload: "abcdefghijklmnop"}},
+	}
+}
+
+// icmpv6ErrorScenario 构造 udp-probe + 一条 ICMPv6 错误报文(quote_from)。
+func icmpv6ErrorScenario(typ, code string, f *scenario.ICMPv6Fields) *scenario.Scenario {
+	f.Type = yaml.Node{Kind: yaml.ScalarNode, Value: typ}
+	f.Code = yaml.Node{Kind: yaml.ScalarNode, Value: code}
+	f.QuoteFrom = "udp-probe"
+	return &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{
+		{Name: "udp-probe", Stack: icmpv6ProbeStack()},
+		{Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:02", Dst: "00:00:00:00:00:01"}},
+			{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::10"}},
+			{Type: "icmpv6", Fields: f},
+		}},
+	}}
+}
+
+// TestParseBackICMPv6Error 验证 Dest Unreachable 的 RFC 4443 合规结构:
+// ICMPv6 头(4) + Unused(4,必为 0) + quote,quote 起始于偏移 8 而非 4。
+func TestParseBackICMPv6Error(t *testing.T) {
+	data := buildScenarioPcap(t, icmpv6ErrorScenario("destination_unreachable", "port_unreachable", &scenario.ICMPv6Fields{}))
+	pkts := readPcapPackets(t, data)
+	icmp := pkts[1].Layer(layers.LayerTypeICMPv6).(*layers.ICMPv6)
+	if icmp.TypeCode.Type() != 1 || icmp.TypeCode.Code() != 4 {
+		t.Fatalf("type/code=%d/%d,期望 1/4", icmp.TypeCode.Type(), icmp.TypeCode.Code())
+	}
+	// ICMPv6 payload = Unused(4) + quote(IPv6 40 + UDP 8 + payload 16 = 64) = 68
+	if len(icmp.Payload) != 68 {
+		t.Fatalf("payload 长度=%d,期望 68", len(icmp.Payload))
+	}
+	if !bytes.Equal(icmp.Payload[:4], make([]byte, 4)) {
+		t.Fatalf("Unused 字段非零: %x", icmp.Payload[:4])
+	}
+	quote := icmp.Payload[4:]
+	inner := gopacket.NewPacket(quote, layers.LayerTypeIPv6, gopacket.Default)
+	if inner.Layer(layers.LayerTypeIPv6) == nil {
+		t.Fatalf("quote 未解析出内层 IPv6: %x", quote)
+	}
+	udp := inner.Layer(layers.LayerTypeUDP).(*layers.UDP)
+	if uint16(udp.SrcPort) != 40000 || uint16(udp.DstPort) != 65000 {
+		t.Fatalf("内层 UDP 端口: sport=%d dport=%d", udp.SrcPort, udp.DstPort)
+	}
+	// checksum 必须覆盖 头+Unused+quote;非零且可被 gopacket 回读验证。
+	if icmp.Checksum == 0 {
+		t.Fatal("ICMPv6 checksum=0,期望含伪首部计算")
+	}
+}
+
+// TestParseBackICMPv6PacketTooBig 验证 Packet Too Big 的 MTU 字段(RFC 4443 §3.2)。
+func TestParseBackICMPv6PacketTooBig(t *testing.T) {
+	mtu := uint32(1280)
+	data := buildScenarioPcap(t, icmpv6ErrorScenario("packet_too_big", "0", &scenario.ICMPv6Fields{MTU: &mtu}))
+	pkts := readPcapPackets(t, data)
+	icmp := pkts[1].Layer(layers.LayerTypeICMPv6).(*layers.ICMPv6)
+	if icmp.TypeCode.Type() != 2 {
+		t.Fatalf("type=%d,期望 2", icmp.TypeCode.Type())
+	}
+	// 前 4 字节为 MTU(大端),之后才是 quote。
+	gotMTU := binary.BigEndian.Uint32(icmp.Payload[:4])
+	if gotMTU != 1280 {
+		t.Fatalf("MTU=%d,期望 1280", gotMTU)
+	}
+	if len(icmp.Payload) < 4+40 {
+		t.Fatalf("payload=%d,期望至少 44(MTU 4 + IPv6 头 40)", len(icmp.Payload))
+	}
+}
+
+// TestParseBackICMPv6ParamProblem 验证 Parameter Problem 的 Pointer 字段(RFC 4443 §3.4)。
+func TestParseBackICMPv6ParamProblem(t *testing.T) {
+	pointer := uint32(6)
+	data := buildScenarioPcap(t, icmpv6ErrorScenario("parameter_problem", "0", &scenario.ICMPv6Fields{Pointer: &pointer}))
+	pkts := readPcapPackets(t, data)
+	icmp := pkts[1].Layer(layers.LayerTypeICMPv6).(*layers.ICMPv6)
+	if icmp.TypeCode.Type() != 4 {
+		t.Fatalf("type=%d,期望 4", icmp.TypeCode.Type())
+	}
+	gotPtr := binary.BigEndian.Uint32(icmp.Payload[:4])
+	if gotPtr != 6 {
+		t.Fatalf("pointer=%d,期望 6", gotPtr)
+	}
+}
+
+// TestParseBackICMPv6ErrorBigQuote 验证大触发包的 quote 截断:外层 IPv6 包 ≤ 1280,
+// quote ≤ 1232(开销 40+8)。
+func TestParseBackICMPv6ErrorBigQuote(t *testing.T) {
+	big := make([]byte, 2000)
+	for i := range big {
+		big[i] = byte('A' + i%26)
+	}
+	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{
+		{Name: "big-probe", Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+			{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::10", Dst: "2001:db8::1"}},
+			{Type: "udp", Fields: &scenario.UDPFields{SPort: 40000, DPort: 65000}},
+			{Type: "payload", Fields: &scenario.PayloadFields{Payload: string(big)}},
+		}},
+		{Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:02", Dst: "00:00:00:00:00:01"}},
+			{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::10"}},
+			{Type: "icmpv6", Fields: &scenario.ICMPv6Fields{
+				Type:      yaml.Node{Kind: yaml.ScalarNode, Value: "destination_unreachable"},
+				Code:      yaml.Node{Kind: yaml.ScalarNode, Value: "port_unreachable"},
+				QuoteFrom: "big-probe",
+			}},
+		}},
+	}}
+	data := buildScenarioPcap(t, s)
+	pkts := readPcapPackets(t, data)
+	ip := pkts[1].Layer(layers.LayerTypeIPv6).(*layers.IPv6)
+	if total := int(ip.Length) + 40; total > 1280 {
+		t.Fatalf("外层 IPv6 包=%d,期望 ≤ 1280", total)
+	}
+	icmp := pkts[1].Layer(layers.LayerTypeICMPv6).(*layers.ICMPv6)
+	// payload = Unused(4) + quote;quote ≤ 1232 => payload ≤ 1236
+	if len(icmp.Payload) > 1236 {
+		t.Fatalf("ICMPv6 payload=%d,期望 ≤ 1236(Unused 4 + quote≤1232)", len(icmp.Payload))
+	}
+	if !bytes.Equal(icmp.Payload[:4], make([]byte, 4)) {
+		t.Fatalf("Unused 字段非零: %x", icmp.Payload[:4])
+	}
+}
+
+// TestICMPv6MTUOnWrongType 验证 mtu/pointer 字段误用时构建报错。
+func TestICMPv6MTUOnWrongType(t *testing.T) {
+	mtu := uint32(1280)
+	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+			{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2"}},
+			{Type: "icmpv6", Fields: &scenario.ICMPv6Fields{
+				Type: yaml.Node{Kind: yaml.ScalarNode, Value: "echo_request"},
+				MTU:  &mtu,
+			}},
+		},
+	}}}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if _, err := builder.Build(s); err == nil {
+		t.Fatal("期望 mtu 用于 echo 时构建报错,实际成功")
+	}
+}
+
+// icmpv4ProbeStack:eth/ipv4/udp/payload,供 quote_from 引用。
+func icmpv4ProbeStack() []scenario.Layer {
+	return []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.1", TTL: u8ptr(64)}},
+		{Type: "udp", Fields: &scenario.UDPFields{SPort: 40000, DPort: 65000}},
+		{Type: "payload", Fields: &scenario.PayloadFields{Payload: "abcdefghijklmnop"}},
+	}
+}
+
+// icmpv4ErrorScenario 构造 udp-probe + 一条 ICMPv4 错误报文(quote_from)。
+func icmpv4ErrorScenario(typ, code string, f *scenario.ICMPFields) *scenario.Scenario {
+	f.Type = yaml.Node{Kind: yaml.ScalarNode, Value: typ}
+	f.Code = yaml.Node{Kind: yaml.ScalarNode, Value: code}
+	f.QuoteFrom = "udp-probe"
+	return &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{
+		{Name: "udp-probe", Stack: icmpv4ProbeStack()},
+		{Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:02", Dst: "00:00:00:00:00:01"}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.10", TTL: u8ptr(64)}},
+			{Type: "icmp", Fields: f},
+		}},
+	}}
+}
+
+// TestParseBackICMPv4Redirect 验证 Redirect 的 Gateway IPv4 字段(RFC 792)。
+func TestParseBackICMPv4Redirect(t *testing.T) {
+	gw := "10.0.0.254"
+	data := buildScenarioPcap(t, icmpv4ErrorScenario("redirect", "1", &scenario.ICMPFields{Gateway: &gw}))
+	pkts := readPcapPackets(t, data)
+	icmp := pkts[1].Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+	if icmp.TypeCode.Type() != 5 {
+		t.Fatalf("type=%d,期望 5", icmp.TypeCode.Type())
+	}
+	// Gateway IPv4 在 bytes 4-7 = gopacket Id(bytes 4-5)+Seq(bytes 6-7)。
+	got := make([]byte, 4)
+	binary.BigEndian.PutUint16(got[0:2], icmp.Id)
+	binary.BigEndian.PutUint16(got[2:4], icmp.Seq)
+	if !net.ParseIP(gw).To4().Equal(got) {
+		t.Fatalf("gateway=%v,期望 %s", net.IP(got), gw)
+	}
+}
+
+// TestParseBackICMPv4ParamProblem 验证 Parameter Problem 的 Pointer 字段(RFC 792)。
+func TestParseBackICMPv4ParamProblem(t *testing.T) {
+	pointer := uint8(20)
+	data := buildScenarioPcap(t, icmpv4ErrorScenario("parameter_problem", "0", &scenario.ICMPFields{Pointer: &pointer}))
+	pkts := readPcapPackets(t, data)
+	icmp := pkts[1].Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+	if icmp.TypeCode.Type() != 12 {
+		t.Fatalf("type=%d,期望 12", icmp.TypeCode.Type())
+	}
+	// Pointer 在 byte 4 = Id 高字节。
+	if got := byte(icmp.Id >> 8); got != pointer {
+		t.Fatalf("pointer=%d,期望 %d", got, pointer)
+	}
+}
+
+// TestParseBackICMPv4FragNeededMTU 验证 Dest Unreachable code 4 的 MTU 字段(RFC 1191)。
+func TestParseBackICMPv4FragNeededMTU(t *testing.T) {
+	mtu := uint16(1492)
+	data := buildScenarioPcap(t, icmpv4ErrorScenario("destination_unreachable", "fragmentation_needed", &scenario.ICMPFields{MTU: &mtu}))
+	pkts := readPcapPackets(t, data)
+	icmp := pkts[1].Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+	if icmp.TypeCode.Type() != 3 || icmp.TypeCode.Code() != 4 {
+		t.Fatalf("type/code=%d/%d,期望 3/4", icmp.TypeCode.Type(), icmp.TypeCode.Code())
+	}
+	// MTU 在 bytes 6-7 = Seq。
+	if icmp.Seq != mtu {
+		t.Fatalf("mtu=%d,期望 %d", icmp.Seq, mtu)
+	}
+}
+
+// TestICMPv4FieldsOnWrongType 验证 gateway/pointer/mtu 误用类型时构建报错。
+func TestICMPv4FieldsOnWrongType(t *testing.T) {
+	gw := "10.0.0.254"
+	// gateway 用于 dest_unreachable 应报错
+	s := icmpv4ErrorScenario("destination_unreachable", "port_unreachable", &scenario.ICMPFields{Gateway: &gw})
+	if _, err := builder.Build(s); err == nil {
+		t.Fatal("期望 gateway 用于 dest_unreachable 时报错,实际成功")
+	}
+	// mtu 用于 port_unreachable(code 3)应报错
+	mtu := uint16(1492)
+	s2 := icmpv4ErrorScenario("destination_unreachable", "port_unreachable", &scenario.ICMPFields{MTU: &mtu})
+	if _, err := builder.Build(s2); err == nil {
+		t.Fatal("期望 mtu 用于 code 3 时报错,实际成功")
 	}
 }

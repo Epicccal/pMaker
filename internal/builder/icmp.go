@@ -1,8 +1,10 @@
 package builder
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"net"
 	"strconv"
 	"strings"
 
@@ -27,6 +29,20 @@ func buildICMP(ctx buildContext, f *scenario.ICMPFields) (*layers.ICMPv4, []byte
 		return nil, nil, err
 	}
 
+	// 类型相关字段合法性(RFC 792):
+	// - gateway 仅 redirect(type 5)
+	// - pointer 仅 parameter_problem(type 12)
+	// - mtu 仅 destination_unreachable(type 3) code 4(RFC 1191)
+	if f.Gateway != nil && typ != 5 {
+		return nil, nil, fmt.Errorf("gateway 仅 redirect(type 5)可用,当前 type=%d", typ)
+	}
+	if f.Pointer != nil && typ != 12 {
+		return nil, nil, fmt.Errorf("pointer 仅 parameter_problem(type 12)可用,当前 type=%d", typ)
+	}
+	if f.MTU != nil && !(typ == 3 && code == 4) {
+		return nil, nil, fmt.Errorf("mtu 仅 destination_unreachable(type 3) code 4 可用,当前 type=%d code=%d", typ, code)
+	}
+
 	icmp := &layers.ICMPv4{TypeCode: layers.CreateICMPv4TypeCode(typ, code)}
 	if typ == 0 || typ == 8 {
 		if f.ID != nil {
@@ -36,8 +52,30 @@ func buildICMP(ctx buildContext, f *scenario.ICMPFields) (*layers.ICMPv4, []byte
 			icmp.Id = uint16(*f.ID)
 		}
 		icmp.Seq = f.Seq
-	} else if f.ID != nil || f.Seq != 0 {
-		return nil, nil, fmt.Errorf("id/seq 仅支持 echo_request/echo_reply")
+	} else {
+		if f.ID != nil || f.Seq != 0 {
+			return nil, nil, fmt.Errorf("id/seq 仅支持 echo_request/echo_reply")
+		}
+		// 非 echo:把类型相关字段映射到 ICMPv4 头 bytes 4-7(gopacket 的 Id/Seq)。
+		switch typ {
+		case 5: // redirect:Gateway IPv4 → bytes 4-7
+			if f.Gateway != nil {
+				ip := net.ParseIP(*f.Gateway).To4()
+				if ip == nil {
+					return nil, nil, fmt.Errorf("gateway %q 不是合法 IPv4", *f.Gateway)
+				}
+				icmp.Id = binary.BigEndian.Uint16(ip[0:2])
+				icmp.Seq = binary.BigEndian.Uint16(ip[2:4])
+			}
+		case 12: // parameter_problem:Pointer → byte 4(Id 高字节)
+			if f.Pointer != nil {
+				icmp.Id = uint16(*f.Pointer) << 8
+			}
+		case 3: // destination_unreachable code 4:MTU → bytes 6-7(Seq)
+			if f.MTU != nil {
+				icmp.Seq = *f.MTU
+			}
+		}
 	}
 	if f.Checksum != nil {
 		slog.Warn("最小版忽略 icmp checksum 覆盖")

@@ -1,0 +1,24 @@
+# examples/icmpv6_parameter_problem.yaml
+#
+# ICMPv6 Parameter Problem(RFC 4443 §3.4)规范示例:
+# Checksum 之后携带 4 字节 Pointer 字段(出错字节偏移),之后为触发包 quote。
+link_type: ethernet
+seed: 42
+packets:
+  - name: udp-probe
+    stack:
+      - eth:  { src: "00:00:00:00:00:01", dst: "00:00:00:00:00:02" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::1", hop_limit: 64 }
+      - udp:  { sport: 40000, dport: 65000 }
+      - payload:
+          payload: "abcdefghijklmnop"
+
+  - name: icmpv6-parameter-problem
+    stack:
+      - eth:  { src: "00:00:00:00:00:02", dst: "00:00:00:00:00:01" }
+      - ipv6: { src: "2001:db8::1", dst: "2001:db8::10", hop_limit: 64 }
+      - icmpv6:
+          type: parameter_problem
+          code: 0
+          pointer: 6
+          quote_from: udp-probe

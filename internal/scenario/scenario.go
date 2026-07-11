@@ -149,6 +149,10 @@ type (
 		Quote      *Packet   `yaml:"quote"`
 		QuoteFrom  string    `yaml:"quote_from"`
 		Checksum   *Hex      `yaml:"checksum"` // 解析但忽略
+		// 类型相关字段(RFC 792),映射到 ICMPv4 头 bytes 4-7(Id/Seq 位):
+		Gateway *string `yaml:"gateway"` // 仅 redirect(type 5):网关 IPv4(bytes 4-7)
+		Pointer *uint8  `yaml:"pointer"` // 仅 parameter_problem(type 12):出错字节偏移(byte 4)
+		MTU     *uint16 `yaml:"mtu"`     // 仅 dest_unreachable(type 3) code 4:下一跳 MTU(bytes 6-7,RFC 1191)
 	}
 	// ICMPv6Fields 镜像 ICMPFields;校验和依赖 IPv6 伪首部(见 builder)。
 	ICMPv6Fields struct {
@@ -161,6 +165,9 @@ type (
 		Quote      *Packet   `yaml:"quote"`
 		QuoteFrom  string    `yaml:"quote_from"`
 		Checksum   *Hex      `yaml:"checksum"` // 解析但忽略
+		// 类型相关 4 字节字段(RFC 4443 §3):仅错误报文使用,echo 不用。
+		MTU     *uint32 `yaml:"mtu"`     // 仅 packet_too_big(type 2):下一跳 MTU
+		Pointer *uint32 `yaml:"pointer"` // 仅 parameter_problem(type 4):出错字节偏移
 	}
 	PayloadFields struct {
 		Payload    string `yaml:"payload"`
