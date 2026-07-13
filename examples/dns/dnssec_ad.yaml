@@ -1,0 +1,25 @@
+# examples/dns/dnssec_ad.yaml
+#
+# 演示 DNSSEC 相关 header 标志位:AD(Authenticated Data)置位,
+# 模拟校验型解析器返回的已认证应答(RFC 4035 §2)。
+# AA+AD 同时置位表示"权威服务器且数据已通过 DNSSEC 验证"。
+link_type: ethernet
+seed: 42
+packets:
+  - name: dns-response-ad
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53000 }
+      - dns:
+          id: 0x1234
+          qr: response
+          authoritative: true
+          authenticated_data: true
+          recursion_desired: true
+          recursion_available: true
+          rcode: no_error
+          questions:
+            - { name: "example.com.", type: A, class: IN }
+          answers:
+            - { name: "example.com.", type: A, class: IN, ttl: 300, data: "93.184.216.34" }

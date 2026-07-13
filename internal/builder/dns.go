@@ -2,7 +2,6 @@ package builder
 
 import (
 	"fmt"
-	"log/slog"
 	"net"
 	"strings"
 
@@ -12,6 +11,15 @@ import (
 )
 
 func buildDNS(f *scenario.DNSFields) (*layers.DNS, error) {
+	// DNS.Z 占 byte[3] 的 bit6-4(RFC 1035 保留位)。RFC 4035 §2 将其重新定义为
+	// AD(bit5)/CD(bit4),bit6 仍必须为 0。gopacket 用 Z 字段承载这两位。
+	var z uint8
+	if f.AuthenticatedData {
+		z |= 0x02 // AD → byte[3] bit5
+	}
+	if f.CheckingDisabled {
+		z |= 0x01 // CD → byte[3] bit4
+	}
 	d := &layers.DNS{
 		ID:           f.ID,
 		QR:           strings.EqualFold(f.QR, "response"),
@@ -20,15 +28,16 @@ func buildDNS(f *scenario.DNSFields) (*layers.DNS, error) {
 		TC:           f.Truncated,
 		RD:           f.RecursionDesired,
 		RA:           f.RecursionAvailable,
+		Z:            z,
 		ResponseCode: dnsRCode(f.RCode),
 	}
-	// gopacket 的 DNS.Z 承载 AD/CD 位所在的保留字段;当前暂不编码 AD/CD。
-	if f.AuthenticatedData || f.CheckingDisabled {
-		slog.Warn("最小版暂不编码 DNS authenticated_data/checking_disabled 标志")
-	}
 	for _, q := range f.Questions {
+		name, err := dnsName(q.Name)
+		if err != nil {
+			return nil, fmt.Errorf("questions: %w", err)
+		}
 		d.Questions = append(d.Questions, layers.DNSQuestion{
-			Name:  dnsName(q.Name),
+			Name:  name,
 			Type:  dnsType(q.Type),
 			Class: dnsClass(q.Class),
 		})
@@ -60,8 +69,12 @@ func buildDNSRRs(in []scenario.DNSRRFields) ([]layers.DNSResourceRecord, error) 
 
 func buildDNSRR(rr scenario.DNSRRFields) (layers.DNSResourceRecord, error) {
 	typ := dnsType(rr.Type)
+	name, err := dnsName(rr.Name)
+	if err != nil {
+		return layers.DNSResourceRecord{}, fmt.Errorf("name: %w", err)
+	}
 	out := layers.DNSResourceRecord{
-		Name:  dnsName(rr.Name),
+		Name:  name,
 		Type:  typ,
 		Class: dnsClass(rr.Class),
 		TTL:   rr.TTL,
@@ -84,11 +97,23 @@ func buildDNSRR(rr scenario.DNSRRFields) (layers.DNSResourceRecord, error) {
 		}
 		out.IP = ip
 	case layers.DNSTypeCNAME:
-		out.CNAME = dnsNameString(rr)
+		n, err := dnsNameString(rr)
+		if err != nil {
+			return out, fmt.Errorf("CNAME data: %w", err)
+		}
+		out.CNAME = n
 	case layers.DNSTypeNS:
-		out.NS = dnsNameString(rr)
+		n, err := dnsNameString(rr)
+		if err != nil {
+			return out, fmt.Errorf("NS data: %w", err)
+		}
+		out.NS = n
 	case layers.DNSTypePTR:
-		out.PTR = dnsNameString(rr)
+		n, err := dnsNameString(rr)
+		if err != nil {
+			return out, fmt.Errorf("PTR data: %w", err)
+		}
+		out.PTR = n
 	case layers.DNSTypeMX:
 		var mx struct {
 			Preference uint16 `yaml:"preference"`
@@ -100,7 +125,11 @@ func buildDNSRR(rr scenario.DNSRRFields) (layers.DNSResourceRecord, error) {
 		if mx.Exchange == "" {
 			return out, fmt.Errorf("MX data.exchange 不能为空")
 		}
-		out.MX = layers.DNSMX{Preference: mx.Preference, Name: dnsName(mx.Exchange)}
+		name, err := dnsName(mx.Exchange)
+		if err != nil {
+			return out, fmt.Errorf("MX exchange: %w", err)
+		}
+		out.MX = layers.DNSMX{Preference: mx.Preference, Name: name}
 	case layers.DNSTypeTXT:
 		var list []string
 		if err := rr.Data.Decode(&list); err != nil {
@@ -111,10 +140,10 @@ func buildDNSRR(rr scenario.DNSRRFields) (layers.DNSResourceRecord, error) {
 			list = []string{s}
 		}
 		for _, s := range list {
+			if len(s) > 255 {
+				return out, fmt.Errorf("TXT 串长度 %d 超 255(RFC 1035 §3.3.14)", len(s))
+			}
 			out.TXTs = append(out.TXTs, []byte(s))
-		}
-		if len(out.TXTs) > 0 {
-			out.TXT = out.TXTs[0]
 		}
 	default:
 		return out, fmt.Errorf("暂不支持 DNS RR 类型 %q", rr.Type)
@@ -122,16 +151,53 @@ func buildDNSRR(rr scenario.DNSRRFields) (layers.DNSResourceRecord, error) {
 	return out, nil
 }
 
-func dnsNameString(rr scenario.DNSRRFields) []byte {
+// dnsNameString 从 RR data 读出域名并编码,用于 CNAME/NS/PTR。
+// data 非字符串时返回错误,而非静默退化为根域。
+func dnsNameString(rr scenario.DNSRRFields) ([]byte, error) {
 	var s string
-	_ = rr.Data.Decode(&s)
+	if err := rr.Data.Decode(&s); err != nil {
+		return nil, fmt.Errorf("需要 domain name 字符串: %w", err)
+	}
 	return dnsName(s)
 }
 
-func dnsName(s string) []byte {
+// dnsName 把点分域名归一化为 gopacket encodeName 所需的"无尾点"形式。
+// encodeName 自己补 root 终止符且不做长度校验,故此处在归一化后校验
+// 单标签 ≤63、整名编码后 ≤255(RFC 1035 §3.1),避免静默产出非法名字。
+func dnsName(s string) ([]byte, error) {
 	s = strings.TrimSpace(s)
-	s = strings.TrimSuffix(s, ".") // gopacket encodeName 自己补 root 终止符
-	return []byte(s)
+	s = strings.TrimRight(s, ".") // 去掉所有尾点,避免双尾点产出双根终止符
+	if err := validateDNSName(s); err != nil {
+		return nil, err
+	}
+	return []byte(s), nil
+}
+
+// validateDNSName 校验域名单标签长度(≤63)与整名编码长度(≤255)。
+// 入参 s 已去除尾点;空串表示根域,合法。
+func validateDNSName(s string) error {
+	if s == "" {
+		return nil // 根域
+	}
+	total := 1 // 根终止符
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || s[i] == '.' {
+			labelLen := i - start
+			if labelLen == 0 {
+				return fmt.Errorf("域名含空标签: %q", s)
+			}
+			if labelLen > 63 {
+				return fmt.Errorf("域名单标签长度 %d 超 63(RFC 1035 §3.1): %q", labelLen, s[start:i])
+			}
+			total += labelLen + 1 // 长度字节 + 标签内容
+			start = i + 1
+		}
+	}
+	if total > 255 {
+		return fmt.Errorf("域名编码后长度 %d 超 255(RFC 1035 §3.1): %q", total, s)
+	}
+	return nil
 }
 
 func dnsType(s string) layers.DNSType {
