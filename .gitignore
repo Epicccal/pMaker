@@ -40,4 +40,4 @@ go.work.sum
 
 # Generated pcap (keep golden fixtures under testdata/)
 *.pcap
-!**/testdata/*.pcap
+!**/testdata/**/*.pcap
