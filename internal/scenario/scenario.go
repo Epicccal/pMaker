@@ -54,7 +54,7 @@ type Layer struct {
 // Hex 接受十进制整数或 "0x88a8" 形式的十六进制字符串。
 type Hex uint32
 
-// UnmarshalYAML 允许 ethertype/tpid/type/checksum 用 0x.. 或十进制书写。
+// UnmarshalYAML 允许 ethertype/tpid/type/checksum 等字段用 0x.. 或十进制书写。
 func (h *Hex) UnmarshalYAML(node *yaml.Node) error {
 	var i int64
 	if err := node.Decode(&i); err == nil {
@@ -114,10 +114,10 @@ type (
 	IPv6Fields struct {
 		Src          string  `yaml:"src"`
 		Dst          string  `yaml:"dst"`
-		HopLimit     *uint8  `yaml:"hop_limit"`     // 跳数限制(类比 IPv4 ttl),缺省 64
-		TrafficClass *uint8  `yaml:"traffic_class"` // 缺省 0
-		FlowLabel    *uint32 `yaml:"flow_label"`    // 缺省 0
-		NextHeader   *string `yaml:"next_header"`   // 覆盖:tcp/udp/icmpv6/ipv4/ipv6(制造断链)
+		HopLimit     *uint8  `yaml:"hop_limit"` // 跳数限制(类比 IPv4 ttl),缺省 64
+		TrafficClass *uint8  `yaml:"traffic_class"`
+		FlowLabel    *uint32 `yaml:"flow_label"`
+		NextHeader   *string `yaml:"next_header"` // 覆盖:tcp/udp/icmpv6/ipv4/ipv6(制造断链)
 	}
 	GREFields struct{}
 	TCPFields struct {

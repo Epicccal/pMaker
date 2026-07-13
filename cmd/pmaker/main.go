@@ -100,7 +100,7 @@ func printGenerationSummary(path string, packets []scenario.Packet, count int) {
 	fmt.Printf("已生成 %d 个包\n", count)
 }
 
-// cmdValidate 串接:internal/scenario.Load + 校验。
+// cmdValidate 串接:Load + 校验。
 func cmdValidate(args []string) int {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
 	in := fs.String("f", "", "输入场景文件 (YAML)")

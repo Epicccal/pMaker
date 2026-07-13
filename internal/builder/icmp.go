@@ -163,7 +163,7 @@ func icmpCode(node yaml.Node) (uint8, error) {
 		"source_route_failed":                 5,
 		"ttl_exceeded":                        0,
 		"fragment_reassembly_time_exceeded":   1,
-		"fragment_reassembly_time_exceeded_0": 1, // 容错:避免拼写提示时额外处理
+		"fragment_reassembly_time_exceeded_0": 1, // 容错别名:兼容误写 _0 后缀,免做拼写纠错
 	}, 0, "code")
 }
 
