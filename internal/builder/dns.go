@@ -20,29 +20,48 @@ func buildDNS(f *scenario.DNSFields) (*layers.DNS, error) {
 	if f.CheckingDisabled {
 		z |= 0x01 // CD → byte[3] bit4
 	}
+	qr, err := dnsQR(f.QR)
+	if err != nil {
+		return nil, fmt.Errorf("qr: %w", err)
+	}
+	opcode, err := dnsOpCode(f.Opcode)
+	if err != nil {
+		return nil, fmt.Errorf("opcode: %w", err)
+	}
+	rcode, err := dnsRCode(f.RCode)
+	if err != nil {
+		return nil, fmt.Errorf("rcode: %w", err)
+	}
 	d := &layers.DNS{
 		ID:           f.ID,
-		QR:           strings.EqualFold(f.QR, "response"),
-		OpCode:       dnsOpCode(f.Opcode),
+		QR:           qr,
+		OpCode:       opcode,
 		AA:           f.Authoritative,
 		TC:           f.Truncated,
 		RD:           f.RecursionDesired,
 		RA:           f.RecursionAvailable,
 		Z:            z,
-		ResponseCode: dnsRCode(f.RCode),
+		ResponseCode: rcode,
 	}
-	for _, q := range f.Questions {
+	for i, q := range f.Questions {
 		name, err := dnsName(q.Name)
 		if err != nil {
-			return nil, fmt.Errorf("questions: %w", err)
+			return nil, fmt.Errorf("questions[%d]: %w", i, err)
+		}
+		qtype, err := dnsType(q.Type)
+		if err != nil {
+			return nil, fmt.Errorf("questions[%d] type: %w", i, err)
+		}
+		qclass, err := dnsClass(q.Class)
+		if err != nil {
+			return nil, fmt.Errorf("questions[%d] class: %w", i, err)
 		}
 		d.Questions = append(d.Questions, layers.DNSQuestion{
 			Name:  name,
-			Type:  dnsType(q.Type),
-			Class: dnsClass(q.Class),
+			Type:  qtype,
+			Class: qclass,
 		})
 	}
-	var err error
 	if d.Answers, err = buildDNSRRs(f.Answers); err != nil {
 		return nil, fmt.Errorf("answers: %w", err)
 	}
@@ -68,15 +87,22 @@ func buildDNSRRs(in []scenario.DNSRRFields) ([]layers.DNSResourceRecord, error) 
 }
 
 func buildDNSRR(rr scenario.DNSRRFields) (layers.DNSResourceRecord, error) {
-	typ := dnsType(rr.Type)
+	typ, err := dnsType(rr.Type)
+	if err != nil {
+		return layers.DNSResourceRecord{}, fmt.Errorf("type: %w", err)
+	}
 	name, err := dnsName(rr.Name)
 	if err != nil {
 		return layers.DNSResourceRecord{}, fmt.Errorf("name: %w", err)
 	}
+	class, err := dnsClass(rr.Class)
+	if err != nil {
+		return layers.DNSResourceRecord{}, fmt.Errorf("class: %w", err)
+	}
 	out := layers.DNSResourceRecord{
 		Name:  name,
 		Type:  typ,
-		Class: dnsClass(rr.Class),
+		Class: class,
 		TTL:   rr.TTL,
 	}
 	switch typ {
@@ -200,66 +226,95 @@ func validateDNSName(s string) error {
 	return nil
 }
 
-func dnsType(s string) layers.DNSType {
-	switch strings.ToUpper(orDefault(s, "A")) {
+func dnsType(s string) (layers.DNSType, error) {
+	if s == "" {
+		return layers.DNSTypeA, nil // 省略 → 默认 A
+	}
+	switch strings.ToUpper(s) {
 	case "A":
-		return layers.DNSTypeA
+		return layers.DNSTypeA, nil
 	case "AAAA":
-		return layers.DNSTypeAAAA
+		return layers.DNSTypeAAAA, nil
 	case "CNAME":
-		return layers.DNSTypeCNAME
+		return layers.DNSTypeCNAME, nil
 	case "NS":
-		return layers.DNSTypeNS
+		return layers.DNSTypeNS, nil
 	case "PTR":
-		return layers.DNSTypePTR
+		return layers.DNSTypePTR, nil
 	case "MX":
-		return layers.DNSTypeMX
+		return layers.DNSTypeMX, nil
 	case "TXT":
-		return layers.DNSTypeTXT
+		return layers.DNSTypeTXT, nil
 	default:
-		return 0
+		return 0, fmt.Errorf("未知 type %q(支持 A/AAAA/CNAME/NS/PTR/MX/TXT)", s)
 	}
 }
 
-func dnsClass(s string) layers.DNSClass {
-	switch strings.ToUpper(orDefault(s, "IN")) {
+func dnsClass(s string) (layers.DNSClass, error) {
+	if s == "" {
+		return layers.DNSClassIN, nil // 省略 → 默认 IN
+	}
+	switch strings.ToUpper(s) {
 	case "IN":
-		return layers.DNSClassIN
+		return layers.DNSClassIN, nil
 	case "CS":
-		return layers.DNSClassCS
+		return layers.DNSClassCS, nil
 	case "CH":
-		return layers.DNSClassCH
+		return layers.DNSClassCH, nil
 	case "HS":
-		return layers.DNSClassHS
+		return layers.DNSClassHS, nil
 	default:
-		return layers.DNSClassIN
+		return 0, fmt.Errorf("未知 class %q(支持 IN/CS/CH/HS)", s)
 	}
 }
 
-func dnsOpCode(s string) layers.DNSOpCode {
-	switch strings.ToLower(orDefault(s, "query")) {
+func dnsOpCode(s string) (layers.DNSOpCode, error) {
+	if s == "" {
+		return layers.DNSOpCodeQuery, nil // 省略 → 默认 query
+	}
+	switch strings.ToLower(s) {
+	case "query":
+		return layers.DNSOpCodeQuery, nil
 	case "iquery":
-		return layers.DNSOpCodeIQuery
+		return layers.DNSOpCodeIQuery, nil
 	case "status":
-		return layers.DNSOpCodeStatus
+		return layers.DNSOpCodeStatus, nil
 	default:
-		return layers.DNSOpCodeQuery
+		return 0, fmt.Errorf("未知 opcode %q(支持 query/iquery/status)", s)
 	}
 }
 
-func dnsRCode(s string) layers.DNSResponseCode {
-	switch strings.ToLower(orDefault(s, "no_error")) {
+func dnsRCode(s string) (layers.DNSResponseCode, error) {
+	if s == "" {
+		return layers.DNSResponseCodeNoErr, nil // 省略 → 默认 no_error
+	}
+	switch strings.ToLower(s) {
+	case "no_error":
+		return layers.DNSResponseCodeNoErr, nil
 	case "format_error":
-		return layers.DNSResponseCodeFormErr
+		return layers.DNSResponseCodeFormErr, nil
 	case "server_failure":
-		return layers.DNSResponseCodeServFail
+		return layers.DNSResponseCodeServFail, nil
 	case "name_error":
-		return layers.DNSResponseCodeNXDomain
+		return layers.DNSResponseCodeNXDomain, nil
 	case "not_implemented":
-		return layers.DNSResponseCodeNotImp
+		return layers.DNSResponseCodeNotImp, nil
 	case "refused":
-		return layers.DNSResponseCodeRefused
+		return layers.DNSResponseCodeRefused, nil
 	default:
-		return layers.DNSResponseCodeNoErr
+		return 0, fmt.Errorf("未知 rcode %q(支持 no_error/format_error/server_failure/name_error/not_implemented/refused)", s)
+	}
+}
+
+// dnsQR 把 qr 字符串解析成响应标志:省略或 "query" → false(查询),"response" → true,
+// 其余报错,避免把拼写错误(如 "resp")静默当成查询。
+func dnsQR(s string) (bool, error) {
+	switch strings.ToLower(s) {
+	case "", "query":
+		return false, nil
+	case "response":
+		return true, nil
+	default:
+		return false, fmt.Errorf("未知 qr %q(支持 query/response)", s)
 	}
 }
