@@ -190,3 +190,62 @@ func TestDNSTrailingDotsRobust(t *testing.T) {
 		t.Fatalf("双尾点归一化后 name = %q,期望 example.com", got.Questions[0].Name)
 	}
 }
+
+// TestDNSUnknownEnumErrors 验证未知 type/class/opcode/rcode/qr 在 build 时报错,
+// 而非静默降级为默认值。
+func TestDNSUnknownEnumErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(d *scenario.DNSFields)
+		wantSub string
+	}{
+		{"type", func(d *scenario.DNSFields) { d.Questions[0].Type = "SOA" }, "未知 type"},
+		{"class", func(d *scenario.DNSFields) { d.Questions[0].Class = "NONE" }, "未知 class"},
+		{"opcode", func(d *scenario.DNSFields) { d.Opcode = "notify" }, "未知 opcode"},
+		{"rcode", func(d *scenario.DNSFields) { d.QR = "response"; d.RCode = "nx_domain" }, "未知 rcode"},
+		{"qr", func(d *scenario.DNSFields) { d.QR = "resp" }, "未知 qr"},
+		{"rr-type", func(d *scenario.DNSFields) {
+			d.Answers = []scenario.DNSRRFields{{Name: "example.com", Type: "DS", TTL: 1, Data: scalarNode("0x00")}}
+		}, "未知 type"},
+		{"rr-class", func(d *scenario.DNSFields) {
+			d.Answers = []scenario.DNSRRFields{{Name: "example.com", Type: "A", Class: "NONE", TTL: 1, Data: scalarNode("10.0.0.1")}}
+		}, "未知 class"},
+	}
+	base := func() *scenario.DNSFields {
+		return &scenario.DNSFields{
+			Questions: []scenario.DNSQuestionFields{{Name: "example.com", Type: "A", Class: "IN"}},
+		}
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := base()
+			tc.mutate(d)
+			buildDNSPacketsErr(t, d, tc.wantSub)
+		})
+	}
+}
+
+// TestDNSOmittedEnumDefaults 验证省略 type/class/opcode/rcode/qr 时走合理默认,
+// 不报错、不降级歧义(回归)。
+func TestDNSOmittedEnumDefaults(t *testing.T) {
+	d := &scenario.DNSFields{
+		// 全部枚举字段省略,仅给一个 question 的 name
+		Questions: []scenario.DNSQuestionFields{{Name: "example.com"}},
+	}
+	got := buildDNSPackets(t, d)[0]
+	if got.QR {
+		t.Fatalf("省略 qr 应默认 query(false),实际 QR=true")
+	}
+	if got.OpCode != layers.DNSOpCodeQuery {
+		t.Fatalf("省略 opcode 应默认 query,实际 %v", got.OpCode)
+	}
+	if got.ResponseCode != layers.DNSResponseCodeNoErr {
+		t.Fatalf("省略 rcode 应默认 no_error,实际 %v", got.ResponseCode)
+	}
+	if got.Questions[0].Type != layers.DNSTypeA {
+		t.Fatalf("省略 type 应默认 A,实际 %v", got.Questions[0].Type)
+	}
+	if got.Questions[0].Class != layers.DNSClassIN {
+		t.Fatalf("省略 class 应默认 IN,实际 %v", got.Questions[0].Class)
+	}
+}
