@@ -242,6 +242,45 @@ func buildDNSRR(rr scenario.DNSRRFields) (layers.DNSResourceRecord, error) {
 			}
 			out.TXTs = append(out.TXTs, []byte(s))
 		}
+	case layers.DNSTypeSOA:
+		// SOA RDATA(RFC 1035 §3.3.13):MNAME(主权威服务器)+ RNAME(负责人邮箱,域名编码)
+		// + SERIAL/REFRESH/RETRY/EXPIRE/MINIMUM(5×uint32,秒)。MName/RName 走 dnsName
+		// 归一化+校验,与 CNAME/NS/PTR 同口径;畸形 SOA 由 payload_hex 兜底。
+		var soa struct {
+			MName   string `yaml:"mname"`
+			RName   string `yaml:"rname"`
+			Serial  uint32 `yaml:"serial"`
+			Refresh uint32 `yaml:"refresh"`
+			Retry   uint32 `yaml:"retry"`
+			Expire  uint32 `yaml:"expire"`
+			Minimum uint32 `yaml:"minimum"`
+		}
+		if err := rr.Data.Decode(&soa); err != nil {
+			return out, fmt.Errorf("SOA data 需要 {mname, rname, serial, refresh, retry, expire, minimum}: %w", err)
+		}
+		if soa.MName == "" {
+			return out, fmt.Errorf("SOA data.mname 不能为空")
+		}
+		if soa.RName == "" {
+			return out, fmt.Errorf("SOA data.rname 不能为空")
+		}
+		mname, err := dnsName(soa.MName)
+		if err != nil {
+			return out, fmt.Errorf("SOA mname: %w", err)
+		}
+		rname, err := dnsName(soa.RName)
+		if err != nil {
+			return out, fmt.Errorf("SOA rname: %w", err)
+		}
+		out.SOA = layers.DNSSOA{
+			MName:   mname,
+			RName:   rname,
+			Serial:  soa.Serial,
+			Refresh: soa.Refresh,
+			Retry:   soa.Retry,
+			Expire:  soa.Expire,
+			Minimum: soa.Minimum,
+		}
 	default:
 		return out, fmt.Errorf("暂不支持 DNS RR 类型 %q", rr.Type)
 	}
@@ -299,7 +338,7 @@ func validateDNSName(s string) error {
 
 // dnsType 解析 RR/QType 字符串。接受三种写法:
 //   - 省略 → 默认 A
-//   - 已知名字(A/AAAA/CNAME/NS/PTR/MX/TXT)→ 对应 DNSType
+//   - 已知名字(A/AAAA/CNAME/NS/PTR/MX/TXT/SOA)→ 对应 DNSType
 //   - 数字("99" / "0x0063" / "0063")→ 任意 type,用于未知 RR / 私有码模糊测试
 //
 // 数字 type 通常需配合 payload_hex 提供原始 RDATA(见 encodeDNSMessage)。
@@ -322,6 +361,8 @@ func dnsType(s string) (layers.DNSType, error) {
 		return layers.DNSTypeMX, nil
 	case "TXT":
 		return layers.DNSTypeTXT, nil
+	case "SOA":
+		return layers.DNSTypeSOA, nil
 	}
 	// 非已知名字:尝试按数字解析,允许造未知/私有 type。
 	v, err := parseDNSRRNumber(s, "type")

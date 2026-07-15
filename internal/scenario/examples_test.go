@@ -330,8 +330,8 @@ func readPackets(t *testing.T, data []byte) []gopacket.Packet {
 func TestDNSMultiContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/dns/multi.yaml")
 	dnsPackets := readDNSPackets(t, pcap)
-	if len(dnsPackets) != 14 {
-		t.Fatalf("期望 14 个 DNS 包(7 组 query/response),得到 %d", len(dnsPackets))
+	if len(dnsPackets) != 16 {
+		t.Fatalf("期望 16 个 DNS 包(8 组 query/response),得到 %d", len(dnsPackets))
 	}
 
 	expectDNSPair(t, dnsPackets, 0, layers.DNSTypeA, "example.com", func(rr layers.DNSResourceRecord) {
@@ -367,6 +367,16 @@ func TestDNSMultiContent(t *testing.T) {
 	expectDNSPair(t, dnsPackets, 12, layers.DNSTypeTXT, "example.com", func(rr layers.DNSResourceRecord) {
 		if len(rr.TXTs) != 1 || string(rr.TXTs[0]) != "v=spf1 include:_spf.example.com ~all" {
 			t.Fatalf("TXT answer = %#v", rr.TXTs)
+		}
+	})
+	expectDNSPair(t, dnsPackets, 14, layers.DNSTypeSOA, "example.com", func(rr layers.DNSResourceRecord) {
+		soa := rr.SOA
+		if string(soa.MName) != "ns1.example.com" || string(soa.RName) != "hostmaster.example.com" {
+			t.Fatalf("SOA MName/RName = %q/%q", soa.MName, soa.RName)
+		}
+		if soa.Serial != 2024010101 || soa.Refresh != 7200 || soa.Retry != 3600 || soa.Expire != 1209600 || soa.Minimum != 3600 {
+			t.Fatalf("SOA 数值字段 = serial=%d refresh=%d retry=%d expire=%d minimum=%d",
+				soa.Serial, soa.Refresh, soa.Retry, soa.Expire, soa.Minimum)
 		}
 	})
 }

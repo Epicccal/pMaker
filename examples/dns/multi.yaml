@@ -1,7 +1,7 @@
 # examples/dns/multi.yaml
 #
 # 同一个 pcap 中的多组 UDP DNS 请求/响应。
-# 当前支持的 DNS RR 类型(A/AAAA/CNAME/NS/PTR/MX/TXT)各有一组 query/response。
+# 当前支持的 DNS RR 类型(A/AAAA/CNAME/NS/PTR/MX/TXT/SOA)各有一组 query/response。
 link_type: ethernet
 seed: 42
 packets:
@@ -208,3 +208,42 @@ packets:
               class: IN
               ttl: 300
               data: "v=spf1 include:_spf.example.com ~all"
+
+  - name: dns-query-soa
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "8.8.8.8", ttl: 64 }
+      - udp:  { sport: 53007, dport: 53 }
+      - dns:
+          id: 0x123b
+          qr: query
+          recursion_desired: true
+          questions:
+            - { name: "example.com.", type: SOA, class: IN }
+
+  - name: dns-response-soa
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53007 }
+      - dns:
+          id: 0x123b
+          qr: response
+          recursion_desired: true
+          recursion_available: true
+          rcode: no_error
+          questions:
+            - { name: "example.com.", type: SOA, class: IN }
+          answers:
+            - name: "example.com."
+              type: SOA
+              class: IN
+              ttl: 300
+              data:
+                mname: "ns1.example.com."
+                rname: "hostmaster.example.com."
+                serial: 2024010101
+                refresh: 7200
+                retry: 3600
+                expire: 1209600
+                minimum: 3600

@@ -2,6 +2,7 @@ package builder_test
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -72,6 +73,35 @@ func buildDNSPacketsErr(t *testing.T, d *scenario.DNSFields, wantSub string) {
 
 func scalarNode(v string) yaml.Node {
 	return yaml.Node{Kind: yaml.ScalarNode, Value: v}
+}
+
+// soaDataNode 构造 SOA data 的 mapping 节点(有序键),镜像 YAML map 输入。
+// 数值标量显式标 Tag=!!int,确保 Decode 进 uint32;域名字符串由 yaml 推断为 !!str。
+func soaDataNode(mname, rname string, serial, refresh, retry, expire, minimum uint32) yaml.Node {
+	pairs := []struct {
+		k string
+		v string
+	}{
+		{"mname", mname},
+		{"rname", rname},
+		{"serial", strconv.FormatUint(uint64(serial), 10)},
+		{"refresh", strconv.FormatUint(uint64(refresh), 10)},
+		{"retry", strconv.FormatUint(uint64(retry), 10)},
+		{"expire", strconv.FormatUint(uint64(expire), 10)},
+		{"minimum", strconv.FormatUint(uint64(minimum), 10)},
+	}
+	n := yaml.Node{Kind: yaml.MappingNode}
+	for _, p := range pairs {
+		tag := "!!str"
+		if p.k != "mname" && p.k != "rname" {
+			tag = "!!int"
+		}
+		n.Content = append(n.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: p.k},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: p.v},
+		)
+	}
+	return n
 }
 
 // TestDNSADCDFlagsEncoded 验证 AD/CD 标志写入 byte[3](RFC 4035 §2)。
@@ -199,7 +229,7 @@ func TestDNSUnknownEnumErrors(t *testing.T) {
 		mutate  func(d *scenario.DNSFields)
 		wantSub string
 	}{
-		{"type", func(d *scenario.DNSFields) { d.Questions[0].Type = "SOA" }, "未知 type"},
+		{"type", func(d *scenario.DNSFields) { d.Questions[0].Type = "RRSIG" }, "未知 type"},
 		{"class", func(d *scenario.DNSFields) { d.Questions[0].Class = "NONE" }, "未知 class"},
 		{"opcode", func(d *scenario.DNSFields) { d.Opcode = "notify" }, "未知 opcode"},
 		{"rcode", func(d *scenario.DNSFields) { d.QR = "response"; d.RCode = "nx_domain" }, "未知 rcode"},
@@ -248,4 +278,84 @@ func TestDNSOmittedEnumDefaults(t *testing.T) {
 	if got.Questions[0].Class != layers.DNSClassIN {
 		t.Fatalf("省略 class 应默认 IN,实际 %v", got.Questions[0].Class)
 	}
+}
+
+// TestDNSSOA 验证 SOA 记录经 gopacket 路径序列化后,7 个 RDATA 字段(RFC 1035 §3.3.13)
+// 回读一致:MName/RName(注意回读无尾点)+ SERIAL/REFRESH/RETRY/EXPIRE/MINIMUM。
+func TestDNSSOA(t *testing.T) {
+	d := &scenario.DNSFields{
+		ID:                 0x123b,
+		QR:                 "response",
+		Authoritative:      true,
+		RecursionDesired:   true,
+		RecursionAvailable: true,
+		RCode:              "no_error",
+		Questions:          []scenario.DNSQuestionFields{{Name: "example.com.", Type: "SOA", Class: "IN"}},
+		Answers: []scenario.DNSRRFields{{
+			Name: "example.com.", Type: "SOA", Class: "IN", TTL: 300,
+			Data: soaDataNode("ns1.example.com.", "hostmaster.example.com.", 2024010101, 7200, 3600, 1209600, 3600),
+		}},
+	}
+	got := buildDNSPackets(t, d)[0]
+	if got.Answers[0].Type != layers.DNSTypeSOA {
+		t.Fatalf("type = %v,期望 SOA", got.Answers[0].Type)
+	}
+	soa := got.Answers[0].SOA
+	if string(soa.MName) != "ns1.example.com" || string(soa.RName) != "hostmaster.example.com" {
+		t.Fatalf("SOA MName/RName = %q/%q,期望 ns1.example.com/hostmaster.example.com", soa.MName, soa.RName)
+	}
+	if soa.Serial != 2024010101 || soa.Refresh != 7200 || soa.Retry != 3600 || soa.Expire != 1209600 || soa.Minimum != 3600 {
+		t.Fatalf("SOA 数值字段 = serial=%d refresh=%d retry=%d expire=%d minimum=%d",
+			soa.Serial, soa.Refresh, soa.Retry, soa.Expire, soa.Minimum)
+	}
+	if got.Answers[0].DataLength == 0 {
+		t.Fatalf("SOA RDLENGTH = 0,期望非零")
+	}
+}
+
+// TestDNSSOAValidation 验证 SOA 缺 MName/RName 在 build 时报错,而非静默退化为根域
+// 或产出无意义记录。畸形 SOA 应走 payload_hex 兜底,而非结构化路径。
+func TestDNSSOAValidation(t *testing.T) {
+	full := func() yaml.Node {
+		return soaDataNode("ns1.example.com.", "hostmaster.example.com.", 1, 1, 1, 1, 1)
+	}
+	t.Run("missing-mname", func(t *testing.T) {
+		data := soaDataNode("", "hostmaster.example.com.", 1, 1, 1, 1, 1)
+		d := &scenario.DNSFields{
+			QR:        "response",
+			Questions: []scenario.DNSQuestionFields{{Name: "example.com", Type: "SOA"}},
+			Answers:   []scenario.DNSRRFields{{Name: "example.com", Type: "SOA", TTL: 1, Data: data}},
+		}
+		buildDNSPacketsErr(t, d, "mname 不能为空")
+	})
+	t.Run("missing-rname", func(t *testing.T) {
+		data := soaDataNode("ns1.example.com.", "", 1, 1, 1, 1, 1)
+		d := &scenario.DNSFields{
+			QR:        "response",
+			Questions: []scenario.DNSQuestionFields{{Name: "example.com", Type: "SOA"}},
+			Answers:   []scenario.DNSRRFields{{Name: "example.com", Type: "SOA", TTL: 1, Data: data}},
+		}
+		buildDNSPacketsErr(t, d, "rname 不能为空")
+	})
+	t.Run("missing-both", func(t *testing.T) {
+		data := soaDataNode("", "", 1, 1, 1, 1, 1)
+		d := &scenario.DNSFields{
+			QR:        "response",
+			Questions: []scenario.DNSQuestionFields{{Name: "example.com", Type: "SOA"}},
+			Answers:   []scenario.DNSRRFields{{Name: "example.com", Type: "SOA", TTL: 1, Data: data}},
+		}
+		buildDNSPacketsErr(t, d, "mname 不能为空")
+	})
+	// 防御:full 数据正常通过,避免上面校验误伤合法输入。
+	t.Run("full-ok", func(t *testing.T) {
+		d := &scenario.DNSFields{
+			QR:        "response",
+			Questions: []scenario.DNSQuestionFields{{Name: "example.com", Type: "SOA"}},
+			Answers:   []scenario.DNSRRFields{{Name: "example.com", Type: "SOA", TTL: 1, Data: full()}},
+		}
+		got := buildDNSPackets(t, d)[0]
+		if got.Answers[0].Type != layers.DNSTypeSOA {
+			t.Fatalf("type = %v,期望 SOA", got.Answers[0].Type)
+		}
+	})
 }

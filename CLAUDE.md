@@ -52,7 +52,7 @@ testdata/            # golden pcap(逐字节比对的测试基准)
 最小出包链路已打通:`pmaker gen -f <yaml> -o <pcap>` 可真正出包。
 
 - **已实现 stack 模型**:层 eth / vlan(Dot1Q)/ ipv4 / gre / tcp / udp / icmp / dns / payload / payload_hex / http_request / http_response;
-  next-proto 自动串接、TCP/UDP checksum 伪首部、ICMP echo request/reply、DNS A/AAAA/CNAME/NS/PTR/MX/TXT、确定性时间戳、golden + gopacket 回读测试。
+  next-proto 自动串接、TCP/UDP checksum 伪首部、ICMP echo request/reply、DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA、确定性时间戳、golden + gopacket 回读测试。
 - **已实现 flow 基础版**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
   HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
 - **未实现 / 简化**:flow 的 overlap / 乱序 / 重传 / RTT 定时 / IP 分片 / 多流时间交织未做;
