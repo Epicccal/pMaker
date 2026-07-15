@@ -176,8 +176,8 @@ func encodeDNSNameBytes(s string) ([]byte, error) {
 	return out, nil
 }
 
-// encodeRData 按 type 结构化编码 RDATA(不带 payload_hex 的 RR)。仅复刻当前已支持的
-// 七种类型;未知 type 在此报错 —— 它们必须配 payload_hex 给出原始 RDATA。
+// encodeRData 按 type 结构化编码 RDATA(不带 payload_hex 的 RR)。复刻当前已支持的结构化
+// 类型;未知 type 在此报错 —— 它们必须配 payload_hex 给出原始 RDATA。
 func encodeRData(typ layers.DNSType, rr scenario.DNSRRFields) ([]byte, error) {
 	switch typ {
 	case layers.DNSTypeA, layers.DNSTypeAAAA:
@@ -242,6 +242,46 @@ func encodeRData(typ layers.DNSType, rr scenario.DNSRRFields) ([]byte, error) {
 			out = append(out, byte(len(s)))
 			out = append(out, s...)
 		}
+		return out, nil
+	case layers.DNSTypeSOA:
+		// SOA RDATA(RFC 1035 §3.3.13):MNAME + RNAME(wire 域名,与 gopacket encodeName 一致)
+		// + SERIAL/REFRESH/RETRY/EXPIRE/MINIMUM(5×uint32 大端)。
+		var soa struct {
+			MName   string `yaml:"mname"`
+			RName   string `yaml:"rname"`
+			Serial  uint32 `yaml:"serial"`
+			Refresh uint32 `yaml:"refresh"`
+			Retry   uint32 `yaml:"retry"`
+			Expire  uint32 `yaml:"expire"`
+			Minimum uint32 `yaml:"minimum"`
+		}
+		if err := rr.Data.Decode(&soa); err != nil {
+			return nil, fmt.Errorf("SOA data 需要 {mname, rname, serial, refresh, retry, expire, minimum}: %w", err)
+		}
+		if soa.MName == "" {
+			return nil, fmt.Errorf("SOA data.mname 不能为空")
+		}
+		if soa.RName == "" {
+			return nil, fmt.Errorf("SOA data.rname 不能为空")
+		}
+		mname, err := encodeDNSNameBytes(soa.MName)
+		if err != nil {
+			return nil, fmt.Errorf("SOA mname: %w", err)
+		}
+		rname, err := encodeDNSNameBytes(soa.RName)
+		if err != nil {
+			return nil, fmt.Errorf("SOA rname: %w", err)
+		}
+		out := make([]byte, 0, len(mname)+len(rname)+20)
+		out = append(out, mname...)
+		out = append(out, rname...)
+		var tail [20]byte
+		binary.BigEndian.PutUint32(tail[0:], soa.Serial)
+		binary.BigEndian.PutUint32(tail[4:], soa.Refresh)
+		binary.BigEndian.PutUint32(tail[8:], soa.Retry)
+		binary.BigEndian.PutUint32(tail[12:], soa.Expire)
+		binary.BigEndian.PutUint32(tail[16:], soa.Minimum)
+		out = append(out, tail[:]...)
 		return out, nil
 	default:
 		return nil, fmt.Errorf("type %s 未配 payload_hex 时无法编码 RDATA(未知/未支持 type 需用 payload_hex 给出原始 RDATA)", typ)

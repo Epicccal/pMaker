@@ -169,3 +169,35 @@ func TestDNSRawHeaderFlags(t *testing.T) {
 		t.Fatalf("byte[3] AD/CD 段 = %#x,期望 0x30", b3&0x30)
 	}
 }
+
+// TestDNSRawSOA 验证 raw 路径对结构化 SOA 的编码与 gopacket 一致:用一条 payload_hex RR
+// 把整条消息推入 raw 路径,再校 SOA 回读值。证明 encodeRData 复刻的 SOA wire
+// (MName + RName + 5×uint32)能被 gopacket 正确解析。
+func TestDNSRawSOA(t *testing.T) {
+	d := &scenario.DNSFields{
+		QR:        "response",
+		Questions: []scenario.DNSQuestionFields{{Name: "example.com", Type: "SOA"}},
+		Answers: []scenario.DNSRRFields{
+			{
+				Name: "example.com", Type: "SOA", Class: "IN", TTL: 3600,
+				Data: soaDataNode("ns1.example.com.", "hostmaster.example.com.", 2024010101, 7200, 3600, 1209600, 3600),
+			},
+			dnsRRPayloadHex("x.example.com", "99", "IN", 1, "0x00"), // 触发 raw 路径
+		},
+	}
+	got := readDNSOnce(t, d)
+	if len(got.Answers) != 2 {
+		t.Fatalf("answers 数 = %d,期望 2", len(got.Answers))
+	}
+	if got.Answers[0].Type != layers.DNSTypeSOA {
+		t.Fatalf("answers[0] type = %v,期望 SOA", got.Answers[0].Type)
+	}
+	soa := got.Answers[0].SOA
+	if string(soa.MName) != "ns1.example.com" || string(soa.RName) != "hostmaster.example.com" {
+		t.Fatalf("raw 路径 SOA MName/RName = %q/%q", soa.MName, soa.RName)
+	}
+	if soa.Serial != 2024010101 || soa.Refresh != 7200 || soa.Retry != 3600 || soa.Expire != 1209600 || soa.Minimum != 3600 {
+		t.Fatalf("raw 路径 SOA 数值字段 = serial=%d refresh=%d retry=%d expire=%d minimum=%d",
+			soa.Serial, soa.Refresh, soa.Retry, soa.Expire, soa.Minimum)
+	}
+}
