@@ -1,7 +1,7 @@
 # examples/dns/multi.yaml
 #
 # 同一个 pcap 中的多组 UDP DNS 请求/响应。
-# 当前支持的 DNS RR 类型(A/AAAA/CNAME/NS/PTR/MX/TXT/SOA)各有一组 query/response。
+# 当前支持的 DNS RR 类型(A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV)各有一组 query/response。
 link_type: ethernet
 seed: 42
 packets:
@@ -247,3 +247,35 @@ packets:
                 retry: 3600
                 expire: 1209600
                 minimum: 3600
+
+  - name: dns-query-srv
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "8.8.8.8", ttl: 64 }
+      - udp:  { sport: 53008, dport: 53 }
+      - dns:
+          id: 0x123c
+          qr: query
+          recursion_desired: true
+          questions:
+            - { name: "_sip._tcp.example.com.", type: SRV, class: IN }
+
+  - name: dns-response-srv
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53008 }
+      - dns:
+          id: 0x123c
+          qr: response
+          recursion_desired: true
+          recursion_available: true
+          rcode: no_error
+          questions:
+            - { name: "_sip._tcp.example.com.", type: SRV, class: IN }
+          answers:
+            - name: "_sip._tcp.example.com."
+              type: SRV
+              class: IN
+              ttl: 300
+              data: { priority: 10, weight: 20, port: 5060, target: "sipserver.example.com." }

@@ -104,6 +104,32 @@ func soaDataNode(mname, rname string, serial, refresh, retry, expire, minimum ui
 	return n
 }
 
+// srvDataNode 构造 SRV data 的 mapping 节点(有序键),镜像 YAML map 输入。
+// 数值标量显式标 Tag=!!int,确保 Decode 进 uint16;target 字符串由 yaml 推断为 !!str。
+func srvDataNode(priority, weight, port uint16, target string) yaml.Node {
+	pairs := []struct {
+		k string
+		v string
+	}{
+		{"priority", strconv.FormatUint(uint64(priority), 10)},
+		{"weight", strconv.FormatUint(uint64(weight), 10)},
+		{"port", strconv.FormatUint(uint64(port), 10)},
+		{"target", target},
+	}
+	n := yaml.Node{Kind: yaml.MappingNode}
+	for _, p := range pairs {
+		tag := "!!str"
+		if p.k != "target" {
+			tag = "!!int"
+		}
+		n.Content = append(n.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: p.k},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: p.v},
+		)
+	}
+	return n
+}
+
 // TestDNSADCDFlagsEncoded 验证 AD/CD 标志写入 byte[3](RFC 4035 §2)。
 func TestDNSADCDFlagsEncoded(t *testing.T) {
 	cases := []struct {
@@ -357,5 +383,63 @@ func TestDNSSOAValidation(t *testing.T) {
 		if got.Answers[0].Type != layers.DNSTypeSOA {
 			t.Fatalf("type = %v,期望 SOA", got.Answers[0].Type)
 		}
+	})
+}
+
+// TestDNSSRV 验证 SRV 记录经 gopacket 路径序列化后,4 个 RDATA 字段(RFC 2782)
+// 回读一致:Priority/Weight/Port + Target(回读无尾点,与 MX/SOA 同口径)。
+func TestDNSSRV(t *testing.T) {
+	d := &scenario.DNSFields{
+		ID:                 0x123c,
+		QR:                 "response",
+		Authoritative:      true,
+		RecursionDesired:   true,
+		RecursionAvailable: true,
+		RCode:              "no_error",
+		Questions:          []scenario.DNSQuestionFields{{Name: "_sip._tcp.example.com.", Type: "SRV", Class: "IN"}},
+		Answers: []scenario.DNSRRFields{{
+			Name: "_sip._tcp.example.com.", Type: "SRV", Class: "IN", TTL: 300,
+			Data: srvDataNode(10, 20, 5060, "sipserver.example.com."),
+		}},
+	}
+	got := buildDNSPackets(t, d)[0]
+	if got.Answers[0].Type != layers.DNSTypeSRV {
+		t.Fatalf("type = %v,期望 SRV", got.Answers[0].Type)
+	}
+	srv := got.Answers[0].SRV
+	if srv.Priority != 10 || srv.Weight != 20 || srv.Port != 5060 {
+		t.Fatalf("SRV Priority/Weight/Port = %d/%d/%d,期望 10/20/5060", srv.Priority, srv.Weight, srv.Port)
+	}
+	if string(srv.Name) != "sipserver.example.com" {
+		t.Fatalf("SRV Target = %q,期望 sipserver.example.com", srv.Name)
+	}
+	if got.Answers[0].DataLength == 0 {
+		t.Fatalf("SRV RDLENGTH = 0,期望非零")
+	}
+}
+
+// TestDNSSRVValidation 验证 SRV 校验:data 非 map 报错;空 target 报错(与 MX 的
+// "exchange 不能为空" 同口径,避免省略 target 静默退化为根)。根 target("服务不可用"
+// 哨兵)用 payload_hex 构造,见 TestDNSRawSRVRootTarget。
+func TestDNSSRVValidation(t *testing.T) {
+	t.Run("non-map-data", func(t *testing.T) {
+		d := &scenario.DNSFields{
+			QR:        "response",
+			Questions: []scenario.DNSQuestionFields{{Name: "_sip._tcp.example.com", Type: "SRV"}},
+			Answers:   []scenario.DNSRRFields{{Name: "_sip._tcp.example.com", Type: "SRV", TTL: 1, Data: scalarNode("not-a-map")}},
+		}
+		buildDNSPacketsErr(t, d, "SRV data")
+	})
+	t.Run("empty-target", func(t *testing.T) {
+		// target 空/省略 → 报错,而非静默退化为根("服务不可用"哨兵)。
+		d := &scenario.DNSFields{
+			QR:        "response",
+			Questions: []scenario.DNSQuestionFields{{Name: "_sip._tcp.example.com", Type: "SRV"}},
+			Answers: []scenario.DNSRRFields{{
+				Name: "_sip._tcp.example.com", Type: "SRV", Class: "IN", TTL: 300,
+				Data: srvDataNode(0, 0, 0, ""),
+			}},
+		}
+		buildDNSPacketsErr(t, d, "target 不能为空")
 	})
 }

@@ -330,8 +330,8 @@ func readPackets(t *testing.T, data []byte) []gopacket.Packet {
 func TestDNSMultiContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/dns/multi.yaml")
 	dnsPackets := readDNSPackets(t, pcap)
-	if len(dnsPackets) != 16 {
-		t.Fatalf("期望 16 个 DNS 包(8 组 query/response),得到 %d", len(dnsPackets))
+	if len(dnsPackets) != 18 {
+		t.Fatalf("期望 18 个 DNS 包(9 组 query/response),得到 %d", len(dnsPackets))
 	}
 
 	expectDNSPair(t, dnsPackets, 0, layers.DNSTypeA, "example.com", func(rr layers.DNSResourceRecord) {
@@ -377,6 +377,13 @@ func TestDNSMultiContent(t *testing.T) {
 		if soa.Serial != 2024010101 || soa.Refresh != 7200 || soa.Retry != 3600 || soa.Expire != 1209600 || soa.Minimum != 3600 {
 			t.Fatalf("SOA 数值字段 = serial=%d refresh=%d retry=%d expire=%d minimum=%d",
 				soa.Serial, soa.Refresh, soa.Retry, soa.Expire, soa.Minimum)
+		}
+	})
+	expectDNSPair(t, dnsPackets, 16, layers.DNSTypeSRV, "_sip._tcp.example.com", func(rr layers.DNSResourceRecord) {
+		srv := rr.SRV
+		if srv.Priority != 10 || srv.Weight != 20 || srv.Port != 5060 || string(srv.Name) != "sipserver.example.com" {
+			t.Fatalf("SRV answer = priority=%d weight=%d port=%d target=%q",
+				srv.Priority, srv.Weight, srv.Port, srv.Name)
 		}
 	})
 }

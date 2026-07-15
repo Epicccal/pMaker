@@ -201,3 +201,62 @@ func TestDNSRawSOA(t *testing.T) {
 			soa.Serial, soa.Refresh, soa.Retry, soa.Expire, soa.Minimum)
 	}
 }
+
+// TestDNSRawSRV 验证 raw 路径对结构化 SRV 的编码与 gopacket 一致:用一条 payload_hex RR
+// 把整条消息推入 raw 路径,再校 SRV 回读值。证明 encodeRData 复刻的 SRV wire
+// (Priority + Weight + Port + Target 域名,RFC 2782)能被 gopacket 正确解析。
+func TestDNSRawSRV(t *testing.T) {
+	d := &scenario.DNSFields{
+		QR:        "response",
+		Questions: []scenario.DNSQuestionFields{{Name: "_sip._tcp.example.com", Type: "SRV"}},
+		Answers: []scenario.DNSRRFields{
+			{
+				Name: "_sip._tcp.example.com", Type: "SRV", Class: "IN", TTL: 300,
+				Data: srvDataNode(10, 20, 5060, "sipserver.example.com."),
+			},
+			dnsRRPayloadHex("x.example.com", "99", "IN", 1, "0x00"), // 触发 raw 路径
+		},
+	}
+	got := readDNSOnce(t, d)
+	if len(got.Answers) != 2 {
+		t.Fatalf("answers 数 = %d,期望 2", len(got.Answers))
+	}
+	if got.Answers[0].Type != layers.DNSTypeSRV {
+		t.Fatalf("answers[0] type = %v,期望 SRV", got.Answers[0].Type)
+	}
+	srv := got.Answers[0].SRV
+	if srv.Priority != 10 || srv.Weight != 20 || srv.Port != 5060 {
+		t.Fatalf("raw 路径 SRV Priority/Weight/Port = %d/%d/%d,期望 10/20/5060", srv.Priority, srv.Weight, srv.Port)
+	}
+	if string(srv.Name) != "sipserver.example.com" {
+		t.Fatalf("raw 路径 SRV Target = %q,期望 sipserver.example.com", srv.Name)
+	}
+}
+
+// TestDNSRawSRVRootTarget 验证 RFC 2782 根 target("服务不可用"哨兵)用 payload_hex
+// 构造产出合规包:RDATA = Priority+Weight+Port(6 字节)+ 根(0x00)= 7 字节,RDLENGTH=7,
+// 无多余尾巴字节。走此通道是因为 gopacket 对根名 RR 的 RDLENGTH 会多算 1 字节,结构化
+// 路径无法正确编码(故 buildDNSRR/encodeRData 对空 target 报错)。
+func TestDNSRawSRVRootTarget(t *testing.T) {
+	d := &scenario.DNSFields{
+		QR:        "response",
+		Questions: []scenario.DNSQuestionFields{{Name: "_sip._tcp.example.com", Type: "SRV"}},
+		Answers: []scenario.DNSRRFields{
+			// priority=0, weight=0, port=0, target=根 → RDATA = 7 个 0x00。
+			dnsRRPayloadHex("_sip._tcp.example.com", "SRV", "IN", 300, "0x00000000000000"),
+		},
+	}
+	got := readDNSOnce(t, d)
+	if got.Answers[0].Type != layers.DNSTypeSRV {
+		t.Fatalf("type = %v,期望 SRV", got.Answers[0].Type)
+	}
+	// RDLENGTH = 实际 RDATA 长度 = 7(6 字节定长头 + 根 0x00),无多余尾巴字节。
+	if got.Answers[0].DataLength != 7 {
+		t.Fatalf("根 target SRV RDLENGTH = %d,期望 7", got.Answers[0].DataLength)
+	}
+	rawBytesEqual(t, got.Answers[0], []byte{0, 0, 0, 0, 0, 0, 0}, "根 target SRV RDATA")
+	// 回读的 SRV target 应为根(空名)。
+	if len(got.Answers[0].SRV.Name) != 0 {
+		t.Fatalf("根 target SRV.Name = %q,期望空(根)", got.Answers[0].SRV.Name)
+	}
+}
