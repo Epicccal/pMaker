@@ -513,13 +513,18 @@ func validateLayer(l Layer) error {
 				if rr.Name == "" {
 					return fmt.Errorf("%s[%d] 需要 name", sec, i)
 				}
-				if rr.PayloadHex != "" {
+				hasPH := rr.PayloadHex != ""
+				if hasPH {
+					if rr.Data.Kind != 0 {
+						// payload_hex 与 data 互斥:前者直接落原始 RDATA,后者走结构化编码,
+						// 二者并存只会让 build 时取哪个产生歧义。
+						return fmt.Errorf("%s[%d] payload_hex 与 data 只能配置一个", sec, i)
+					}
 					if _, err := ParsePayloadHex(rr.PayloadHex); err != nil {
 						return fmt.Errorf("%s[%d]: %w", sec, i, err)
 					}
-				}
-				if rr.PayloadHex == "" && rr.Data.Kind == 0 {
-					return fmt.Errorf("%s[%d] 需要 data", sec, i)
+				} else if rr.Data.Kind == 0 {
+					return fmt.Errorf("%s[%d] 需要 data 或 payload_hex", sec, i)
 				}
 			}
 		}
