@@ -1,0 +1,21 @@
+# examples/dns/unknown_rr.yaml
+#
+# 未知/私有 RR type(99)+ 原始 RDATA(payload_hex)。用于模糊测试:测被测设备对
+# gopacket 无法表达的未知 type 如何处理。type 用数字写法(十进制 99,等价 0x0063)。
+# RDATA 完全由 payload_hex 给定(此处 4 字节),RDLENGTH 自动 = len(RDATA)。
+link_type: ethernet
+seed: 42
+packets:
+  - name: dns-unknown-rr
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53000 }
+      - dns:
+          id: 0x1234
+          qr: response
+          rcode: no_error
+          questions:
+            - { name: "example.com.", type: TXT, class: IN }
+          answers:
+            - { name: "example.com.", type: 99, class: IN, ttl: 300, payload_hex: "0xdeadbeef" }

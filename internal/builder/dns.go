@@ -3,45 +3,40 @@ package builder
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
+	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-func buildDNS(f *scenario.DNSFields) (*layers.DNS, error) {
-	// DNS.Z 占 byte[3] 的 bit6-4(RFC 1035 保留位)。RFC 4035 §2 将其重新定义为
-	// AD(bit5)/CD(bit4),bit6 仍必须为 0。gopacket 用 Z 字段承载这两位。
-	var z uint8
-	if f.AuthenticatedData {
-		z |= 0x02 // AD → byte[3] bit5
-	}
-	if f.CheckingDisabled {
-		z |= 0x01 // CD → byte[3] bit4
-	}
-	qr, err := dnsQR(f.QR)
+func buildDNS(f *scenario.DNSFields) (gopacket.SerializableLayer, error) {
+	h, err := resolveDNSHeader(f)
 	if err != nil {
-		return nil, fmt.Errorf("qr: %w", err)
+		return nil, err
 	}
-	opcode, err := dnsOpCode(f.Opcode)
-	if err != nil {
-		return nil, fmt.Errorf("opcode: %w", err)
-	}
-	rcode, err := dnsRCode(f.RCode)
-	if err != nil {
-		return nil, fmt.Errorf("rcode: %w", err)
+	// 任一 RR 带 payload_hex → 整条消息走手写编码:gopacket 的 DNS layer 对未知 type
+	// 直接报错、对已知 type 强制结构化编码并忽略 rr.Data,没有"原始 RDATA"通道,
+	// 故存在 payload_hex 时无法借用 gopacket 序列化,只能在本层自己拼 DNS 消息字节。
+	if anyDNSRRHasPayloadHex(f) {
+		raw, err := encodeDNSMessageRaw(f, h)
+		if err != nil {
+			return nil, err
+		}
+		return &dnsRawLayer{data: raw}, nil
 	}
 	d := &layers.DNS{
 		ID:           f.ID,
-		QR:           qr,
-		OpCode:       opcode,
+		QR:           h.qr,
+		OpCode:       h.opcode,
 		AA:           f.Authoritative,
 		TC:           f.Truncated,
 		RD:           f.RecursionDesired,
 		RA:           f.RecursionAvailable,
-		Z:            z,
-		ResponseCode: rcode,
+		Z:            h.z,
+		ResponseCode: h.rcode,
 	}
 	for i, q := range f.Questions {
 		name, err := dnsName(q.Name)
@@ -73,6 +68,82 @@ func buildDNS(f *scenario.DNSFields) (*layers.DNS, error) {
 	}
 	return d, nil
 }
+
+// dnsHeader 承载已解析的 DNS 报头字段,raw 与 gopacket 两条路径共用。
+type dnsHeader struct {
+	id             uint16
+	qr             bool
+	opcode         layers.DNSOpCode
+	aa, tc, rd, ra bool
+	z              uint8
+	rcode          layers.DNSResponseCode
+}
+
+// resolveDNSHeader 解析 DNSFields 的报头标志位(AD/CD 编入 Z,见 RFC 4035 §2)。
+func resolveDNSHeader(f *scenario.DNSFields) (dnsHeader, error) {
+	// DNS.Z 占 byte[3] 的 bit6-4(RFC 1035 保留位)。RFC 4035 §2 将其重新定义为
+	// AD(bit5)/CD(bit4),bit6 仍必须为 0。gopacket 用 Z 字段承载这两位。
+	var z uint8
+	if f.AuthenticatedData {
+		z |= 0x02 // AD → byte[3] bit5
+	}
+	if f.CheckingDisabled {
+		z |= 0x01 // CD → byte[3] bit4
+	}
+	qr, err := dnsQR(f.QR)
+	if err != nil {
+		return dnsHeader{}, fmt.Errorf("qr: %w", err)
+	}
+	opcode, err := dnsOpCode(f.Opcode)
+	if err != nil {
+		return dnsHeader{}, fmt.Errorf("opcode: %w", err)
+	}
+	rcode, err := dnsRCode(f.RCode)
+	if err != nil {
+		return dnsHeader{}, fmt.Errorf("rcode: %w", err)
+	}
+	return dnsHeader{
+		id:     f.ID,
+		qr:     qr,
+		opcode: opcode,
+		aa:     f.Authoritative,
+		tc:     f.Truncated,
+		rd:     f.RecursionDesired,
+		ra:     f.RecursionAvailable,
+		z:      z,
+		rcode:  rcode,
+	}, nil
+}
+
+// anyDNSRRHasPayloadHex 报告 answers/authorities/additionals 中是否有 RR 显式给了 payload_hex。
+func anyDNSRRHasPayloadHex(f *scenario.DNSFields) bool {
+	for _, sec := range [][]scenario.DNSRRFields{f.Answers, f.Authorities, f.Additionals} {
+		for _, rr := range sec {
+			if rr.PayloadHex != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// dnsRawLayer 持有已编码的完整 DNS 消息字节,实现 SerializableLayer 以便无侵入地
+// 接入 SerializeLayers(UDP/TCP 层照常把它当 payload)。用于 payload_hex / 未知 type
+// 这类 gopacket 无法表达的畸形场景。
+type dnsRawLayer struct {
+	data []byte
+}
+
+func (d *dnsRawLayer) SerializeTo(b gopacket.SerializeBuffer, _ gopacket.SerializeOptions) error {
+	buf, err := b.PrependBytes(len(d.data))
+	if err != nil {
+		return err
+	}
+	copy(buf, d.data)
+	return nil
+}
+
+func (d *dnsRawLayer) LayerType() gopacket.LayerType { return layers.LayerTypeDNS }
 
 func buildDNSRRs(in []scenario.DNSRRFields) ([]layers.DNSResourceRecord, error) {
 	out := make([]layers.DNSResourceRecord, 0, len(in))
@@ -226,6 +297,12 @@ func validateDNSName(s string) error {
 	return nil
 }
 
+// dnsType 解析 RR/QType 字符串。接受三种写法:
+//   - 省略 → 默认 A
+//   - 已知名字(A/AAAA/CNAME/NS/PTR/MX/TXT)→ 对应 DNSType
+//   - 数字("99" / "0x0063" / "0063")→ 任意 type,用于未知 RR / 私有码模糊测试
+//
+// 数字 type 通常需配合 payload_hex 提供原始 RDATA(见 encodeDNSMessage)。
 func dnsType(s string) (layers.DNSType, error) {
 	if s == "" {
 		return layers.DNSTypeA, nil // 省略 → 默认 A
@@ -245,9 +322,32 @@ func dnsType(s string) (layers.DNSType, error) {
 		return layers.DNSTypeMX, nil
 	case "TXT":
 		return layers.DNSTypeTXT, nil
-	default:
-		return 0, fmt.Errorf("未知 type %q(支持 A/AAAA/CNAME/NS/PTR/MX/TXT)", s)
 	}
+	// 非已知名字:尝试按数字解析,允许造未知/私有 type。
+	v, err := parseDNSRRNumber(s, "type")
+	if err != nil {
+		return 0, err
+	}
+	return layers.DNSType(v), nil
+}
+
+// parseDNSRRNumber 把字符串当 uint16 数字解析,支持十进制与 0x 十六进制。
+// 用于 type/class 的数字写法(未知/私有码)。what 用于错误信息。
+func parseDNSRRNumber(s, what string) (uint16, error) {
+	t := strings.TrimSpace(s)
+	base := 10
+	if strings.HasPrefix(t, "0x") || strings.HasPrefix(t, "0X") {
+		t = t[2:]
+		base = 16
+	}
+	n, err := strconv.ParseUint(t, base, 16)
+	if err != nil {
+		return 0, fmt.Errorf("未知 %s %q(支持名字或数字如 99 / 0x0063)", what, s)
+	}
+	if n > 0xffff {
+		return 0, fmt.Errorf("%s %q 超出 uint16 范围", what, s)
+	}
+	return uint16(n), nil
 }
 
 func dnsClass(s string) (layers.DNSClass, error) {

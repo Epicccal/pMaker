@@ -1,0 +1,21 @@
+# examples/dns/malformed_rdata.yaml
+#
+# 已知 type(A)+ 故意畸形的 RDATA:合法 A 记录 RDATA 应为 4 字节 IPv4,此处只给 3 字节。
+# 用于测被测设备如何处理「RDLENGTH/type 与 RDATA 内容不匹配」的畸形 —— 这是 IDS 规避
+# 与解析器鲁棒性测试的经典点。RDLENGTH 由 payload_hex 实际长度推导(=3),不被修正为 4。
+link_type: ethernet
+seed: 42
+packets:
+  - name: dns-malformed-a
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "8.8.8.8", dst: "10.0.0.10", ttl: 64 }
+      - udp:  { sport: 53, dport: 53000 }
+      - dns:
+          id: 0x1234
+          qr: response
+          rcode: no_error
+          questions:
+            - { name: "example.com.", type: A, class: IN }
+          answers:
+            - { name: "example.com.", type: A, class: IN, ttl: 300, payload_hex: "0x010203" }
