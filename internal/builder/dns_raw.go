@@ -283,6 +283,31 @@ func encodeRData(typ layers.DNSType, rr scenario.DNSRRFields) ([]byte, error) {
 		binary.BigEndian.PutUint32(tail[16:], soa.Minimum)
 		out = append(out, tail[:]...)
 		return out, nil
+	case layers.DNSTypeSRV:
+		// SRV RDATA(RFC 2782):Priority + Weight + Port(3×uint16 大端)+ Target(wire 域名)。
+		// 空 target 报错(与 buildDNSRR 的 SRV 分支同口径);根 target 哨兵请用 payload_hex。
+		var srv struct {
+			Priority uint16 `yaml:"priority"`
+			Weight   uint16 `yaml:"weight"`
+			Port     uint16 `yaml:"port"`
+			Target   string `yaml:"target"`
+		}
+		if err := rr.Data.Decode(&srv); err != nil {
+			return nil, fmt.Errorf("SRV data 需要 {priority, weight, port, target}: %w", err)
+		}
+		if srv.Target == "" {
+			return nil, fmt.Errorf("SRV data.target 不能为空(根 target \"服务不可用\" 哨兵请用 payload_hex)")
+		}
+		name, err := encodeDNSNameBytes(srv.Target)
+		if err != nil {
+			return nil, fmt.Errorf("SRV target: %w", err)
+		}
+		out := make([]byte, 6+len(name))
+		binary.BigEndian.PutUint16(out[0:], srv.Priority)
+		binary.BigEndian.PutUint16(out[2:], srv.Weight)
+		binary.BigEndian.PutUint16(out[4:], srv.Port)
+		copy(out[6:], name)
+		return out, nil
 	default:
 		return nil, fmt.Errorf("type %s 未配 payload_hex 时无法编码 RDATA(未知/未支持 type 需用 payload_hex 给出原始 RDATA)", typ)
 	}

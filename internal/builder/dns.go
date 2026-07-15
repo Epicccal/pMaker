@@ -281,6 +281,28 @@ func buildDNSRR(rr scenario.DNSRRFields) (layers.DNSResourceRecord, error) {
 			Expire:  soa.Expire,
 			Minimum: soa.Minimum,
 		}
+	case layers.DNSTypeSRV:
+		// SRV RDATA(RFC 2782):Priority(uint16)+ Weight(uint16)+ Port(uint16)+ Target(域名)。
+		// Target 走 dnsName 归一化+校验;空 target 报错(与 MX 的 "exchange 不能为空" 同口径,
+		// 避免省略 target 静默退化为根)。RFC 2782 §1 的根 target("服务不可用"哨兵)请用
+		// payload_hex 给原始 RDATA:gopacket 对根名 RR 的 RDLENGTH 会多算 1 字节,无法正确编码。
+		var srv struct {
+			Priority uint16 `yaml:"priority"`
+			Weight   uint16 `yaml:"weight"`
+			Port     uint16 `yaml:"port"`
+			Target   string `yaml:"target"`
+		}
+		if err := rr.Data.Decode(&srv); err != nil {
+			return out, fmt.Errorf("SRV data 需要 {priority, weight, port, target}: %w", err)
+		}
+		if srv.Target == "" {
+			return out, fmt.Errorf("SRV data.target 不能为空(根 target \"服务不可用\" 哨兵请用 payload_hex)")
+		}
+		name, err := dnsName(srv.Target)
+		if err != nil {
+			return out, fmt.Errorf("SRV target: %w", err)
+		}
+		out.SRV = layers.DNSSRV{Priority: srv.Priority, Weight: srv.Weight, Port: srv.Port, Name: name}
 	default:
 		return out, fmt.Errorf("暂不支持 DNS RR 类型 %q", rr.Type)
 	}
@@ -338,7 +360,7 @@ func validateDNSName(s string) error {
 
 // dnsType 解析 RR/QType 字符串。接受三种写法:
 //   - 省略 → 默认 A
-//   - 已知名字(A/AAAA/CNAME/NS/PTR/MX/TXT/SOA)→ 对应 DNSType
+//   - 已知名字(A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV)→ 对应 DNSType
 //   - 数字("99" / "0x0063" / "0063")→ 任意 type,用于未知 RR / 私有码模糊测试
 //
 // 数字 type 通常需配合 payload_hex 提供原始 RDATA(见 encodeDNSMessage)。
@@ -363,6 +385,8 @@ func dnsType(s string) (layers.DNSType, error) {
 		return layers.DNSTypeTXT, nil
 	case "SOA":
 		return layers.DNSTypeSOA, nil
+	case "SRV":
+		return layers.DNSTypeSRV, nil
 	}
 	// 非已知名字:尝试按数字解析,允许造未知/私有 type。
 	v, err := parseDNSRRNumber(s, "type")
