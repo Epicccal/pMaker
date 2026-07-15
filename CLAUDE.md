@@ -42,8 +42,10 @@ internal/
   proto/             # 各协议/封装层构造助手(eth/vlan/qinq/gre/mpls/vxlan/ip/tcp/udp/dns...),按需拆分
   writer/            # pcap 输出、LinkType、时间戳
 examples/            # 可直接运行的示例场景 YAML,按协议分目录:examples/<协议>/<name>.yaml
-testdata/            # golden pcap(逐字节比对的测试基准)
 ```
+
+golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`internal/scenario/testdata/<协议>/<name>.pcap`
+(Go 测试工作目录为包目录,测试以相对路径 `testdata/...` 读取)。**不要**在仓库根再建 `testdata/`。
 
 **不要过早创建 `pkg/`。** 目前是 CLI 工具、无外部导入方;只有出现真实的外部消费者时,才把稳定接口提升到 `pkg/`(YAGNI)。
 
@@ -225,7 +227,7 @@ go test -race ./...
 go test -cover ./...
 
 # 重新生成 golden 基准(约定用 -update)
-go test ./internal/builder -run TestGolden -update
+go test ./internal/scenario -run TestExamplesGolden -update
 
 # 质量门禁(提交前必跑)
 gofmt -l .        # 应无输出
@@ -285,7 +287,7 @@ packets:
 
 ## 测试策略
 
-1. **Golden pcap 比对**:`testdata/*.pcap` 逐字节比对(依赖确定性输出);用 `-update` 重生。
+1. **Golden pcap 比对**:`internal/scenario/testdata/<协议>/<name>.pcap` 逐字节比对(依赖确定性输出);用 `-update` 重生。
 2. **回读校验**:生成的 pcap 能被 gopacket 正确解析(规范包场景)。
 3. **可选集成**:若环境有 `tshark`,可用 `tshark -r out.pcap` 交叉验证协议解析(集成测试,非必需依赖)。
 
