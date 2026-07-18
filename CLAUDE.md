@@ -36,11 +36,12 @@
 ```
 cmd/pmaker/          # main 包:CLI 入口、flag 解析、子命令分发,尽量薄
 internal/
-  scenario/          # YAML schema 定义、解析、校验(带字段/行号级错误信息)
-  builder/           # scenario 模型 -> gopacket layers -> 字节;序列化选项 & 原始字节兜底
-  flow/              # 有状态流:TCP 握手、seq/ack 递推、时间戳编排
+  scenario/          # YAML schema 定义、解析、校验(带字段/行号级错误信息);TimeSpec / PlannedPacket 类型
+  builder/           # scenario 模型 -> gopacket layers -> 字节;BuildPlanned 消费已排序的 PlannedPacket
+  flow/              # 有状态流:TCP 握手、seq/ack 递推(只产 stack 包,不含时间)
+  plan/              # 时间编排:packets + flows 汇流成 PlannedPacket,按 Time 排序
   proto/             # 各协议/封装层构造助手(eth/vlan/qinq/gre/mpls/vxlan/ip/tcp/udp/dns...),按需拆分
-  writer/            # pcap 输出、LinkType、时间戳
+  writer/            # pcap 输出、LinkType(时间戳取自 builder.OutPacket.Time)
 examples/            # 可直接运行的示例场景 YAML,按协议分目录:examples/<协议>/<name>.yaml
 ```
 
@@ -57,7 +58,11 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   next-proto 自动串接、TCP/UDP checksum 伪首部、ICMP echo request/reply、DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV、确定性时间戳、golden + gopacket 回读测试。
 - **已实现 flow 基础版**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
   HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
-- **未实现 / 简化**:flow 的 overlap / 乱序 / 重传 / RTT 定时 / IP 分片 / 多流时间交织未做;
+- **已实现 PlannedPacket 时间编排**:`internal/plan.Plan` 把 standalone packets 与 flows 展开包汇流成
+  `PlannedPacket{ Stack; Time }` 列表,按显式时间戳稳定排序后再交 `builder.BuildPlanned` 序列化。
+  时间通过 `base_time` / `packet.time` / `flow.start` 显式指定(绝对 ISO8601 或相对 `+1.5s` 偏移);
+  未指定时默认 `base + 全局序号*1ms`,与历史行为逐字节等价,golden 不变。
+- **未实现 / 简化**:flow 的 overlap / 乱序 / 重传 / RTT 定时 / IP 分片未做;
   畸形开关 `fix_lengths` / `checksum` **解析但忽略**(build 时 `slog.Warn`),真正的畸形 / 原始字节兜底待做;
   HTTP 头按 key 排序输出(未保留原序)。
 
@@ -67,9 +72,12 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 scenario.yaml
    │  scenario 层:解析 + 校验(尽早失败,报错带字段路径)
    ▼
-[]Packet 场景模型(每个 packet = 有序 layer 栈)
+Scenario(Packets + Flows,每个 packet = 有序 layer 栈)
+   │  flow 层:把 flows 展开成 stack 包(补全握手 / seq/ack,不含时间)
+   │  plan 层:packets 与 flows 汇流 -> []PlannedPacket{ Stack; Time },按 Time 稳定排序
+   ▼
+[]PlannedPacket(已带显式时间戳、已排序)
    │  builder 层:有序层栈(外→内)-> gopacket layers;自动串接 next-proto,可原始字节兜底
-   │  flow 层:补全握手 / seq/ack / 时间戳
    ▼
 gopacket.SerializeBuffer  ──(逐包)──▶  writer 层:pcapgo.Writer
    ▼
@@ -174,17 +182,28 @@ segment: { mss: 8, order: shuffled, overlap: 4, retransmit: [1] }
 
 乱序 / 重叠 / 重传只是"发包顺序与 seq 的组合",状态机本身不变。检测设备的**重组能力**是主战场。
 
-### 后续扩展
+### 时间编排与汇流(已实现)
 
-当前 flow 已支持基础 TCP 会话展开。后续若要支持多流按显式时间戳交织、
-更通用的封装 stack 反转或外层/内层分片,可引入类似 `PlannedPacket{ Stack []Layer; Time time.Time }` 的中间态,
-让 packets 与 flows 汇流后统一排序再写盘。
+`internal/plan.Plan` 是 packets 与 flows 的汇流点:把 standalone packets 与各 flow 展开后的
+stack 包汇流成 `PlannedPacket{ Stack []Layer; Time time.Time }` 列表,按 `Time` **稳定排序**后再交
+`builder.BuildPlanned` 序列化、`writer` 落盘。`flow.Expand` 仍返回 `[]scenario.Packet`(只产 stack 包、不含时间),
+时间编排集中在 plan 层,复用 per-stack 序列化、checksum 伪首部和 next-proto 串接逻辑。
 
-当前 `flow.Expand` 返回 `[]scenario.Packet`,builder 继续消费 stack 模型并复用 per-stack 序列化、checksum 伪首部和 next-proto 串接逻辑。
+时间表达(均由 `TimeSpec` 解析):
+
+- `base_time`:全局基准时刻,绝对 ISO8601;缺省=确定性 2020 基准。
+- `packet.time`:该包时刻,绝对 ISO8601 或相对 `base_time` 的偏移(`+1.5s`/`+500ms`)。
+- `flow.start`:流起始时刻(绝对或相对);缺省则该流接续默认序列。
+
+**默认时间策略(保持 golden 不变)**:未显式定时的包从 `base_time` 起每 1ms 一个,接续默认序列;
+显式定时的包按指定值放置、不推进默认游标。同 `Time` 的包保持声明/合并顺序(稳定排序),全程不用 `time.Now()`。
+
+> 后续若要更通用的封装 stack 反转或外层/内层分片,可在 `PlannedPacket` 之上再加
+> `PlannedPacket{ Stack []Layer; Time time.Time }` 之外的中间态;当前已支持多流按显式时间戳交织。
 
 ### 约束
 
-- **确定性**:时间戳由 `base + 累计 rtt` 派生,seed 控制乱序/抖动,不用 `time.Now()`(保持 golden 可比对)。
+- **确定性**:时间戳由 `base_time` + 显式偏移(或默认 `base + 全局序号*1ms`)派生,seed 控制乱序/抖动,不用 `time.Now()`(保持 golden 可比对)。
 - **封装组合**:当前 flow.stack 先支持 eth/ipv4/tcp/tcp_session;若要把整条会话套进 QinQ/GRE,后续再升级为更通用的 stack 反转。
 - **UDP**:退化情形——无握手/挥手、无 seq/ack 的一串数据报(DNS、QUIC 探测)走同一抽象。
 - **测试**:每个 flow 出 golden pcap;回读用 gopacket `reassembly` 重组 TCP 流,断言应用层字节与脚本一致、无空洞、握手/挥手标志序列正确。
@@ -252,6 +271,9 @@ golangci-lint run # 若已安装
   **允许同类型重复**(QinQ 两层 VLAN)和递归嵌套(GRE 内层再放报文)。
 - 封装层的 next-protocol / ethertype **默认自动推导**,可逐层用 `type` / `tpid` / `ethertype` 显式覆盖(制造断链等畸形)。
 - 缺省字段走合理默认(自动 seq、自动 checksum、自动串接)。
+- **时间编排**:`base_time`(全局基准,绝对 ISO8601,缺省=确定性 2020 基准)、`packet.time`、
+  `flow.start` 可选,值为绝对 ISO8601(`2024-01-01T00:00:00Z`)或相对 `base_time` 的偏移(`+1.5s`/`+500ms`)。
+  未指定时默认 `base + 全局序号*1ms`,按 `Time` 稳定排序后写盘;`base_time` 必须为绝对时刻。
 - 畸形用例通过**显式开关**表达意图:`fix_lengths: false` / `checksum: 0xdead` / 覆盖 `type` 断链 / `payload_hex: "0x…"`.
 
 示意(最终 schema 以 `internal/scenario` 的类型定义为准):
