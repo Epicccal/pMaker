@@ -14,7 +14,7 @@ import (
 	"github.com/gopacket/gopacket/pcapgo"
 
 	"github.com/Epicccal/pMaker/internal/builder"
-	"github.com/Epicccal/pMaker/internal/flow"
+	"github.com/Epicccal/pMaker/internal/plan"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
@@ -430,14 +430,11 @@ func generatePcap(t *testing.T, path string) []byte {
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate %s: %v", path, err)
 	}
-	for _, f := range s.Flows {
-		pkts, err := flow.Expand(f)
-		if err != nil {
-			t.Fatalf("expand %s: %v", path, err)
-		}
-		s.Packets = append(s.Packets, pkts...)
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("plan %s: %v", path, err)
 	}
-	pkts, err := builder.Build(s)
+	pkts, err := builder.BuildPlanned(planned)
 	if err != nil {
 		t.Fatalf("build %s: %v", path, err)
 	}

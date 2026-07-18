@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/Epicccal/pMaker/internal/builder"
-	"github.com/Epicccal/pMaker/internal/flow"
+	"github.com/Epicccal/pMaker/internal/plan"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
@@ -48,7 +48,7 @@ func usage() {
 `)
 }
 
-// cmdGen 串接:Load -> Validate -> flow.Expand -> Build -> Write。
+// cmdGen 串接:Load -> Validate -> plan.Plan(汇流+排序)-> BuildPlanned -> Write。
 func cmdGen(args []string) int {
 	fs := flag.NewFlagSet("gen", flag.ExitOnError)
 	in := fs.String("f", "", "输入场景文件 (YAML)")
@@ -69,16 +69,13 @@ func cmdGen(args []string) int {
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		return 1
 	}
-	// flows 展开成 stack 包,拼到 packets 后走同一条构建链路。
-	for _, f := range s.Flows {
-		fp, err := flow.Expand(f)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "gen:", err)
-			return 1
-		}
-		s.Packets = append(s.Packets, fp...)
+	// packets 与 flows 汇流成带显式时间戳的 PlannedPacket,按时间排序后再构建。
+	planned, err := plan.Plan(s)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gen:", err)
+		return 1
 	}
-	pkts, err := builder.Build(s)
+	pkts, err := builder.BuildPlanned(planned)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		return 1
@@ -87,14 +84,14 @@ func cmdGen(args []string) int {
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		return 1
 	}
-	printGenerationSummary(*out, s.Packets, len(pkts))
+	printGenerationSummary(*out, planned, len(pkts))
 	return 0
 }
 
-func printGenerationSummary(path string, packets []scenario.Packet, count int) {
+func printGenerationSummary(path string, planned []scenario.PlannedPacket, count int) {
 	fmt.Printf("生成文件: %s\n", path)
 	fmt.Println("Pcap组成:")
-	for i, summary := range scenario.SummarizePackets(packets) {
+	for i, summary := range scenario.SummarizePlanned(planned) {
 		fmt.Println(scenario.FormatPacketSummary(i+1, summary))
 	}
 	fmt.Printf("已生成 %d 个包\n", count)

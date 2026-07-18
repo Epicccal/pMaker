@@ -11,11 +11,12 @@ import (
 
 	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/flow"
+	"github.com/Epicccal/pMaker/internal/plan"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
 
-// genFlow 跑完整链路:load -> flow.Expand -> builder.Build -> writer,返回 pcap 字节。
+// genFlow 跑完整链路:load -> plan.Plan(汇流+排序)-> BuildPlanned -> writer,返回 pcap 字节。
 func genFlow(t *testing.T, path string) []byte {
 	t.Helper()
 	s, err := scenario.Load(path)
@@ -25,14 +26,11 @@ func genFlow(t *testing.T, path string) []byte {
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	for _, f := range s.Flows {
-		fp, err := flow.Expand(f)
-		if err != nil {
-			t.Fatalf("expand: %v", err)
-		}
-		s.Packets = append(s.Packets, fp...)
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
 	}
-	pkts, err := builder.Build(s)
+	pkts, err := builder.BuildPlanned(planned)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
