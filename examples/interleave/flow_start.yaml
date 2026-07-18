@@ -1,0 +1,34 @@
+# examples/interleave/flow_start.yaml
+#
+# 演示 base_time + offset_time 的汇流排序:standalone packets 与 flows
+# 在 plan.Plan 阶段汇流成带时间戳的 PlannedPacket 列表,按 Time 排序后再写盘。
+#
+# - base_time: 全局基准时刻(绝对 ISO8601;缺省=确定性 2020 基准)。
+# - packet.offset_time / flow.offset_time: 相对 base_time 的时长偏移,
+#   只接受时长(如 +30ms / 10s / -1ms),绝对时刻直接解析失败(由 AbsTime / Offset
+#   类型结构性保证)。
+#
+# 声明序为 [late-syn(+30ms), flow quick(+0ms,+0ms/+1ms)];排序后写盘顺序为
+# [flow@0ms, flow-ack@1ms, late-syn@30ms]——显式时间让独立包与流按时间交织。
+base_time: "2024-01-01T00:00:00Z"
+
+packets:
+  - name: late-syn
+    offset_time: "+30ms"
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
+      - tcp:  { sport: 1234, dport: 80, flags: [SYN], seq: 1 }
+
+flows:
+  - name: quick
+    offset_time: "+0ms"
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
+      - tcp:  { sport: 2222, dport: 80, client_isn: 100, server_isn: 200 }
+      - tcp_session: { open: none, close: none }
+    messages:
+      - from: src
+        stack:
+          - payload_hex: "0xab"

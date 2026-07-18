@@ -12,11 +12,12 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Epicccal/pMaker/internal/builder"
+	"github.com/Epicccal/pMaker/internal/plan"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
 
-// genPcap 跑完整链路 scenario -> builder -> writer,返回 pcap 字节。
+// genPcap 跑完整链路 scenario -> plan -> builder -> writer,返回 pcap 字节。
 func genPcap(t *testing.T, path string) ([]byte, string) {
 	t.Helper()
 	s, err := scenario.Load(path)
@@ -26,7 +27,7 @@ func genPcap(t *testing.T, path string) ([]byte, string) {
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	pkts, err := builder.Build(s)
+	pkts, err := buildPackets(s)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -35,6 +36,15 @@ func genPcap(t *testing.T, path string) ([]byte, string) {
 		t.Fatalf("write: %v", err)
 	}
 	return buf.Bytes(), s.LinkType
+}
+
+// buildPackets 跑 plan.Plan + builder.BuildPlanned,返回字节包与错误(不 Fatal、不校验)。
+func buildPackets(s *scenario.Scenario) ([]builder.OutPacket, error) {
+	planned, err := plan.Plan(s)
+	if err != nil {
+		return nil, err
+	}
+	return builder.BuildPlanned(planned)
 }
 
 // readPackets 用 pcapgo 回读所有包。
@@ -94,7 +104,7 @@ func TestICMPQuoteFromUsesRFC792Slice(t *testing.T) {
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	pkts, err := builder.Build(s)
+	pkts, err := buildPackets(s)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -185,7 +195,7 @@ func TestParseBackIPv6(t *testing.T) {
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	pkts, err := builder.Build(s)
+	pkts, err := buildPackets(s)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -242,7 +252,7 @@ func TestParseBackIPv6InGRE(t *testing.T) {
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	pkts, err := builder.Build(s)
+	pkts, err := buildPackets(s)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -295,7 +305,7 @@ func TestParseBackICMPv6(t *testing.T) {
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	pkts, err := builder.Build(s)
+	pkts, err := buildPackets(s)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -338,13 +348,13 @@ func TestParseBackICMPv6(t *testing.T) {
 	}
 }
 
-// buildScenarioPcap 跑 scenario -> builder -> writer,返回 pcap 字节。
+// buildScenarioPcap 跑 scenario -> plan -> builder -> writer,返回 pcap 字节。
 func buildScenarioPcap(t *testing.T, s *scenario.Scenario) []byte {
 	t.Helper()
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	pkts, err := builder.Build(s)
+	pkts, err := buildPackets(s)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -519,7 +529,7 @@ func TestICMPv6MTUOnWrongType(t *testing.T) {
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if _, err := builder.Build(s); err == nil {
+	if _, err := buildPackets(s); err == nil {
 		t.Fatal("期望 mtu 用于 echo 时构建报错,实际成功")
 	}
 }
@@ -602,13 +612,13 @@ func TestICMPv4FieldsOnWrongType(t *testing.T) {
 	gw := "10.0.0.254"
 	// gateway 用于 dest_unreachable 应报错
 	s := icmpv4ErrorScenario("destination_unreachable", "port_unreachable", &scenario.ICMPFields{Gateway: &gw})
-	if _, err := builder.Build(s); err == nil {
+	if _, err := buildPackets(s); err == nil {
 		t.Fatal("期望 gateway 用于 dest_unreachable 时报错,实际成功")
 	}
 	// mtu 用于 port_unreachable(code 3)应报错
 	mtu := uint16(1492)
 	s2 := icmpv4ErrorScenario("destination_unreachable", "port_unreachable", &scenario.ICMPFields{MTU: &mtu})
-	if _, err := builder.Build(s2); err == nil {
+	if _, err := buildPackets(s2); err == nil {
 		t.Fatal("期望 mtu 用于 code 3 时报错,实际成功")
 	}
 }

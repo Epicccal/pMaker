@@ -9,7 +9,6 @@ import (
 	"github.com/gopacket/gopacket/layers"
 	"gopkg.in/yaml.v3"
 
-	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
@@ -36,7 +35,7 @@ func buildDNSPackets(t *testing.T, d *scenario.DNSFields) []*layers.DNS {
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	pkts, err := builder.Build(s)
+	pkts, err := buildPackets(s)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -62,7 +61,7 @@ func buildDNSPacketsErr(t *testing.T, d *scenario.DNSFields, wantSub string) {
 	s := dnsScenario(d)
 	// 不强制 Validate:部分畸形 data(如非字符串 CNAME)需走到 build 才暴露。
 	_ = scenario.Validate(s)
-	_, err := builder.Build(s)
+	_, err := buildPackets(s)
 	if err == nil {
 		t.Fatalf("期望 build 报错(含 %q),实际成功", wantSub)
 	}

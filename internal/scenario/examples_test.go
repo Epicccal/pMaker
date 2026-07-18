@@ -8,13 +8,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 	"github.com/gopacket/gopacket/pcapgo"
 
 	"github.com/Epicccal/pMaker/internal/builder"
-	"github.com/Epicccal/pMaker/internal/flow"
+	"github.com/Epicccal/pMaker/internal/plan"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
@@ -85,6 +86,48 @@ func TestHTTPKeepaliveLFIContent(t *testing.T) {
 		if !bytes.Contains(pcap, want) {
 			t.Fatalf("pcap 不含 %q", want)
 		}
+	}
+}
+
+// TestInterleaveFlowStart 验证显式时间 + 汇流排序:
+// 声明序为 [late-syn@30ms, flow@0ms/1ms],写盘应按时间升序为 flow、flow-ack、late-syn。
+func TestInterleaveFlowStart(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/interleave/flow_start.yaml")
+	r, err := pcapgo.NewReader(bytes.NewReader(pcap))
+	if err != nil {
+		t.Fatalf("pcap reader: %v", err)
+	}
+	type rec struct {
+		ts  time.Time
+		syn bool
+	}
+	var recs []rec
+	for {
+		raw, ci, err := r.ReadPacketData()
+		if err != nil {
+			break
+		}
+		p := gopacket.NewPacket(raw, r.LinkType(), gopacket.Default)
+		tcp := p.Layer(layers.LayerTypeTCP)
+		recs = append(recs, rec{ts: ci.Timestamp, syn: tcp != nil && tcp.(*layers.TCP).SYN})
+	}
+	if len(recs) != 3 {
+		t.Fatalf("期望 3 个包,得到 %d", len(recs))
+	}
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	want := []time.Duration{0, time.Millisecond, 30 * time.Millisecond}
+	for i, w := range want {
+		got := recs[i].ts.Sub(base)
+		if got != w {
+			t.Errorf("包%d 时间偏移=%v,期望 %v", i, got, w)
+		}
+	}
+	// 前两个是 flow 的数据段 + ACK(均非 SYN),末尾是 late-syn(纯 SYN)。
+	if !recs[2].syn {
+		t.Errorf("末包期望为 SYN(late-syn),实际非 SYN")
+	}
+	if recs[0].syn || recs[1].syn {
+		t.Errorf("前两包不应为 SYN(应为 flow 数据/ACK)")
 	}
 }
 
@@ -430,14 +473,11 @@ func generatePcap(t *testing.T, path string) []byte {
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate %s: %v", path, err)
 	}
-	for _, f := range s.Flows {
-		pkts, err := flow.Expand(f)
-		if err != nil {
-			t.Fatalf("expand %s: %v", path, err)
-		}
-		s.Packets = append(s.Packets, pkts...)
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("plan %s: %v", path, err)
 	}
-	pkts, err := builder.Build(s)
+	pkts, err := builder.BuildPlanned(planned)
 	if err != nil {
 		t.Fatalf("build %s: %v", path, err)
 	}

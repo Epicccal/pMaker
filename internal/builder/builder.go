@@ -18,35 +18,34 @@ type OutPacket struct {
 // serOpts 当前统一修正长度并计算 checksum;逐字段覆盖尚未应用。
 var serOpts = gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
 
-// baseTime:固定基准,配合 index 偏移保证输出确定性(不使用 time.Now)。
-var baseTime = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-
 type buildContext struct {
 	packetsByName map[string]scenario.Packet
 }
 
-// Build 把场景模型逐包序列化为字节。
-func Build(s *scenario.Scenario) ([]OutPacket, error) {
-	ctx := buildContext{packetsByName: packetsByName(s.Packets)}
-	out := make([]OutPacket, 0, len(s.Packets))
-	for i, p := range s.Packets {
-		data, err := buildPacket(ctx, p)
+// BuildPlanned 把已汇流排序的 PlannedPacket 逐包序列化为字节;
+// 时间戳取自每个 PlannedPacket.Time(由 internal/plan 分配)。
+func BuildPlanned(planned []scenario.PlannedPacket) ([]OutPacket, error) {
+	ctx := buildContext{packetsByName: plannedByName(planned)}
+	out := make([]OutPacket, 0, len(planned))
+	for i, pp := range planned {
+		data, err := serializeStack(ctx, pp.Stack)
 		if err != nil {
-			return nil, fmt.Errorf("packet[%d]: %w", i, err)
+			name := pp.Name
+			if name == "" {
+				name = fmt.Sprintf("packet[%d]", i)
+			}
+			return nil, fmt.Errorf("%s: %w", name, err)
 		}
-		out = append(out, OutPacket{
-			Data: data,
-			Time: baseTime.Add(time.Duration(i) * time.Millisecond),
-		})
+		out = append(out, OutPacket{Data: data, Time: pp.Time})
 	}
 	return out, nil
 }
 
-func packetsByName(pkts []scenario.Packet) map[string]scenario.Packet {
+func plannedByName(planned []scenario.PlannedPacket) map[string]scenario.Packet {
 	out := map[string]scenario.Packet{}
-	for _, p := range pkts {
-		if p.Name != "" {
-			out[p.Name] = p
+	for _, pp := range planned {
+		if pp.Name != "" {
+			out[pp.Name] = pp.Packet
 		}
 	}
 	return out
@@ -166,8 +165,4 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-func buildPacket(ctx buildContext, p scenario.Packet) ([]byte, error) {
-	return serializeStack(ctx, p.Stack)
 }
