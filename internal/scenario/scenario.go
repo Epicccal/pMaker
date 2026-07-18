@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -14,6 +15,7 @@ import (
 type Scenario struct {
 	LinkType string     `yaml:"link_type"`
 	Seed     int64      `yaml:"seed"`
+	BaseTime *TimeSpec  `yaml:"base_time"` // 全局基准时刻;缺省=确定性 2020 基准(见 internal/plan)
 	Packets  []Packet   `yaml:"packets"`
 	Flows    []FlowSpec `yaml:"flows"`
 }
@@ -22,6 +24,7 @@ type Scenario struct {
 // flow.stack 中的 src 表示 TCP SYN 发起方,dst 表示 SYN 接收方。
 type FlowSpec struct {
 	Name     string    `yaml:"name"`
+	Start    *TimeSpec `yaml:"start"` // 流起始时刻(绝对 ISO8601 或相对 base_time);缺省=接续默认序列
 	Stack    []Layer   `yaml:"stack"`
 	Messages []Message `yaml:"messages"`
 }
@@ -40,9 +43,19 @@ type Segment struct {
 
 // Packet 是一个数据包:name 可选 + 由外到内的有序 layer 栈。
 type Packet struct {
-	Name          string   `yaml:"name"`
-	Stack         []Layer  `yaml:"stack"`
-	SummaryLayers []string `yaml:"-"` // flow 展开后保留应用层协议语义,仅用于 CLI 摘要
+	Name          string    `yaml:"name"`
+	Time          *TimeSpec `yaml:"time"` // 该包时刻(绝对 ISO8601 或相对 base_time);缺省=接续默认序列
+	Stack         []Layer   `yaml:"stack"`
+	SummaryLayers []string  `yaml:"-"` // flow 展开后保留应用层协议语义,仅用于 CLI 摘要
+}
+
+// PlannedPacket 是 scenario 模型 + 显式时间戳的中间态:
+// standalone packets 与 flows 展开后的包在 internal/plan 汇流成 PlannedPacket 列表,
+// 按 Time 排序后再交给 builder 序列化。内嵌 Packet 以复用 Name/Stack/SummaryLayers
+// 与 quote_from 命名查找、摘要展示等既有逻辑。
+type PlannedPacket struct {
+	Packet
+	Time time.Time
 }
 
 // Layer 是层栈中的一层:类型名 + 已按类型解码的字段结构(见各 *Fields)。
@@ -88,6 +101,62 @@ func ParsePayloadHex(s string) ([]byte, error) {
 		return nil, fmt.Errorf("payload_hex 需要偶数个十六进制字符")
 	}
 	return hex.DecodeString(s)
+}
+
+// TimeSpec 表达一个时刻:绝对 ISO8601("2024-01-01T00:00:00Z")
+// 或相对 base_time 的偏移("+1.5s"、"+500ms"、"-1ms")。用于 base_time / packet.time /
+// flow.start。base_time 仅允许绝对;time / start 两种皆可。
+type TimeSpec struct {
+	offset   time.Duration
+	abs      time.Time
+	isOffset bool
+}
+
+// UnmarshalYAML 把标量解析为绝对时刻或相对偏移:以 +/- 开头为偏移,否则为 ISO8601 绝对。
+func (t *TimeSpec) UnmarshalYAML(node *yaml.Node) error {
+	var s string
+	if err := node.Decode(&s); err != nil {
+		return fmt.Errorf("时间需为字符串(ISO8601 或 +offset): %w", err)
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fmt.Errorf("时间不能为空")
+	}
+	if s[0] == '+' || s[0] == '-' {
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return fmt.Errorf("非法相对偏移 %q(如 +1.5s/+500ms): %w", s, err)
+		}
+		t.offset, t.isOffset = d, true
+		return nil
+	}
+	abs, err := parseAbsTime(s)
+	if err != nil {
+		return fmt.Errorf("非法绝对时刻 %q(如 2024-01-01T00:00:00Z): %w", s, err)
+	}
+	t.abs = abs
+	return nil
+}
+
+// parseAbsTime 按 RFC3339Nano(及若干常见 layout)解析绝对时刻。
+func parseAbsTime(s string) (time.Time, error) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05", "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("无法解析为时间")
+}
+
+// IsOffset 返回该时刻是否为相对 base_time 的偏移(base_time 自身不应为偏移)。
+func (t *TimeSpec) IsOffset() bool { return t.isOffset }
+
+// Resolve 在 base 之上解析出最终时刻:偏移→base+offset,绝对→abs。
+func (t *TimeSpec) Resolve(base time.Time) time.Time {
+	if t.isOffset {
+		return base.Add(t.offset)
+	}
+	return t.abs
 }
 
 // 各层字段结构。指针字段表示"可选/是否显式给出"。
@@ -313,6 +382,9 @@ func Load(path string) (*Scenario, error) {
 func Validate(s *Scenario) error {
 	if len(s.Packets) == 0 && len(s.Flows) == 0 {
 		return fmt.Errorf("没有 packets 或 flows 可生成")
+	}
+	if s.BaseTime != nil && s.BaseTime.IsOffset() {
+		return fmt.Errorf("base_time 必须是绝对时刻,不能是相对偏移")
 	}
 	packetNames := packetNameCounts(s.Packets)
 	for i, p := range s.Packets {

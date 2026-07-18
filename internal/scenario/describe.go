@@ -41,6 +41,15 @@ func SummarizePackets(pkts []Packet) []PacketSummary {
 	return out
 }
 
+// SummarizePlanned 从已汇流排序的 PlannedPacket 列表生成展示用摘要(复用 SummarizePackets)。
+func SummarizePlanned(planned []PlannedPacket) []PacketSummary {
+	pkts := make([]Packet, len(planned))
+	for i, pp := range planned {
+		pkts[i] = pp.Packet
+	}
+	return SummarizePackets(pkts)
+}
+
 // FormatPacketSummary 按 CLI 输出格式格式化单包摘要,index 从 1 开始传入。
 func FormatPacketSummary(index int, s PacketSummary) string {
 	return fmt.Sprintf("[%d] %s %s %s  %s", index, s.LeftIP, s.Arrow, s.RightIP, s.Stack)
