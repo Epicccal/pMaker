@@ -19,33 +19,33 @@
 ---
 
 ```text
-                        ┌────────────────────────┐
-                        │ scenario.yaml          │
-                        │ packets + flows DSL    │
-                        │ base_time / seed / ... │
-                        └────────────┴───────────┘
-                                     │ 解析 + 校验
-                                     │ 字段/行号级报错
-                                     ▼
-  ┌──────────────────────────────────┬─────────────────────────────────┐
-  │                          pMaker pipeline                           │
-  │                                                                    │
-  │ scenario ──┬──> flows ──> plan ──> builder ──> writer              │
-  │            │                │                                      │
-  │            └────packets─────┘   逐包 stack, 不经 flows             │
-  │                                                                    │
-  │ scenario : 解析 + 校验                                             │
-  │ flows    : 有状态 TCP 展开 · 握手 / seq·ack / 分段 / 挥手          │
-  │ plan     : packets + flows 汇流 · 按 Time 稳定排序                 │
-  │ builder  : 有序栈 -> gopacket · 自动串接 · checksum · 原始字节兜底 │
-  │ writer   : pcapgo 纯 Go 写盘 · 确定性时间戳 / 字节                 │
-  └──────────────────────────────────┴─────────────────────────────────┘
-                                     │
-                                     ▼
-                        ┌────────────┬────────────┐
-                        │ out.pcap                │
-                        │ replay / inspect / 回归 │
-                        └─────────────────────────┘
+                 ┌────────────────────────┐
+                 │ scenario.yaml          │
+                 │ packets + flows DSL    │
+                 │ base_time / seed / ... │
+                 └────────────┴───────────┘
+                              │ parse + validate
+                              │ field/path errors
+                              ▼
+  ┌───────────────────────────┬───────────────────────────┐
+  │                    pMaker pipeline                    │
+  │                                                       │
+  │ scenario ──┬──> flows ──> plan ──> builder ──> writer │
+  │            │                │                         │
+  │            └────packets─────┘   bypass flows          │
+  │                                                       │
+  │ scenario : parse + validate                           │
+  │ flows    : stateful TCP expand                        │
+  │ plan     : merge packets + flows, sort by Time        │
+  │ builder  : ordered stack -> gopacket, auto link       │
+  │ writer   : pcapgo pure Go, deterministic bytes        │
+  └───────────────────────────┴───────────────────────────┘
+                              │
+                              ▼
+              ┌───────────────┬───────────────┐
+              │ out.pcap                      │
+              │ replay / inspect / regression │
+              └───────────────────────────────┘
 ```
 
 ## 一句话
