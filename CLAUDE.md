@@ -58,12 +58,16 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   next-proto 自动串接、TCP/UDP checksum 伪首部、ICMP echo request/reply、DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV、确定性时间戳、golden + gopacket 回读测试。
 - **已实现 flow 基础版**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
   HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
+- **已实现 flow 逐消息定时**:`message.offset_time`(相对"握手完成后"的偏移,锚定单条消息整组)、
+  `segment.interval`(同消息各数据段间隔,模拟慢速分段/RTT);`flow.Expand` 自管时间轴,
+  plan 退回汇流 + 稳定排序。乱序可由 `message.offset_time` 的大小关系自然表达。
 - **已实现 PlannedPacket 时间编排**:`internal/plan.Plan` 把 standalone packets 与 flows 展开包汇流成
   `PlannedPacket{ Stack; Time }` 列表,按显式时间戳稳定排序后再交 `builder.BuildPlanned` 序列化。
   时间模型为「base_time + offset_time」:`base_time`(AbsTime,唯一绝对锚,仅 ISO8601)+ `packet.offset_time` /
   `flow.offset_time`(Offset,相对 base_time 的时长偏移)显式指定;AbsTime/Offset 由类型在解析阶段结构性
   保证取值合法,不依赖运行期校验。未指定时默认 `base + 全局序号*1ms`,与历史行为逐字节等价,golden 不变。
-- **未实现 / 简化**:flow 的 overlap / 乱序 / 重传 / RTT 定时 / IP 分片未做;
+- **未实现 / 简化**:flow 的 overlap / 重传 / IP 分片未做(乱序与段间 RTT 已由 `message.offset_time` /
+  `segment.interval` 覆盖);
   畸形开关 `fix_lengths` / `checksum` **解析但忽略**(build 时 `slog.Warn`),真正的畸形 / 原始字节兜底待做;
   HTTP 头按 key 排序输出(未保留原序)。
 
@@ -186,15 +190,20 @@ segment: { mss: 8, order: shuffled, overlap: 4, retransmit: [1] }
 ### 时间编排与汇流(已实现)
 
 `internal/plan.Plan` 是 packets 与 flows 的汇流点:把 standalone packets 与各 flow 展开后的
-stack 包汇流成 `PlannedPacket{ Stack []Layer; Time time.Time }` 列表,按 `Time` **稳定排序**后再交
-`builder.BuildPlanned` 序列化、`writer` 落盘。`flow.Expand` 仍返回 `[]scenario.Packet`(只产 stack 包、不含时间),
-时间编排集中在 plan 层,复用 per-stack 序列化、checksum 伪首部和 next-proto 串接逻辑。
+`PlannedPacket{ Stack []Layer; Time time.Time }` 汇流成列表,按 `Time` **稳定排序**后再交
+`builder.BuildPlanned` 序列化、`writer` 落盘。`flow.Expand(f, anchor)` 接收流起始锚、自管时间轴,
+直接产出 `[]scenario.PlannedPacket`(已带 Time);plan 只负责汇流 + 稳定排序,不再为 flow 内部包
+分配时间。时间轴规则:握手占 `anchor` 起、各消息按 `message.offset_time` 锚定或接续、段间按
+`segment.interval` 间隔;未显式定时时每包 `flow.DefaultStep`(1ms),与历史行为逐字节等价。
 
 时间表达(由 `AbsTime` / `Offset` 两个类型分别解析,结构性保证取值合法):
 
 - `base_time`:场景里唯一的绝对锚(`AbsTime`,仅 ISO8601,UTC);缺省=确定性 2020 基准。写 `+1s` 这类偏移在解析阶段即失败。
-- `packet.offset_time`:该包相对 `base_time` 的时长偏移(`Offset`,如 `+1.5s`/`+500ms`/`-1ms`,只接受时长);缺省则接续默认序列。
-- `flow.offset_time`:流起始相对 `base_time` 的时长偏移;缺省则该流接续默认序列。
+- 所有 `Offset` 字段(`packet/flow/message.offset_time`、`segment.interval`)**只接受非负时长**;负值在解析阶段即失败——负偏移通常意味着 `base_time` 选错了起点(应把 `base_time` 提前,而非用负 offset 够到零点之前)。
+- `packet.offset_time`:该包相对 `base_time` 的时长偏移(`Offset`,如 `+1.5s`/`+500ms`/`0s`);缺省则接续默认序列。
+- `flow.offset_time`:流起始相对 `base_time` 的时长偏移,即流锚 `anchor = base + flow.offset_time`;缺省则该流接续默认序列。
+- `message.offset_time`:单条消息起始相对**握手完成后**(无握手则 = 流锚 `anchor`)的时长偏移;把该消息整组(各数据段 + 对端 ACK)锚定到 `握手结束+offset`,缺省则接续上一流内事件。用于多轮请求间隔 / 乱序。握手固定 `DefaultStep` 不参与定时,故 offset 从握手结束算起,避免小 offset 与握手包撞时间。
+- `segment.interval`:同一消息各数据段之间的时间间隔(`Offset`,如 `+10ms`);缺省 1ms,显式给出模拟慢速分段 / RTT。只作用于数据段;对端 ACK 用 `DefaultStep`(伴生控制包,不被数据段节奏传染)。
 
 **默认时间策略(保持 golden 不变)**:未显式定时的包从 `base_time` 起每 1ms 一个,接续默认序列;
 显式定时的包按指定值放置、不推进默认游标。同 `Time` 的包保持声明/合并顺序(稳定排序),全程不用 `time.Now()`。
@@ -274,7 +283,9 @@ golangci-lint run # 若已安装
 - 缺省字段走合理默认(自动 seq、自动 checksum、自动串接)。
 - **时间编排**:`base_time`(唯一绝对锚,`AbsTime`,仅 ISO8601 如 `2024-01-01T00:00:00Z`,缺省=确定性 2020 基准)、
   `packet.offset_time`、`flow.offset_time`(`Offset`,相对 `base_time` 的时长偏移,如 `+1.5s`/`+500ms`)可选。
-  未指定时默认 `base + 全局序号*1ms`,按 `Time` 稳定排序后写盘;`base_time` 只能是绝对时刻(由 `AbsTime` 类型保证)。
+  flow 内部还支持 `message.offset_time`(相对"握手完成后",锚定单条消息整组)、
+  `segment.interval`(同消息各数据段间隔,缺省 1ms;只作用于数据段,对端 ACK 用默认步长)。未指定时默认 `base + 全局序号*1ms`,按 `Time` 稳定排序后写盘;
+  `base_time` 只能是绝对时刻(由 `AbsTime` 类型保证)。
 - 畸形用例通过**显式开关**表达意图:`fix_lengths: false` / `checksum: 0xdead` / 覆盖 `type` 断链 / `payload_hex: "0x…"`.
 
 示意(最终 schema 以 `internal/scenario` 的类型定义为准):
