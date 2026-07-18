@@ -190,6 +190,17 @@ func TestPlanBaseTimeRelativeError(t *testing.T) {
 	}
 }
 
+// TestPlanRejectsRelativeBaseTimeDirectly:绕过 Validate 直接调 Plan 也应拒绝相对 base_time(库层自洽)。
+func TestPlanRejectsRelativeBaseTimeDirectly(t *testing.T) {
+	s := &scenario.Scenario{
+		BaseTime: mustTimeSpec(t, "+1s"),
+		Packets:  []scenario.Packet{udpPacket("a", nil)},
+	}
+	if _, err := plan.Plan(s); err == nil {
+		t.Fatal("期望 Plan 直接拒绝相对 base_time,实际通过")
+	}
+}
+
 // TestPlanDeterministic:同一输入两次 Plan 结果完全一致。
 func TestPlanDeterministic(t *testing.T) {
 	mk := func() *scenario.Scenario {

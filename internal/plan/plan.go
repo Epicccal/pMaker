@@ -29,10 +29,15 @@ const defaultStep = time.Millisecond
 func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 	base := DefaultBaseTime
 	if s.BaseTime != nil {
+		// 库层自洽:base_time 必须是绝对时刻(Validate 也会查,这里兜底直接调 Plan 的调用方)。
+		if s.BaseTime.IsOffset() {
+			return nil, fmt.Errorf("base_time 必须是绝对时刻,不能是相对偏移")
+		}
 		base = s.BaseTime.Resolve(DefaultBaseTime)
 	}
 
-	merged := make([]scenario.PlannedPacket, 0, len(s.Packets))
+	// 预估容量:standalone packets + 每条 flow 的粗略包数(握手3 + 消息段 + 挥手4 ≈ 8 起步)。
+	merged := make([]scenario.PlannedPacket, 0, len(s.Packets)+len(s.Flows)*8)
 	cursor := base // 默认序列游标:未显式定时的包从此递增 defaultStep
 
 	// ① standalone packets(声明序)。

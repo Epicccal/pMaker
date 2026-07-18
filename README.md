@@ -198,6 +198,30 @@ client                                             server
 - MSS 分段
 - 多轮请求 / 响应
 
+## 时间编排：packets 与 flows 汇流排序
+
+standalone packets 与 flows 展开后的包会汇流成带显式时间戳的 `PlannedPacket` 列表，按时间排序后再写盘。时间通过三个可选字段控制：
+
+- `base_time`：全局基准时刻，**绝对 ISO8601**（如 `2024-01-01T00:00:00Z`）；缺省为确定性 2020 基准。
+- `packet.time`：该包时刻，绝对 ISO8601 或相对 `base_time` 的偏移（`+1.5s`、`+500ms`、`-1ms`）。
+- `flow.start`：流的起始时刻（绝对或相对）；缺省则该流接续默认序列。
+
+未显式定时的包从 `base_time` 起每 1ms 一个、接续默认序列；显式定时的包按指定值放置。同时间的包保持声明顺序（稳定排序），全程不依赖本机时钟，同一 scenario 生成相同 pcap。绝对时刻一律按 **UTC** 解析。
+
+```yaml
+base_time: "2024-01-01T00:00:00Z"
+packets:
+  - name: late-syn
+    time: "+30ms"          # 相对 base_time 偏移
+    stack: [ ... ]
+flows:
+  - name: quick
+    start: "+0ms"          # 流锚定到 base_time,流内每包 1ms
+    stack: [ ... ]
+```
+
+上例声明序为 `[late-syn@30ms, flow@0ms/1ms]`，写盘按时间升序为 `[flow, flow-ack, late-syn]`——独立包与流按显式时间戳交织。完整示例见 `examples/interleave/flow_start.yaml`。
+
 ## 快速开始
 
 ### 构建
@@ -238,6 +262,7 @@ flows: []
 - 同类型层可以重复，例如 `vlan / vlan`
 - next-protocol 默认自动推导，也可显式覆盖
 - raw bytes 使用 `payload_hex: 0x...`
+- 时间可选：`base_time`（绝对 ISO8601）、`packet.time`、`flow.start`（绝对或 `+1.5s` 偏移）；未指定则默认每包 1ms、按时间稳定排序
 - 同一 scenario 应生成相同 pcap
 
 ## 测试

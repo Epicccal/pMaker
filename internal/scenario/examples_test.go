@@ -123,9 +123,7 @@ func TestInterleaveFlowStart(t *testing.T) {
 		}
 	}
 	// 前两个是 flow 的数据段 + ACK(均非 SYN),末尾是 late-syn(纯 SYN)。
-	if recs[2].syn {
-		// 期望末包为 SYN——此处确认排序把 late-syn 放到了最后。
-	} else {
+	if !recs[2].syn {
 		t.Errorf("末包期望为 SYN(late-syn),实际非 SYN")
 	}
 	if recs[0].syn || recs[1].syn {
