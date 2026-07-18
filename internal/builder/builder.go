@@ -42,6 +42,35 @@ func Build(s *scenario.Scenario) ([]OutPacket, error) {
 	return out, nil
 }
 
+// BuildPlanned 把已汇流排序的 PlannedPacket 逐包序列化为字节;
+// 时间戳取自每个 PlannedPacket.Time(由 internal/plan 分配)。
+func BuildPlanned(planned []scenario.PlannedPacket) ([]OutPacket, error) {
+	ctx := buildContext{packetsByName: plannedByName(planned)}
+	out := make([]OutPacket, 0, len(planned))
+	for i, pp := range planned {
+		data, err := serializeStack(ctx, pp.Stack)
+		if err != nil {
+			name := pp.Name
+			if name == "" {
+				name = fmt.Sprintf("packet[%d]", i)
+			}
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		out = append(out, OutPacket{Data: data, Time: pp.Time})
+	}
+	return out, nil
+}
+
+func plannedByName(planned []scenario.PlannedPacket) map[string]scenario.Packet {
+	out := map[string]scenario.Packet{}
+	for _, pp := range planned {
+		if pp.Name != "" {
+			out[pp.Name] = pp.Packet
+		}
+	}
+	return out
+}
+
 func packetsByName(pkts []scenario.Packet) map[string]scenario.Packet {
 	out := map[string]scenario.Packet{}
 	for _, p := range pkts {
