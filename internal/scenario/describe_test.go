@@ -99,3 +99,43 @@ func TestValidateQuoteFromReference(t *testing.T) {
 		t.Fatalf("Validate() error=%v,期望 quote_from 未知引用", err)
 	}
 }
+
+// TestValidateSegmentIntervalNeedsMSS: segment.interval 必须配 mss>0,否则整条不切、
+// interval 无处生效,会被静默吞掉。validate 应尽早报错。
+func TestValidateSegmentIntervalNeedsMSS(t *testing.T) {
+	stack := []Layer{
+		{Type: "eth", Fields: &EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+		{Type: "ipv4", Fields: &IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+		{Type: "tcp", Fields: &TCPFields{SPort: 1111, DPort: 80}},
+		{Type: "tcp_session", Fields: &TCPSessionFields{Open: "none", Close: "none"}},
+	}
+	// 包内测试可直接构造 Offset(校验只看 Interval 指针非 nil,不看 Duration 值)。
+	interval := &Offset{}
+	msg := func(seg *Segment) Message {
+		return Message{From: "src", Stack: []Layer{{Type: "payload_hex", Fields: PayloadHex("0xab")}}, Segment: seg}
+	}
+
+	// interval 无 mss → 报错。
+	s := &Scenario{Flows: []FlowSpec{{Name: "f", Stack: stack, Messages: []Message{
+		msg(&Segment{Interval: interval}), // mss=0
+	}}}}
+	if err := Validate(s); err == nil || !strings.Contains(err.Error(), "interval 需配合 mss>0") {
+		t.Fatalf("Validate() error=%v,期望 interval 需配合 mss>0", err)
+	}
+
+	// interval + mss>0 → 通过。
+	s2 := &Scenario{Flows: []FlowSpec{{Name: "f", Stack: stack, Messages: []Message{
+		msg(&Segment{MSS: 8, Interval: interval}),
+	}}}}
+	if err := Validate(s2); err != nil {
+		t.Fatalf("Validate() 有 mss 时不应报错,得到 %v", err)
+	}
+
+	// 只 mss 无 interval → 通过。
+	s3 := &Scenario{Flows: []FlowSpec{{Name: "f", Stack: stack, Messages: []Message{
+		msg(&Segment{MSS: 8}),
+	}}}}
+	if err := Validate(s3); err != nil {
+		t.Fatalf("Validate() 只 mss 不应报错,得到 %v", err)
+	}
+}

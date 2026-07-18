@@ -223,6 +223,24 @@ func TestOffsetRejectsAbsolute(t *testing.T) {
 	}
 }
 
+// TestOffsetRejectsNegative: Offset 拒绝负时长——负偏移通常意味着 base_time 选错起点,
+// 应把 base_time 提前而非用负 offset 够到零点之前(结构性保证)。
+func TestOffsetRejectsNegative(t *testing.T) {
+	for _, s := range []string{"-1ms", "-1.5s", "-500ms"} {
+		o := &scenario.Offset{}
+		if err := yaml.Unmarshal([]byte(s), o); err == nil {
+			t.Fatalf("期望 Offset 拒绝负时长 %q,实际通过", s)
+		}
+	}
+	// 0 与正值仍应通过。
+	for _, s := range []string{"0s", "+0ms", "+1.5s", "500ms"} {
+		o := &scenario.Offset{}
+		if err := yaml.Unmarshal([]byte(s), o); err != nil {
+			t.Fatalf("期望 Offset 接受非负时长 %q,实际失败: %v", s, err)
+		}
+	}
+}
+
 func names(planned []scenario.PlannedPacket) []string {
 	out := make([]string, len(planned))
 	for i, pp := range planned {
@@ -261,4 +279,176 @@ func mustOffset(t *testing.T, s string) *scenario.Offset {
 		t.Fatalf("解析 offset %q: %v", s, err)
 	}
 	return o
+}
+
+// noneStack 返回 open=none/close=none 的最小 TCP 会话栈,供时间测试复用。
+func noneStack() []scenario.Layer {
+	return []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+		{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 100, ServerISN: 200}},
+		{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "none", Close: "none"}},
+	}
+}
+
+// handshakeStack 返回 open=handshake/close=none 的栈:握手占 anchor 起 3×DefaultStep,
+// 用于验证 message.offset_time 的零点是"握手完成后"而非流锚。
+func handshakeStack() []scenario.Layer {
+	return []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+		{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 100, ServerISN: 200}},
+		{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "handshake", Close: "none"}},
+	}
+}
+
+// ph 构造一个 payload_hex 层。
+func ph(hex string) scenario.Layer {
+	return scenario.Layer{Type: "payload_hex", Fields: scenario.PayloadHex(hex)}
+}
+
+// TestPlanMessageOffset: message.offset_time 把该消息整组锚定到 anchor+offset(相对流起始锚)。
+// flow 无 offset → anchor=base;message +50ms → 数据段与 ACK 落在 base+50ms / base+51ms。
+func TestPlanMessageOffset(t *testing.T) {
+	s := &scenario.Scenario{
+		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
+		Flows: []scenario.FlowSpec{{
+			Name:  "f",
+			Stack: noneStack(),
+			Messages: []scenario.Message{{
+				From:       "src",
+				OffsetTime: mustOffset(t, "+50ms"),
+				Stack:      []scenario.Layer{ph("0xab")},
+			}},
+		}},
+	}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	want := []time.Time{base.Add(50 * time.Millisecond), base.Add(51 * time.Millisecond)}
+	if !equalTimes(times(planned), want) {
+		t.Fatalf("message offset 时间=%v,期望 %v", times(planned), want)
+	}
+}
+
+// TestPlanMessageOffsetAfterHandshake: open=handshake 时,message.offset_time 的零点是
+// "握手完成后"而非流锚。握手占 base+0/1/2ms,message +50ms → 数据段在 base+3ms+50ms=53ms,
+// ACK 在 54ms。若误把零点当流锚,数据段会落在 50ms(与握手 ACK@2ms 之间,且早于预期)。
+func TestPlanMessageOffsetAfterHandshake(t *testing.T) {
+	s := &scenario.Scenario{
+		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
+		Flows: []scenario.FlowSpec{{
+			Name:  "f",
+			Stack: handshakeStack(),
+			Messages: []scenario.Message{{
+				From:       "src",
+				OffsetTime: mustOffset(t, "+50ms"),
+				Stack:      []scenario.Layer{ph("0xab")},
+			}},
+		}},
+	}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(planned) != 5 { // 握手 3 + 数据 1 + ACK 1
+		t.Fatalf("期望 5 个包,得到 %d", len(planned))
+	}
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	// 排序后:握手 0/1/2ms,数据 53ms(握手 3ms + offset 50ms),ACK 54ms。
+	want := []time.Time{
+		base, base.Add(time.Millisecond), base.Add(2 * time.Millisecond),
+		base.Add(53 * time.Millisecond), base.Add(54 * time.Millisecond),
+	}
+	if !equalTimes(times(planned), want) {
+		t.Fatalf("握手后锚定时间=%v,期望 %v", times(planned), want)
+	}
+}
+
+// TestPlanMessageOffsetRelativeAnchor: message.offset_time 相对流锚(anchor=base+flow.offset_time),
+// 不是相对 base。flow +1s + message +50ms → base+1050ms / base+1051ms。
+func TestPlanMessageOffsetRelativeAnchor(t *testing.T) {
+	s := &scenario.Scenario{
+		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
+		Flows: []scenario.FlowSpec{{
+			Name:       "f",
+			OffsetTime: mustOffset(t, "+1s"),
+			Stack:      noneStack(),
+			Messages: []scenario.Message{{
+				From:       "src",
+				OffsetTime: mustOffset(t, "+50ms"),
+				Stack:      []scenario.Layer{ph("0xab")},
+			}},
+		}},
+	}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	want := []time.Time{base.Add(1050 * time.Millisecond), base.Add(1051 * time.Millisecond)}
+	if !equalTimes(times(planned), want) {
+		t.Fatalf("相对流锚时间=%v,期望 %v", times(planned), want)
+	}
+}
+
+// TestPlanSegmentInterval: segment.interval 只作用于数据段;对端 ACK 用 DefaultStep,
+// 不被数据段节奏传染。20 字节按 mss=8 切 3 段(8/8/4),interval=+10ms;
+// 段在 base/10/20ms,对端 ACK 紧跟最后一段 +1ms = 21ms。
+func TestPlanSegmentInterval(t *testing.T) {
+	s := &scenario.Scenario{
+		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
+		Flows: []scenario.FlowSpec{{
+			Name:  "f",
+			Stack: noneStack(),
+			Messages: []scenario.Message{{
+				From:    "src",
+				Segment: &scenario.Segment{MSS: 8, Interval: mustOffset(t, "+10ms")},
+				Stack:   []scenario.Layer{ph("0x" + hex.EncodeToString(make([]byte, 20)))},
+			}},
+		}},
+	}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(planned) != 4 { // 3 段 + 1 ACK
+		t.Fatalf("期望 4 个包,得到 %d", len(planned))
+	}
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	want := []time.Time{base, base.Add(10 * time.Millisecond), base.Add(20 * time.Millisecond), base.Add(21 * time.Millisecond)}
+	if !equalTimes(times(planned), want) {
+		t.Fatalf("segment interval 时间=%v,期望 %v", times(planned), want)
+	}
+}
+
+// TestPlanMessageOffsetReorder: 两条消息不同 offset,声明序 A(50ms) 在 B(10ms) 前,
+// 但 B 时间更早;稳定排序后 B 的包应排在 A 之前(乱序由排序自然实现)。
+func TestPlanMessageOffsetReorder(t *testing.T) {
+	s := &scenario.Scenario{
+		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
+		Flows: []scenario.FlowSpec{{
+			Name:  "f",
+			Stack: noneStack(),
+			Messages: []scenario.Message{
+				{From: "src", OffsetTime: mustOffset(t, "+50ms"), Stack: []scenario.Layer{ph("0xab")}},
+				{From: "dst", OffsetTime: mustOffset(t, "+10ms"), Stack: []scenario.Layer{ph("0xcd")}},
+			},
+		}},
+	}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(planned) != 4 { // 各 1 段 + 1 ACK
+		t.Fatalf("期望 4 个包,得到 %d", len(planned))
+	}
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	// 排序后:B.data@10ms, B.ack@11ms, A.data@50ms, A.ack@51ms。
+	want := []time.Time{base.Add(10 * time.Millisecond), base.Add(11 * time.Millisecond), base.Add(50 * time.Millisecond), base.Add(51 * time.Millisecond)}
+	if !equalTimes(times(planned), want) {
+		t.Fatalf("乱序排序时间=%v,期望 %v", times(planned), want)
+	}
 }

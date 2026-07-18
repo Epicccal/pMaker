@@ -24,9 +24,6 @@ import (
 // 与历史 builder 内建基准保持一致,以保证 golden 不变。
 var DefaultBaseTime = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// defaultStep 是未显式定时的相邻包之间的默认时间间隔。
-const defaultStep = time.Millisecond
-
 // Plan 把场景里的 packets 与 flows 汇流成按时间排序的 PlannedPacket 列表。
 func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 	// base_time 是唯一绝对锚;AbsTime 类型已保证它只能是 ISO8601 绝对时刻。
@@ -37,7 +34,7 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 
 	// 预估容量:standalone packets + 每条 flow 的粗略包数(握手3 + 消息段 + 挥手4 ≈ 8 起步)。
 	merged := make([]scenario.PlannedPacket, 0, len(s.Packets)+len(s.Flows)*8)
-	cursor := base // 默认序列游标:未显式定时的包从此递增 defaultStep
+	cursor := base // 默认序列游标:未显式定时的包从此递进 flow.DefaultStep
 
 	// ① standalone packets(声明序)。
 	for _, p := range s.Packets {
@@ -46,31 +43,27 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 			t = base.Add(p.OffsetTime.Duration()) // 显式:base+offset,不推进默认游标
 		} else {
 			t = cursor
-			cursor = cursor.Add(defaultStep)
+			cursor = cursor.Add(flow.DefaultStep)
 		}
 		merged = append(merged, scenario.PlannedPacket{Packet: p, Time: t})
 	}
 
-	// ② flows(声明序):flow.Expand 产出 stack 包,再分配时间。
+	// ② flows(声明序):flow.Expand 自管时间轴,产出带时间戳的 PlannedPacket;plan 只汇流。
 	for fi, f := range s.Flows {
-		expanded, err := flow.Expand(f)
+		var anchor time.Time
+		if f.OffsetTime != nil {
+			anchor = base.Add(f.OffsetTime.Duration()) // 显式:流锚 = base+offset,不推进默认游标
+		} else {
+			anchor = cursor // 缺省:接续默认序列
+		}
+		expanded, err := flow.Expand(f, anchor)
 		if err != nil {
 			return nil, fmt.Errorf("flow[%d](%s): %w", fi, f.Name, err)
 		}
-		anchor, hasOffset := base, false
-		if f.OffsetTime != nil {
-			anchor, hasOffset = base.Add(f.OffsetTime.Duration()), true
-		}
-		for i, ep := range expanded {
-			var t time.Time
-			if hasOffset {
-				// 流锚定到 base+offset,流内每包 defaultStep 间隔,不干扰默认游标。
-				t = anchor.Add(time.Duration(i) * defaultStep)
-			} else {
-				t = cursor
-				cursor = cursor.Add(defaultStep) // 接续默认序列
-			}
-			merged = append(merged, scenario.PlannedPacket{Packet: ep, Time: t})
+		merged = append(merged, expanded...)
+		// 缺省(无 offset)的流推进默认游标到流末包之后,保持后续 standalone/flow 接续。
+		if f.OffsetTime == nil && len(expanded) > 0 {
+			cursor = expanded[len(expanded)-1].Time.Add(flow.DefaultStep)
 		}
 	}
 

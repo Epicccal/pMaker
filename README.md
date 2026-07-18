@@ -203,8 +203,8 @@ client                                             server
 standalone packets 与 flows 展开后的包会汇流成带显式时间戳的 `PlannedPacket` 列表，按时间排序后再写盘。时间模型是「唯一绝对锚 + 相对偏移」：
 
 - `base_time`：场景里**唯一的绝对锚**，仅接受 **ISO8601**（如 `2024-01-01T00:00:00Z`，按 **UTC** 解析）；缺省为确定性 2020 基准。写成 `+1s` 这类偏移会在解析阶段失败。
-- `packet.offset_time`：该包相对 `base_time` 的时长偏移（`+1.5s`、`+500ms`、`-1ms`，只接受时长）；缺省则接续默认序列。
-- `flow.offset_time`：流起始相对 `base_time` 的时长偏移；缺省则该流接续默认序列。
+- `packet.offset_time`：该包相对 `base_time` 的时长偏移（`+1.5s`、`+500ms`、`0s`，只接受**非负**时长；负值会在解析阶段失败——若需早于 `base_time`，应把 `base_time` 提前）；缺省则接续默认序列。
+- `flow.offset_time`：流起始相对 `base_time` 的时长偏移（同样只接受非负时长）；缺省则该流接续默认序列。
 
 未显式定时的包从 `base_time` 起每 1ms 一个、接续默认序列；显式定时（`offset_time`）的包按 `base_time + offset` 放置、不推进默认游标。同时间的包保持声明顺序（稳定排序），全程不依赖本机时钟，同一 scenario 生成相同 pcap。
 
