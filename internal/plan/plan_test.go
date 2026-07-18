@@ -13,10 +13,10 @@ import (
 
 // baseFlow 构造一条 open/close 均为 none、单条 payload 消息的流,展开为 2 个 stack 包
 // (1 数据段 + 1 对端 ACK),便于在测试里精确定位时间。
-func baseFlow(name string, start *scenario.TimeSpec) scenario.FlowSpec {
+func baseFlow(name string, offset *scenario.Offset) scenario.FlowSpec {
 	return scenario.FlowSpec{
-		Name:  name,
-		Start: start,
+		Name:       name,
+		OffsetTime: offset,
 		Stack: []scenario.Layer{
 			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
 			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
@@ -33,10 +33,10 @@ func baseFlow(name string, start *scenario.TimeSpec) scenario.FlowSpec {
 	}
 }
 
-func udpPacket(name string, t *scenario.TimeSpec) scenario.Packet {
+func udpPacket(name string, offset *scenario.Offset) scenario.Packet {
 	return scenario.Packet{
-		Name: name,
-		Time: t,
+		Name:       name,
+		OffsetTime: offset,
 		Stack: []scenario.Layer{
 			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
 			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
@@ -54,7 +54,7 @@ func times(planned []scenario.PlannedPacket) []time.Time {
 	return out
 }
 
-// TestPlanDefaultPacketsTiming:未显式定时的 standalone packets 应为 base+i*ms,顺序不变。
+// TestPlanDefaultPacketsTiming: 未显式定时时,base+i*ms,顺序不变。
 func TestPlanDefaultPacketsTiming(t *testing.T) {
 	s := &scenario.Scenario{
 		Packets: []scenario.Packet{udpPacket("a", nil), udpPacket("b", nil), udpPacket("c", nil)},
@@ -71,7 +71,7 @@ func TestPlanDefaultPacketsTiming(t *testing.T) {
 	}
 }
 
-// TestPlanDefaultFlowTiming:无 start 的 flow 包接续默认序列 base+i*ms(回归旧 builder 语义)。
+// TestPlanDefaultFlowTiming: 无 offset_time 的 flow 包接续默认序列 base+i*ms(回归旧 builder 语义)。
 func TestPlanDefaultFlowTiming(t *testing.T) {
 	s := &scenario.Scenario{Flows: []scenario.FlowSpec{baseFlow("f", nil)}}
 	planned, err := plan.Plan(s)
@@ -88,34 +88,36 @@ func TestPlanDefaultFlowTiming(t *testing.T) {
 	}
 }
 
-// TestPlanExplicitPacketTime:绝对 + 相对两种语法都能落到正确时刻(排序后按时间升序)。
-func TestPlanExplicitPacketTime(t *testing.T) {
-	abs := mustTimeSpec(t, "2024-01-01T00:00:10Z")
-	rel := mustTimeSpec(t, "+5ms")
+// TestPlanExplicitPacketOffset: 两个不同 offset 的 packet 能分别落到 base+offset 的位置。
+func TestPlanExplicitPacketOffset(t *testing.T) {
+	base := mustAbs(t, "2024-01-01T00:00:00Z")
 	s := &scenario.Scenario{
-		BaseTime: mustTimeSpec(t, "2024-01-01T00:00:00Z"),
-		Packets:  []scenario.Packet{udpPacket("abs", abs), udpPacket("rel", rel)},
+		BaseTime: base,
+		Packets: []scenario.Packet{
+			udpPacket("late", mustOffset(t, "+10s")),
+			udpPacket("early", mustOffset(t, "+5ms")),
+		},
 	}
 	planned, err := plan.Plan(s)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	// 声明序 abs(10s)、rel(5ms);排序后 rel(5ms) 在前。
-	want := []time.Time{base.Add(5 * time.Millisecond), base.Add(10 * time.Second)}
+	origin := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	// 声明序 late(+10s)、early(+5ms);排序后 early(+5ms) 在前。
+	want := []time.Time{origin.Add(5 * time.Millisecond), origin.Add(10 * time.Second)}
 	if !equalTimes(times(planned), want) {
 		t.Fatalf("显式时间=%v,期望 %v", times(planned), want)
 	}
-	if planned[0].Name != "rel" || planned[1].Name != "abs" {
-		t.Fatalf("排序后 name 顺序=%v,期望 [rel abs]", names(planned))
+	if planned[0].Name != "early" || planned[1].Name != "late" {
+		t.Fatalf("排序后 name 顺序=%v,期望 [early late]", names(planned))
 	}
 }
 
-// TestPlanFlowStartAnchor:flow.start 把流锚定到 base+start,流内每包 1ms 间隔。
-func TestPlanFlowStartAnchor(t *testing.T) {
+// TestPlanFlowOffsetAnchor: flow.offset_time 把流锚定到 base+offset,流内每包 1ms 间隔。
+func TestPlanFlowOffsetAnchor(t *testing.T) {
 	s := &scenario.Scenario{
-		BaseTime: mustTimeSpec(t, "2024-01-01T00:00:00Z"),
-		Flows:    []scenario.FlowSpec{baseFlow("f", mustTimeSpec(t, "+10ms"))},
+		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
+		Flows:    []scenario.FlowSpec{baseFlow("f", mustOffset(t, "+10ms"))},
 	}
 	planned, err := plan.Plan(s)
 	if err != nil {
@@ -124,16 +126,16 @@ func TestPlanFlowStartAnchor(t *testing.T) {
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	want := []time.Time{base.Add(10 * time.Millisecond), base.Add(11 * time.Millisecond)}
 	if !equalTimes(times(planned), want) {
-		t.Fatalf("flow.start 锚定时间=%v,期望 %v", times(planned), want)
+		t.Fatalf("flow offset 锚定时间=%v,期望 %v", times(planned), want)
 	}
 }
 
-// TestPlanMergeAndSort:packets + flow 显式时间交织,按 Time 排序后顺序与声明序不同。
+// TestPlanMergeAndSort: packets + flow 显式时间交织,按 Time 排序后顺序与声明序不同。
 func TestPlanMergeAndSort(t *testing.T) {
 	s := &scenario.Scenario{
-		BaseTime: mustTimeSpec(t, "2024-01-01T00:00:00Z"),
-		Packets:  []scenario.Packet{udpPacket("late", mustTimeSpec(t, "+30ms"))},
-		Flows:    []scenario.FlowSpec{baseFlow("quick", mustTimeSpec(t, "+0ms"))},
+		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
+		Packets:  []scenario.Packet{udpPacket("late", mustOffset(t, "+30ms"))},
+		Flows:    []scenario.FlowSpec{baseFlow("quick", mustOffset(t, "+0ms"))},
 	}
 	planned, err := plan.Plan(s)
 	if err != nil {
@@ -148,8 +150,7 @@ func TestPlanMergeAndSort(t *testing.T) {
 	if !equalTimes(times(planned), want) {
 		t.Fatalf("交织排序时间=%v,期望 %v", times(planned), want)
 	}
-	// 第一个应是 flow 的数据段(udp "late" 排到末尾)。
-	if planned[0].Name != "" { // flow 展开包无 name
+	if planned[0].Name != "" {
 		t.Errorf("排序后首个包应为 flow 包(无名),得到 name=%q", planned[0].Name)
 	}
 	if planned[2].Name != "late" {
@@ -157,13 +158,13 @@ func TestPlanMergeAndSort(t *testing.T) {
 	}
 }
 
-// TestPlanStableSortForEqualTimes:同 Time 的包保持声明/合并顺序(确定性)。
+// TestPlanStableSortForEqualTimes: 同 Time 的包保持声明/合并顺序(确定性)。
 func TestPlanStableSortForEqualTimes(t *testing.T) {
 	s := &scenario.Scenario{
 		Packets: []scenario.Packet{
-			udpPacket("first", mustTimeSpec(t, "+5ms")),
-			udpPacket("second", mustTimeSpec(t, "+5ms")),
-			udpPacket("third", mustTimeSpec(t, "+5ms")),
+			udpPacket("first", mustOffset(t, "+5ms")),
+			udpPacket("second", mustOffset(t, "+5ms")),
+			udpPacket("third", mustOffset(t, "+5ms")),
 		},
 	}
 	planned, err := plan.Plan(s)
@@ -179,35 +180,13 @@ func TestPlanStableSortForEqualTimes(t *testing.T) {
 	}
 }
 
-// TestPlanBaseTimeRelativeError:base_time 为相对偏移应在校验阶段报错(此处直接验证 Plan 之外的 Validate)。
-func TestPlanBaseTimeRelativeError(t *testing.T) {
-	s := &scenario.Scenario{
-		BaseTime: mustTimeSpec(t, "+1s"),
-		Packets:  []scenario.Packet{udpPacket("a", nil)},
-	}
-	if err := scenario.Validate(s); err == nil {
-		t.Fatal("期望 base_time 相对偏移报错,实际通过")
-	}
-}
-
-// TestPlanRejectsRelativeBaseTimeDirectly:绕过 Validate 直接调 Plan 也应拒绝相对 base_time(库层自洽)。
-func TestPlanRejectsRelativeBaseTimeDirectly(t *testing.T) {
-	s := &scenario.Scenario{
-		BaseTime: mustTimeSpec(t, "+1s"),
-		Packets:  []scenario.Packet{udpPacket("a", nil)},
-	}
-	if _, err := plan.Plan(s); err == nil {
-		t.Fatal("期望 Plan 直接拒绝相对 base_time,实际通过")
-	}
-}
-
-// TestPlanDeterministic:同一输入两次 Plan 结果完全一致。
+// TestPlanDeterministic: 同一输入两次 Plan 结果完全一致。
 func TestPlanDeterministic(t *testing.T) {
 	mk := func() *scenario.Scenario {
 		return &scenario.Scenario{
-			BaseTime: mustTimeSpec(t, "2024-01-01T00:00:00Z"),
-			Packets:  []scenario.Packet{udpPacket("late", mustTimeSpec(t, "+30ms"))},
-			Flows:    []scenario.FlowSpec{baseFlow("quick", mustTimeSpec(t, "+0ms"))},
+			BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
+			Packets:  []scenario.Packet{udpPacket("late", mustOffset(t, "+30ms"))},
+			Flows:    []scenario.FlowSpec{baseFlow("quick", mustOffset(t, "+0ms"))},
 		}
 	}
 	a, err := plan.Plan(mk())
@@ -225,6 +204,22 @@ func TestPlanDeterministic(t *testing.T) {
 		if !a[i].Time.Equal(b[i].Time) || a[i].Name != b[i].Name {
 			t.Fatalf("两次 Plan 第%d包不一致: %+v vs %+v", i, a[i], b[i])
 		}
+	}
+}
+
+// TestAbsTimeRejectsOffset: AbsTime 只解析 ISO8601,偏移字符串直接失败(结构性保证)。
+func TestAbsTimeRejectsOffset(t *testing.T) {
+	a := &scenario.AbsTime{}
+	if err := yaml.Unmarshal([]byte("+1s"), a); err == nil {
+		t.Fatal("期望 AbsTime 拒绝偏移字符串,实际通过")
+	}
+}
+
+// TestOffsetRejectsAbsolute: Offset 只解析时长,绝对时刻直接失败(结构性保证)。
+func TestOffsetRejectsAbsolute(t *testing.T) {
+	o := &scenario.Offset{}
+	if err := yaml.Unmarshal([]byte("2024-01-01T00:00:00Z"), o); err == nil {
+		t.Fatal("期望 Offset 拒绝绝对时刻字符串,实际通过")
 	}
 }
 
@@ -248,12 +243,22 @@ func equalTimes(a, b []time.Time) bool {
 	return true
 }
 
-// mustTimeSpec 经 YAML 解析路径把时间字符串解析为 TimeSpec,失败即 Fatal。
-func mustTimeSpec(t *testing.T, s string) *scenario.TimeSpec {
+// mustAbs 经 YAML 解析路径把 ISO8601 字符串解析为 AbsTime,失败即 Fatal。
+func mustAbs(t *testing.T, s string) *scenario.AbsTime {
 	t.Helper()
-	ts := &scenario.TimeSpec{}
-	if err := yaml.Unmarshal([]byte(s), ts); err != nil {
-		t.Fatalf("解析时间 %q: %v", s, err)
+	a := &scenario.AbsTime{}
+	if err := yaml.Unmarshal([]byte(s), a); err != nil {
+		t.Fatalf("解析 base_time %q: %v", s, err)
 	}
-	return ts
+	return a
+}
+
+// mustOffset 经 YAML 解析路径把时长字符串解析为 Offset,失败即 Fatal。
+func mustOffset(t *testing.T, s string) *scenario.Offset {
+	t.Helper()
+	o := &scenario.Offset{}
+	if err := yaml.Unmarshal([]byte(s), o); err != nil {
+		t.Fatalf("解析 offset %q: %v", s, err)
+	}
+	return o
 }

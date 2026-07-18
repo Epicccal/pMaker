@@ -1,12 +1,14 @@
 // Package plan 把 scenario 模型编排成带显式时间戳的 PlannedPacket 列表。
 //
 // standalone packets 与 flows 展开后的包在此汇流,按 Time 稳定排序,再交给 builder
-// 序列化、writer 落盘。时间分配策略:
-//   - 显式定时(packet.time / flow.start / base_time)按用户指定值放置,不推进默认游标;
-//   - 未显式定时的包从 base_time 起每 1ms 一个,接续默认序列——与旧 builder 内建时间
-//     分配等价,保证现有 golden pcap 逐字节不变。
+// 序列化、writer 落盘。时间模型统一为「base_time + offset_time」:
+//   - base_time 是唯一的绝对锚(ISO8601,缺省=确定性 2020 基准);
+//   - packet.offset_time / flow.offset_time 是相对 base_time 的时长偏移,
+//     显式给出时按 base+offset 放置、不推进默认游标;
+//   - 未显式定时的包从 base_time 起每 1ms 一个,接续默认序列——与旧 builder 内建
+//     时间分配等价,保证现有 golden pcap 逐字节不变。
 //
-// 全程不使用 time.Now(),base_time 缺省为确定性 2020 基准,输出可复现。
+// 全程不使用 time.Now(),输出可复现。
 package plan
 
 import (
@@ -27,13 +29,10 @@ const defaultStep = time.Millisecond
 
 // Plan 把场景里的 packets 与 flows 汇流成按时间排序的 PlannedPacket 列表。
 func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
+	// base_time 是唯一绝对锚;AbsTime 类型已保证它只能是 ISO8601 绝对时刻。
 	base := DefaultBaseTime
 	if s.BaseTime != nil {
-		// 库层自洽:base_time 必须是绝对时刻(Validate 也会查,这里兜底直接调 Plan 的调用方)。
-		if s.BaseTime.IsOffset() {
-			return nil, fmt.Errorf("base_time 必须是绝对时刻,不能是相对偏移")
-		}
-		base = s.BaseTime.Resolve(DefaultBaseTime)
+		base = s.BaseTime.Time()
 	}
 
 	// 预估容量:standalone packets + 每条 flow 的粗略包数(握手3 + 消息段 + 挥手4 ≈ 8 起步)。
@@ -43,8 +42,8 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 	// ① standalone packets(声明序)。
 	for _, p := range s.Packets {
 		var t time.Time
-		if p.Time != nil {
-			t = p.Time.Resolve(base) // 显式:不推进默认游标
+		if p.OffsetTime != nil {
+			t = base.Add(p.OffsetTime.Duration()) // 显式:base+offset,不推进默认游标
 		} else {
 			t = cursor
 			cursor = cursor.Add(defaultStep)
@@ -58,14 +57,14 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 		if err != nil {
 			return nil, fmt.Errorf("flow[%d](%s): %w", fi, f.Name, err)
 		}
-		anchor, hasStart := base, false
-		if f.Start != nil {
-			anchor, hasStart = f.Start.Resolve(base), true
+		anchor, hasOffset := base, false
+		if f.OffsetTime != nil {
+			anchor, hasOffset = base.Add(f.OffsetTime.Duration()), true
 		}
 		for i, ep := range expanded {
 			var t time.Time
-			if hasStart {
-				// 流锚定到 base+start,流内每包 defaultStep 间隔,不干扰默认游标。
+			if hasOffset {
+				// 流锚定到 base+offset,流内每包 defaultStep 间隔,不干扰默认游标。
 				t = anchor.Add(time.Duration(i) * defaultStep)
 			} else {
 				t = cursor

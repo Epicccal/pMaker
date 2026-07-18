@@ -1,19 +1,20 @@
 # examples/interleave/flow_start.yaml
 #
-# 演示 PlannedPacket 的「显式时间 + 汇流排序」:standalone packets 与 flows
+# 演示 base_time + offset_time 的汇流排序:standalone packets 与 flows
 # 在 plan.Plan 阶段汇流成带时间戳的 PlannedPacket 列表,按 Time 排序后再写盘。
 #
 # - base_time: 全局基准时刻(绝对 ISO8601;缺省=确定性 2020 基准)。
-# - packet.time: 该包时刻,绝对 ISO8601 或相对 base_time 的偏移(+30ms)。
-# - flow.start: 流起始时刻(此处 +0ms),流内每包 1ms 间隔。
+# - packet.offset_time / flow.offset_time: 相对 base_time 的时长偏移,
+#   只接受时长(如 +30ms / 10s / -1ms),绝对时刻直接解析失败(由 AbsTime / Offset
+#   类型结构性保证)。
 #
-# 声明序为 [late-syn(30ms), flow quick(0ms,1ms)];排序后写盘顺序为
+# 声明序为 [late-syn(+30ms), flow quick(+0ms,+0ms/+1ms)];排序后写盘顺序为
 # [flow@0ms, flow-ack@1ms, late-syn@30ms]——显式时间让独立包与流按时间交织。
 base_time: "2024-01-01T00:00:00Z"
 
 packets:
   - name: late-syn
-    time: "+30ms"
+    offset_time: "+30ms"
     stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
       - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
@@ -21,7 +22,7 @@ packets:
 
 flows:
   - name: quick
-    start: "+0ms"
+    offset_time: "+0ms"
     stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
       - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
