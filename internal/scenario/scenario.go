@@ -34,18 +34,27 @@ type Message struct {
 	From    string   `yaml:"from"` // src | dst
 	Stack   []Layer  `yaml:"stack"`
 	Segment *Segment `yaml:"segment"`
+	// OffsetTime 是本消息起始相对"握手完成后"(无握手则 = 流锚 anchor)的时长偏移。
+	// 缺省=接续上一流内事件;显式给出时本消息整组(各数据段 + 对端 ACK)从 握手结束+offset 起排,
+	// 不推进默认游标。用于多轮请求间的间隔/乱序。握手固定 DefaultStep 不参与定时,
+	// 故 offset 从握手结束算起,避免小 offset 与握手包撞时间。
+	OffsetTime *Offset `yaml:"offset_time"`
 }
 
 // Segment 是消息的分段策略。MSS 为实际切段大小(0=不切,整条一段)。
 type Segment struct {
 	MSS int `yaml:"mss"`
+	// Interval 是同一消息各数据段之间的时间间隔;缺省=1ms(与未显式定时的历史行为逐字节等价)。
+	// 显式给出(如 +10ms)用于模拟慢速分段/RTT。只作用于数据段;对端 ACK 用 DefaultStep,
+	// 不被数据段节奏传染(保持"只让数据慢"的语义纯净)。
+	Interval *Offset `yaml:"interval"`
 }
 
 // Packet 是一个数据包:name 可选 + 由外到内的有序 layer 栈。
 type Packet struct {
-	Name          string  `yaml:"name"`
-	OffsetTime    *Offset `yaml:"offset_time"` // 该包时刻 = base_time + offset_time;缺省=接续默认序列
-	Stack         []Layer `yaml:"stack"`
+	Name          string   `yaml:"name"`
+	OffsetTime    *Offset  `yaml:"offset_time"` // 该包时刻 = base_time + offset_time;缺省=接续默认序列
+	Stack         []Layer  `yaml:"stack"`
 	SummaryLayers []string `yaml:"-"` // flow 展开后保留应用层协议语义,仅用于 CLI 摘要
 }
 
@@ -130,8 +139,10 @@ func (a *AbsTime) UnmarshalYAML(node *yaml.Node) error {
 // Time 返回解析后的绝对时刻。
 func (a *AbsTime) Time() time.Time { return a.t }
 
-// Offset 是相对 base_time 的时长偏移,packet.offset_time / flow.offset_time 使用。
-// 仅接受时长(如 +1.5s / 500ms / -1ms);写绝对时刻会在解析阶段失败(time.ParseDuration 不认)。
+// Offset 是相对 base_time 的时长偏移,packet.offset_time / flow.offset_time /
+// message.offset_time / segment.interval 使用。
+// 仅接受非负时长(如 +1.5s / 500ms / 0s);负值与绝对时刻均在解析阶段失败——
+// 负偏移通常意味着 base_time 选错了起点(应把 base_time 提前,而非用负 offset 够到零点之前)。
 type Offset struct {
 	d time.Duration
 }
@@ -148,7 +159,10 @@ func (o *Offset) UnmarshalYAML(node *yaml.Node) error {
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		return fmt.Errorf("非法时长偏移 %q(如 +1.5s / 500ms / -1ms): %w", s, err)
+		return fmt.Errorf("非法时长偏移 %q(如 +1.5s / 500ms / 0s): %w", s, err)
+	}
+	if d < 0 {
+		return fmt.Errorf("时长偏移 %q 不能为负(若需早于 base_time,请把 base_time 提前)", s)
 	}
 	o.d = d
 	return nil
@@ -482,6 +496,11 @@ func validateFlow(f FlowSpec) error {
 		case *HTTPReqFields, *HTTPRespFields, *PayloadFields, PayloadHex:
 		default:
 			return fmt.Errorf("messages[%d].stack[0] 不支持 %q", j, m.Stack[0].Type)
+		}
+		// segment.interval 只在切段(mss>0)时才有意义:不设 mss 时整条不切,interval 无处生效,
+		// 静默吞掉会让用户误以为段间隔已生效。此处尽早报错。
+		if m.Segment != nil && m.Segment.Interval != nil && m.Segment.MSS <= 0 {
+			return fmt.Errorf("messages[%d].segment.interval 需配合 mss>0 才能切段(当前未设 mss,interval 不会生效)", j)
 		}
 	}
 	return nil

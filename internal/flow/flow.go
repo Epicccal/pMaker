@@ -3,6 +3,7 @@ package flow
 import (
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/scenario"
@@ -42,24 +43,39 @@ type conn struct {
 	session        session
 }
 
-// Expand 把一条 flow 展开成有序的 stack 包。
+// DefaultStep 是未显式定时的相邻包之间的默认时间间隔(1ms)。
+// flow 内部时间轴与 plan 的 standalone 默认序列共用此步长,保证缺省行为逐字节等价。
+const DefaultStep = time.Millisecond
+
+// Expand 把一条 flow 展开成有序的、带显式时间戳的 PlannedPacket。
+//
+// anchor 是流起始锚(base + flow.offset_time,或接续默认游标),由 plan 层算好传入;
+// flow 以 anchor 为零点排时间轴:握手占 anchor 起(固定 DefaultStep,不参与定时),各消息按
+// offset_time 锚定或接续——其零点是"握手完成后"(无握手则 = anchor),段间按 segment.interval 间隔。
+// 未显式定时时每包间隔 DefaultStep,与历史行为逐字节等价。
 //
 // 当前 flow.stack 支持 eth/ipv4/tcp/tcp_session;VLAN/GRE 等会话封装后续扩展。
-func Expand(f scenario.FlowSpec) ([]scenario.Packet, error) {
+func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, error) {
 	c, err := parseFlowStack(f.Stack)
 	if err != nil {
 		return nil, err
 	}
-	var out []scenario.Packet
+	var out []scenario.PlannedPacket
+	cursor := anchor // 流内时间游标:每个包占一个槽,默认递进 DefaultStep
 
 	// 三次握手(SYN / SYN,ACK 携带通告 MSS)
 	if c.session.open == "" || c.session.open == "handshake" {
-		out = append(out,
-			c.emit(sideSrc, []string{"SYN"}, nil, nil),
-			c.emit(sideDst, []string{"SYN", "ACK"}, nil, nil),
-			c.emit(sideSrc, []string{"ACK"}, nil, nil),
-		)
+		out = appendAt(out, c.emit(sideSrc, []string{"SYN"}, nil, nil), cursor)
+		cursor = cursor.Add(DefaultStep)
+		out = appendAt(out, c.emit(sideDst, []string{"SYN", "ACK"}, nil, nil), cursor)
+		cursor = cursor.Add(DefaultStep)
+		out = appendAt(out, c.emit(sideSrc, []string{"ACK"}, nil, nil), cursor)
+		cursor = cursor.Add(DefaultStep)
 	}
+
+	// message.offset_time 的零点是"握手完成后"(无握手则 = 流锚 anchor):握手固定
+	// DefaultStep 不参与定时,数据通信的偏移从握手结束算起,避免小 offset 与握手包撞时间。
+	msgAnchor := cursor
 
 	// 应用层消息:按 segment.mss 切段发送,对端按 per-message 回一个 ACK
 	for _, m := range f.Messages {
@@ -67,27 +83,52 @@ func Expand(f scenario.FlowSpec) ([]scenario.Packet, error) {
 		if err != nil {
 			return nil, err
 		}
+		// 显式 offset_time:把本消息整组锚定到 msgAnchor+offset(握手完成后;无握手则=流锚)。
+		if m.OffsetTime != nil {
+			cursor = msgAnchor.Add(m.OffsetTime.Duration())
+		}
+		// 段间间隔:缺省 DefaultStep(与历史等价),显式 interval 覆盖。
+		// interval 只作用于数据段(规避节奏);对端 ACK 是伴生控制包,用 DefaultStep,
+		// 不被数据段的慢速节奏传染——保持"只让数据慢"的语义纯净。
+		interval := DefaultStep
+		if m.Segment != nil && m.Segment.Interval != nil {
+			interval = m.Segment.Interval.Duration()
+		}
 		from := sideOf(m.From)
 		summaryLayers := scenario.SummaryLayerNames(m.Stack)
+		var lastSeg time.Time
 		for _, seg := range split(b, segMSS(m)) {
-			out = append(out, c.emit(from, []string{"PSH", "ACK"}, seg, summaryLayers))
+			out = appendAt(out, c.emit(from, []string{"PSH", "ACK"}, seg, summaryLayers), cursor)
+			lastSeg = cursor
+			cursor = cursor.Add(interval)
 		}
-		out = append(out, c.emit(from.peer(), []string{"ACK"}, nil, nil))
+		// 对端 ACK 紧跟最后一段一个 DefaultStep(简化模型,非真实 delayed ACK)。
+		cursor = lastSeg.Add(DefaultStep)
+		out = appendAt(out, c.emit(from.peer(), []string{"ACK"}, nil, nil), cursor)
+		cursor = cursor.Add(DefaultStep)
 	}
 
 	// 关闭:默认四次挥手;rst 表示对端(dst)单包中断连接。
 	switch c.session.close {
 	case "", "fin":
-		out = append(out,
-			c.emit(sideSrc, []string{"FIN", "ACK"}, nil, nil),
-			c.emit(sideDst, []string{"ACK"}, nil, nil),
-			c.emit(sideDst, []string{"FIN", "ACK"}, nil, nil),
-			c.emit(sideSrc, []string{"ACK"}, nil, nil),
-		)
+		out = appendAt(out, c.emit(sideSrc, []string{"FIN", "ACK"}, nil, nil), cursor)
+		cursor = cursor.Add(DefaultStep)
+		out = appendAt(out, c.emit(sideDst, []string{"ACK"}, nil, nil), cursor)
+		cursor = cursor.Add(DefaultStep)
+		out = appendAt(out, c.emit(sideDst, []string{"FIN", "ACK"}, nil, nil), cursor)
+		cursor = cursor.Add(DefaultStep)
+		out = appendAt(out, c.emit(sideSrc, []string{"ACK"}, nil, nil), cursor)
+		cursor = cursor.Add(DefaultStep)
 	case "rst":
-		out = append(out, c.emit(sideDst, []string{"RST", "ACK"}, nil, nil))
+		out = appendAt(out, c.emit(sideDst, []string{"RST", "ACK"}, nil, nil), cursor)
+		cursor = cursor.Add(DefaultStep)
 	}
 	return out, nil
+}
+
+// appendAt 把一个 stack 包包装成带时间戳的 PlannedPacket 追加到 out。
+func appendAt(out []scenario.PlannedPacket, p scenario.Packet, t time.Time) []scenario.PlannedPacket {
+	return append(out, scenario.PlannedPacket{Packet: p, Time: t})
 }
 
 func parseFlowStack(stack []scenario.Layer) (*conn, error) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"testing"
+	"time"
 
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
@@ -132,7 +133,7 @@ func TestFlowSeqSegmentation(t *testing.T) {
 			Segment: &scenario.Segment{MSS: 8},
 		}},
 	}
-	pkts, err := flow.Expand(f)
+	pkts, err := flow.Expand(f, time.Time{})
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -140,7 +141,7 @@ func TestFlowSeqSegmentation(t *testing.T) {
 	// 收集 client 侧带 payload 的数据段(PSH),断言 seq = 1001, 1009, 1017
 	var seqs []uint32
 	for _, p := range pkts {
-		tc := tcpOf(p)
+		tc := tcpOf(p.Packet)
 		if tc != nil && contains(tc.Flags, "PSH") && tc.Seq != nil {
 			seqs = append(seqs, *tc.Seq)
 		}
@@ -173,19 +174,19 @@ func TestFlowCloseRST(t *testing.T) {
 			}},
 		}},
 	}
-	pkts, err := flow.Expand(f)
+	pkts, err := flow.Expand(f, time.Time{})
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
 	if len(pkts) != 6 { // 握手3 + 数据1 + ACK1 + RST1
 		t.Fatalf("期望 6 个包,得到 %d", len(pkts))
 	}
-	last := tcpOf(pkts[len(pkts)-1])
+	last := tcpOf(pkts[len(pkts)-1].Packet)
 	if last == nil || !contains(last.Flags, "RST") || !contains(last.Flags, "ACK") {
 		t.Fatalf("最后一个包应为 RST,ACK,得到 %#v", last)
 	}
 	for i, p := range pkts {
-		if tc := tcpOf(p); tc != nil && contains(tc.Flags, "FIN") {
+		if tc := tcpOf(p.Packet); tc != nil && contains(tc.Flags, "FIN") {
 			t.Fatalf("close:rst 不应生成 FIN,但包%d 含 FIN", i)
 		}
 	}
@@ -200,11 +201,13 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	for _, f := range s.Flows {
-		fp, err := flow.Expand(f)
+		fp, err := flow.Expand(f, time.Time{})
 		if err != nil {
 			t.Fatalf("expand: %v", err)
 		}
-		s.Packets = append(s.Packets, fp...)
+		for _, pp := range fp {
+			s.Packets = append(s.Packets, pp.Packet)
+		}
 	}
 
 	summaries := scenario.SummarizePackets(s.Packets)
