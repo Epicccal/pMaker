@@ -19,36 +19,42 @@
 ---
 
 ```text
-                         ┌─────────────────────┐
-                         │    scenario.yaml    │
-                         │ packets + flows DSL │
-                         └──────────┬──────────┘
-                                    │
-                                    │ declarative traffic intent
-                                    ▼
-┌────────────────────────────────────────────────────────────────────┐
-│                         pMaker pipeline                            │
-│                                                                    │
-│  ordered stack   ──▶  protocol linking  ──▶  deterministic pcap    │
-│  eth/vlan/ip/...      checksum / length        timestamps / bytes  │
-│                                                                    │
-└────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-                         ┌─────────────────────┐
-                         │       out.pcap      │
-                         │ replay / inspect /  │
-                         │ regression archive  │
-                         └─────────────────────┘
+                         ┌────────────────────────┐
+                         │ scenario.yaml          │
+                         │ packets + flows DSL    │
+                         │ base_time / seed / ... │
+                         └────────────┴───────────┘
+                                      │ 解析 + 校验
+                                      │ 字段/行号级报错
+                                      ▼
+  ┌───────────────────────────────────┬───────────────────────────────────┐
+  │                            pMaker pipeline                            │
+  │                                                                       │
+  │ scenario ──┬──> flows ──> plan ──> builder ──> writer      │
+  │            │                │                                       │
+  │            └────packets─────┘   逐包 stack, 不经 flows     │
+  │                                                                       │
+  │ scenario : 解析 + 校验                                                │
+  │ flows    : 有状态 TCP 展开 · 握手 / seq·ack / 分段 / 挥手           │
+  │ plan     : packets + flows 汇流 · 按 Time 稳定排序                   │
+  │ builder  : 有序栈 -> gopacket · 自动串接 · checksum · 原始字节兜底 │
+  │ writer   : pcapgo 纯 Go 写盘 · 确定性时间戳 / 字节                   │
+  └───────────────────────────────────┴───────────────────────────────────┘
+                                      │
+                                      ▼
+                         ┌────────────┬────────────┐
+                         │ out.pcap                │
+                         │ replay / inspect / 回归 │
+                         └─────────────────────────┘
 ```
 
 ## 一句话
 
 **pMaker 是一个离线 pcap 构造器：用 YAML 描述协议栈和会话行为，输出确定性 `.pcap` 文件。**
 
-它不抓包、不发包、不打开 raw socket，而是把 “临时造流量” 变成可以沉淀在仓库里的测试资产。
+它不抓包、不发包、不打开 raw socket，而是把“临时造流量”变成可以沉淀在仓库里的测试资产。
 
-## 适合构造什么？
+## 适合构造什么
 
 <table>
 <tr>
@@ -71,8 +77,7 @@
 - seq / ack 自动推导
 - MSS 分段
 - HTTP request / response
-- FIN 四次挥手
-- RST 关闭
+- FIN 四次挥手 / RST 关闭
 
 </td>
 </tr>
@@ -82,11 +87,9 @@
 ### 网络层 / 传输层 / 应用层
 
 - IPv4 / IPv6
-- TCP
-- UDP
+- TCP / UDP
 - ICMPv4 / ICMPv6
-- HTTP
-- DNS
+- HTTP / DNS
 - ...
 
 </td>
@@ -96,7 +99,7 @@
 
 - `payload_hex` 原始字节注入
 - 非标准 next-protocol
-- 手工 quote
+- 错误 checksum / length
 - 为规避、解析异常、边界条件预留 escape hatch
 
 </td>
@@ -115,42 +118,17 @@ packets:
       - tcp:  { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }
 ```
 
-因此同一种模型可以表达：
+因此同一套模型可以自然表达 QinQ、GRE 隧道、隧道内层协议、重复封装：
 
 ```text
 eth / ipv4 / tcp
-eth / vlan / vlan / ipv4 / tcp
-eth / ipv4 / gre / ipv4 / tcp
+eth / vlan / vlan / ipv4 / tcp      # QinQ
+eth / ipv4 / gre / ipv4 / tcp       # GRE 隧道
 eth / ipv4 / udp / dns
 eth / ipv4 / icmp
-eth / ipv6 / icmpv6
 ```
 
-这让 QinQ、GRE、隧道内层协议、重复封装都成为自然的一等能力，而不是后补的特殊 case。
-
-## 自动串接协议字段
-
-常规情况下，你只需要声明层顺序：
-
-```text
-eth → vlan → vlan → ipv4 → tcp
-```
-
-pMaker 会自动推导：
-
-| 位置 | 自动处理 |
-| --- | --- |
-| Ethernet | EtherType |
-| VLAN | inner type |
-| IPv4 | protocol |
-| GRE | protocol |
-| TCP / UDP | checksum pseudo-header |
-
-但如果测试目标就是“解析断链”或“非标准封装”，也可以显式覆盖：
-
-```yaml
-- vlan: { vid: 100, type: 0xffff }
-```
+pMaker 会自动推导每层的 next-proto / EtherType / checksum 伪首部；测试“解析断链”或“非标封装”时，可逐层显式覆盖（如 `- vlan: { vid: 100, type: 0xffff }`）。
 
 ## Flow：从应用脚本展开为 TCP 包序列
 
@@ -173,54 +151,17 @@ flows:
           - http_response: { status: 200, body: "Hello from pMaker" }
 ```
 
-展开结果概念上是：
+展开后自动维护握手、seq/ack、MSS 分段、挥手：
 
 ```text
-client                                             server
-  │                                                  │
-  │ ─────────────── SYN ───────────────────────────▶ │
-  │ ◀──────────── SYN,ACK ────────────────────────── │
-  │ ─────────────── ACK ───────────────────────────▶ │
-  │ ───────── HTTP request ────────────────────────▶ │
-  │ ◀────────────── ACK ──────────────────────────── │
-  │ ◀──────── HTTP response ──────────────────────── │
-  │ ─────────────── ACK ───────────────────────────▶ │
-  │ ───────────── FIN/ACK ... ─────────────────────▶ │
+client                                              server
+  │ ─────────────── SYN ──────────────────────────▶ │
+  │ ◀──────────── SYN,ACK ───────────────────────── │
+  │ ─────────────── ACK ──────────────────────────▶ │
+  │ ───────── HTTP request ───────────────────────▶ │
+  │ ◀──────── HTTP response ─────────────────────── │
+  │ ───────────── FIN/ACK ... ────────────────────▶ │
 ```
-
-自动维护：
-
-- TCP flags
-- seq / ack
-- SYN 消耗序号
-- FIN 消耗序号
-- 纯 ACK 不消耗序号
-- MSS 分段
-- 多轮请求 / 响应
-
-## 时间编排：base_time + offset_time
-
-standalone packets 与 flows 展开后的包会汇流成带显式时间戳的 `PlannedPacket` 列表，按时间排序后再写盘。时间模型是「唯一绝对锚 + 相对偏移」：
-
-- `base_time`：场景里**唯一的绝对锚**，仅接受 **ISO8601**（如 `2024-01-01T00:00:00Z`，按 **UTC** 解析）；缺省为确定性 2020 基准。写成 `+1s` 这类偏移会在解析阶段失败。
-- `packet.offset_time`：该包相对 `base_time` 的时长偏移（`+1.5s`、`+500ms`、`0s`，只接受**非负**时长；负值会在解析阶段失败——若需早于 `base_time`，应把 `base_time` 提前）；缺省则接续默认序列。
-- `flow.offset_time`：流起始相对 `base_time` 的时长偏移（同样只接受非负时长）；缺省则该流接续默认序列。
-
-未显式定时的包从 `base_time` 起每 1ms 一个、接续默认序列；显式定时（`offset_time`）的包按 `base_time + offset` 放置、不推进默认游标。同时间的包保持声明顺序（稳定排序），全程不依赖本机时钟，同一 scenario 生成相同 pcap。
-
-```yaml
-base_time: "2024-01-01T00:00:00Z"
-packets:
-  - name: late-syn
-    offset_time: "+30ms"   # 相对 base_time 的时长偏移
-    stack: [ ... ]
-flows:
-  - name: quick
-    offset_time: "+0ms"    # 流锚定到 base_time,流内每包 1ms
-    stack: [ ... ]
-```
-
-上例声明序为 `[late-syn@+30ms, flow@+0ms/+1ms]`，写盘按时间升序为 `[flow, flow-ack, late-syn]`——独立包与流按显式时间戳交织。完整示例见 `examples/interleave/flow_start.yaml`。
 
 ## 快速开始
 
@@ -246,8 +187,6 @@ pMaker 使用纯 Go 的 `pcapgo` 写文件，无需 libpcap / CGO。
 
 ## YAML 约定
 
-当前只支持 YAML 配置文件。
-
 ```yaml
 link_type: ethernet
 seed: 42
@@ -255,44 +194,20 @@ packets: []
 flows: []
 ```
 
-约定：
+- `stack` 从外到内排列，每个元素是单键 map（`- ipv4: {...}`），同类型层可重复（`vlan / vlan`）
+- next-proto 默认自动推导，可逐层显式覆盖；原始字节用 `payload_hex: 0x...`
+- 时间可选：`base_time`（唯一绝对锚，ISO8601 / UTC）、`packet.offset_time`、`flow.offset_time`（相对 `base_time` 的非负时长偏移）；未指定则每包 1ms、按时间稳定排序
+- 同一 scenario + seed 生成逐字节相同的 pcap
 
-- `stack` 从外到内排列
-- 每个 stack 元素是单键 map，例如 `- ipv4: {...}`
-- 同类型层可以重复，例如 `vlan / vlan`
-- next-protocol 默认自动推导，也可显式覆盖
-- raw bytes 使用 `payload_hex: 0x...`
-- 时间可选：`base_time`（唯一绝对锚，ISO8601）、`packet.offset_time`、`flow.offset_time`（相对 `base_time` 的时长偏移，如 `+1.5s`）；未指定则默认每包 1ms、按时间稳定排序
-- 同一 scenario 应生成相同 pcap
+完整字段以 `internal/scenario` 类型定义与 `examples/` 为准。
 
 ## 测试
 
 ```bash
 go test ./...
-```
-
-更新 golden pcap：
-
-```bash
-go test ./internal/scenario -run TestExamplesGolden -update
+go test ./internal/scenario -run TestExamplesGolden -update   # 重生 golden pcap
 ```
 
 ## 安全边界
 
-pMaker 是离线 pcap 构造工具：
-
-- 不主动发包
-- 不打开 raw socket
-- 不执行实时注入
-- 默认不触碰网络接口
-
-生成的 `.pcap` 可交给 `tcpreplay`、网络安全设备或分析工具使用。
-
-如果未来增加实时注入能力，应放在独立且默认关闭的构建标签后，并显式提示权限要求。
-
-## 项目定位
-
-```text
-不是流量黑盒生成器
-而是可声明、可审查、可复现、可回归的 pcap 构造器
-```
+pMaker 是离线 pcap 构造工具：不主动发包、不打开 raw socket、不执行实时注入、默认不触碰网络接口。生成的 `.pcap` 可交给 `tcpreplay` 或分析工具回放。若未来增加实时注入能力，会放在独立且默认关闭的构建标签后并显式提示权限要求。
