@@ -1,0 +1,67 @@
+# examples/http/slow_second.yaml
+#
+# 演示 flow 内逐消息定时(NDR/IDS 测试重点:多轮间隔 + 慢速分段):
+# - message.offset_time: 相对"握手完成后"(无握手则 = 流锚 anchor)的时长偏移,
+#   把该消息整组(各数据段 + 对端 ACK)锚定到 握手结束+offset;缺省则接续上一流内事件。
+# - segment.interval: 同消息各数据段之间的间隔,缺省 1ms;显式给出模拟慢速分段/RTT。
+#
+# 本例:第一轮 GET /a 正常接续;第二轮 GET /b 延迟到握手后 +10s,且切成 8 字节小段、
+# 段间隔 100ms(模拟慢速客户端);resp-b 在握手后 +15s。
+link_type: ethernet
+seed: 42
+
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: http-slow-second
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /a
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                Connection: keep-alive
+
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              headers:
+                Content-Length: auto
+                Connection: keep-alive
+              body: resp-a
+
+      - from: src
+        offset_time: "+10s"
+        segment: { mss: 8, interval: "+100ms" }
+        stack:
+          - http_request:
+              method: GET
+              url: /b
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                Connection: close
+
+      - from: dst
+        offset_time: "+15s"
+        segment: { mss: 1460, interval: "+1s" }
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              headers:
+                Content-Length: auto
+                Connection: close
+              body: resp-b

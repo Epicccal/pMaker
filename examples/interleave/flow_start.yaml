@@ -5,8 +5,8 @@
 #
 # - base_time: 全局基准时刻(绝对 ISO8601;缺省=确定性 2020 基准)。
 # - packet.offset_time / flow.offset_time: 相对 base_time 的时长偏移,
-#   只接受时长(如 +30ms / 10s / -1ms),绝对时刻直接解析失败(由 AbsTime / Offset
-#   类型结构性保证)。
+#   只接受非负时长(如 +30ms / 10s / 0s),负值与绝对时刻直接解析失败
+#   (由 AbsTime / Offset 类型结构性保证)。
 #
 # 声明序为 [late-syn(+30ms), flow quick(+0ms,+0ms/+1ms)];排序后写盘顺序为
 # [flow@0ms, flow-ack@1ms, late-syn@30ms]——显式时间让独立包与流按时间交织。

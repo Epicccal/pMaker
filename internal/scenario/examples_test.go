@@ -89,6 +89,47 @@ func TestHTTPKeepaliveLFIContent(t *testing.T) {
 	}
 }
 
+// TestHTTPSlowSecondContent 验证 slow_second 示例:两轮请求/响应内容齐全,
+// 且逐消息定时生效——GET /b 锚到流锚 +10s、resp-b 锚到 +15s(segment.interval 拉开段间隔)。
+func TestHTTPSlowSecondContent(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/http/slow_second.yaml")
+	for _, want := range [][]byte{
+		[]byte("GET /a HTTP/1.1"), // 第一轮未分段,完整请求行连续
+		[]byte("GET /b"),          // 第二轮被 segment.mss=8 切段,请求行跨段不连续,只验证首段前缀
+		[]byte("resp-a"),
+		[]byte("resp-b"),
+	} {
+		if !bytes.Contains(pcap, want) {
+			t.Fatalf("pcap 不含 %q", want)
+		}
+	}
+	// base_time=2024-01-01;message.offset_time 的零点是"握手完成后"(握手占 3×1ms),
+	// 故 GET /b(+10s) 首段在 base+3ms+10s,resp-b(+15s) 在 base+3ms+15s。
+	r, err := pcapgo.NewReader(bytes.NewReader(pcap))
+	if err != nil {
+		t.Fatalf("reader: %v", err)
+	}
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	wantOffsets := map[time.Duration]bool{
+		3*time.Millisecond + 10*time.Second: false, // GET /b 首段(握手后 +10s)
+		3*time.Millisecond + 15*time.Second: false, // resp-b(握手后 +15s)
+	}
+	for {
+		_, ci, err := r.ReadPacketData()
+		if err != nil {
+			break
+		}
+		if _, ok := wantOffsets[ci.Timestamp.Sub(base)]; ok {
+			wantOffsets[ci.Timestamp.Sub(base)] = true
+		}
+	}
+	for off, found := range wantOffsets {
+		if !found {
+			t.Errorf("未找到相对时刻 %v 的包(message.offset_time 未生效)", off)
+		}
+	}
+}
+
 // TestInterleaveFlowStart 验证显式时间 + 汇流排序:
 // 声明序为 [late-syn@30ms, flow@0ms/1ms],写盘应按时间升序为 flow、flow-ack、late-syn。
 func TestInterleaveFlowStart(t *testing.T) {
