@@ -1,0 +1,106 @@
+# examples/interleave/cross_flow_independence.yaml
+#
+# 演示"跨流时间独立":一条 flow 内部的 message.offset_time 插队消息,不会把后续无
+# offset 的 flow 拖到插队时刻之后(问题 #1:跨流劫持)。
+#
+# flow-A 内部第三条消息 GET /late 用 offset_time: +5s 插队(模拟一个延迟到达的请求)。
+# flow-B 没有 offset_time,按默认接续 flow-A。关键在于 flow-B 接的是 flow-A 的"正常
+# 结束点"(不含 +5s 延迟),而非被那条迟到请求拖到 5 秒之后。
+#
+# 时间线(base=2024-01-01T00:00:00Z,默认步长 1ms):
+#
+#   flow-A 握手:          base+0/1/2ms
+#   flow-A GET /a:        base+3ms(data) / base+4ms(ack)
+#   flow-A 200 OK:        base+5ms(data) / base+6ms(ack)
+#   flow-A GET /late:     base+5.003s(data) / base+5.004s(ack)   ← 插队到握手后 +5s
+#   flow-A 挥手:          base+5.005s 起 4 个包(接在最后实际发出的包之后)
+#
+#   flow-B 接续点 = flow-A 正常结束点 = base+13ms
+#     (握手3ms + 3 条消息各 2ms = 9ms, + 挥手 4ms;+5s 不计入)
+#   flow-B 握手:          base+13/14/15ms
+#   flow-B GET /b:        base+16ms(data) / base+17ms(ack)
+#   flow-B 200 OK:        base+18ms(data) / base+19ms(ack)
+#   flow-B 挥手:          base+20ms 起 4 个包
+#
+# 修复前(用末包时间接续):flow-B 会被拖到 base+5.009s 起——为 flow-A 内部一条迟到请求
+#   多等 5 秒。修复后(用 normalEnd 接续):flow-B 在 base+13ms 起,不被插队拖累。
+#
+# 副作用(独立语义的必然):flow-B 的包(base+13ms~)与 flow-A 的迟到请求/挥手(5s+)在时间
+#   上交错——两条独立流并发,flow-B 不等 flow-A 的迟到包。若需"严格顺序"(flow-B 必在
+#   flow-A 所有包之后),给 flow-B 显式 offset_time 错开到 flow-A 末包之后即可。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  # flow-A:正常两轮请求/响应 + 一条延迟到 +5s 的迟到请求(插队)。
+  - name: http-a
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /a
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                Connection: keep-alive
+
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              headers:
+                Content-Length: auto
+                Connection: keep-alive
+              body: resp-a
+
+      # 迟到请求:offset_time 把它钉到"握手完成后 +5s"。作为 flow-A 内部的插队消息,
+      # 它只影响自己,不推进 flow-A 的正常时序游标,也不把 flow-B 拖到 5s 之后。
+      - from: src
+        offset_time: "+5s"
+        stack:
+          - http_request:
+              method: GET
+              url: /late
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                Connection: close
+
+  # flow-B:无 offset_time,默认接续 flow-A 的"正常结束点"(base+13ms),而非被 flow-A
+  # 的 +5s 迟到请求拖到 5 秒之后。这就是跨流时间独立的体现。
+  - name: http-b
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49153, dport: 80, client_isn: 2000, server_isn: 6000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /b
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                Connection: keep-alive
+
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              headers:
+                Content-Length: auto
+                Connection: keep-alive
+              body: resp-b

@@ -56,14 +56,16 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 		} else {
 			anchor = cursor // 缺省:接续默认序列
 		}
-		expanded, err := flow.Expand(f, anchor)
+		expanded, normalEnd, err := flow.Expand(f, anchor)
 		if err != nil {
 			return nil, fmt.Errorf("flow[%d](%s): %w", fi, f.Name, err)
 		}
 		merged = append(merged, expanded...)
-		// 缺省(无 offset)的流推进默认游标到流末包之后,保持后续 standalone/flow 接续。
-		if f.OffsetTime == nil && len(expanded) > 0 {
-			cursor = expanded[len(expanded)-1].Time.Add(flow.DefaultStep)
+		// 缺省(无 offset)的流推进默认游标到"正常结束点"(不含 message.offset_time 插队扰动)。
+		// 用 normalEnd 而非末包时间,避免某条流内部的插队消息把下一条无 offset flow 拖到
+		// 插队时刻之后(跨流劫持)。无插队时 normalEnd == 末包接续点,行为不变。
+		if f.OffsetTime == nil {
+			cursor = normalEnd
 		}
 	}
 

@@ -172,6 +172,75 @@ func TestInterleaveFlowStart(t *testing.T) {
 	}
 }
 
+// TestInterleaveCrossFlowIndependence 验证跨流时间独立(问题 #1 修复):
+// flow-A 内部一条消息用 offset_time:+5s 插队,flow-B 无 offset 应接续 flow-A 的"正常结束点"
+// (base+13ms),而非被插队的 5s 拖到 base+5.009s。关键断言:flow-B 的 SYN 出现在 base+13ms,
+// 远早于 flow-A 的迟到请求(base+5.003s)——说明 flow-B 没被 flow-A 的插队消息跨流劫持。
+func TestInterleaveCrossFlowIndependence(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/interleave/cross_flow_independence.yaml")
+	r, err := pcapgo.NewReader(bytes.NewReader(pcap))
+	if err != nil {
+		t.Fatalf("pcap reader: %v", err)
+	}
+	type rec struct {
+		ts           time.Time
+		syn          bool
+		sport, dport uint16
+	}
+	var recs []rec
+	for {
+		raw, ci, err := r.ReadPacketData()
+		if err != nil {
+			break
+		}
+		p := gopacket.NewPacket(raw, r.LinkType(), gopacket.Default)
+		var sport, dport uint16
+		syn := false
+		if tcp := p.Layer(layers.LayerTypeTCP); tcp != nil {
+			tc := tcp.(*layers.TCP)
+			syn = tc.SYN
+			sport, dport = uint16(tc.SrcPort), uint16(tc.DstPort)
+		}
+		recs = append(recs, rec{ts: ci.Timestamp, syn: syn, sport: sport, dport: dport})
+	}
+	if len(recs) != 24 {
+		t.Fatalf("期望 24 个包,得到 %d", len(recs))
+	}
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// flow-A 的 SYN(sport=49152)在 base+0ms;flow-B 的 SYN(sport=49153)应在 base+13ms。
+	// 若被跨流劫持(未修复),flow-B 的 SYN 会出现在 base+5.009s。
+	var flowBSYN time.Time
+	for _, r := range recs {
+		if r.syn && r.sport == 49153 {
+			flowBSYN = r.ts
+			break
+		}
+	}
+	if flowBSYN.IsZero() {
+		t.Fatal("未找到 flow-B 的 SYN(sport=49153)")
+	}
+	if got := flowBSYN.Sub(base); got != 13*time.Millisecond {
+		t.Errorf("flow-B SYN 偏移=%v,期望 13ms(接 flow-A 正常结束点);若为 5s+ 则被跨流劫持", got)
+	}
+
+	// flow-A 的迟到请求(sport=49152, GET /late)在 base+5.003s,应在 flow-B 的 SYN 之后,
+	// 即两条流时间交错(flow-B 不等 flow-A 的迟到包)。
+	var lateReq time.Time
+	for _, r := range recs {
+		if r.sport == 49152 && r.ts.Sub(base) > 4*time.Second { // +5s 插队包
+			lateReq = r.ts
+			break
+		}
+	}
+	if lateReq.IsZero() {
+		t.Fatal("未找到 flow-A 的迟到请求(GET /late)")
+	}
+	if !lateReq.After(flowBSYN) {
+		t.Errorf("flow-A 迟到请求(%v) 应在 flow-B SYN(%v) 之后(时间交错)", lateReq, flowBSYN)
+	}
+}
+
 func TestICMPEchoContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/icmp/echo.yaml")
 	icmpPackets := readICMPPackets(t, pcap)
