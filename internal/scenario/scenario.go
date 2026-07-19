@@ -35,8 +35,10 @@ type Message struct {
 	Stack   []Layer  `yaml:"stack"`
 	Segment *Segment `yaml:"segment"`
 	// OffsetTime 是本消息起始相对"握手完成后"(无握手则 = 流锚 anchor)的时长偏移。
-	// 缺省=接续上一流内事件;显式给出时本消息整组(各数据段 + 对端 ACK)从 握手结束+offset 起排,
-	// 不推进默认游标。用于多轮请求间的间隔/乱序。握手固定 DefaultStep 不参与定时,
+	// 接续语义(见 internal/flow.Expand):无 offset 的消息接续「正常时序游标」——即上一条
+	// 无 offset 消息的整组末尾;带 offset 的消息把自己钉到 握手结束+offset,但**不推进**
+	// 该游标,故用 offset 制造的插队/乱序只影响它自己,不会污染后续无 offset 消息的接续点
+	// (避免"插队劫持接续")。用于多轮请求间的间隔/乱序。握手固定 DefaultStep 不参与定时,
 	// 故 offset 从握手结束算起,避免小 offset 与握手包撞时间。
 	OffsetTime *Offset `yaml:"offset_time"`
 }

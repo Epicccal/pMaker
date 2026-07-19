@@ -60,7 +60,9 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
 - **已实现 flow 逐消息定时**:`message.offset_time`(相对"握手完成后"的偏移,锚定单条消息整组)、
   `segment.interval`(同消息各数据段间隔,模拟慢速分段/RTT);`flow.Expand` 自管时间轴,
-  plan 退回汇流 + 稳定排序。乱序可由 `message.offset_time` 的大小关系自然表达。
+  plan 退回汇流 + 稳定排序。乱序可由 `message.offset_time` 的大小关系自然表达。**接续语义**:
+  无 offset 的消息接续「正常时序游标」(上一条无 offset 消息的末尾);带 offset 的插队消息只钉自己、
+  不推进该游标,故不会劫持后续无 offset 消息的接续点;挥手接在最后一个实际发出的包之后(传完才关)。
 - **已实现 PlannedPacket 时间编排**:`internal/plan.Plan` 把 standalone packets 与 flows 展开包汇流成
   `PlannedPacket{ Stack; Time }` 列表,按显式时间戳稳定排序后再交 `builder.BuildPlanned` 序列化。
   时间模型为「base_time + offset_time」:`base_time`(AbsTime,唯一绝对锚,仅 ISO8601)+ `packet.offset_time` /
@@ -202,7 +204,7 @@ segment: { mss: 8, order: shuffled, overlap: 4, retransmit: [1] }
 - 所有 `Offset` 字段(`packet/flow/message.offset_time`、`segment.interval`)**只接受非负时长**;负值在解析阶段即失败——负偏移通常意味着 `base_time` 选错了起点(应把 `base_time` 提前,而非用负 offset 够到零点之前)。
 - `packet.offset_time`:该包相对 `base_time` 的时长偏移(`Offset`,如 `+1.5s`/`+500ms`/`0s`);缺省则接续默认序列。
 - `flow.offset_time`:流起始相对 `base_time` 的时长偏移,即流锚 `anchor = base + flow.offset_time`;缺省则该流接续默认序列。
-- `message.offset_time`:单条消息起始相对**握手完成后**(无握手则 = 流锚 `anchor`)的时长偏移;把该消息整组(各数据段 + 对端 ACK)锚定到 `握手结束+offset`,缺省则接续上一流内事件。用于多轮请求间隔 / 乱序。握手固定 `DefaultStep` 不参与定时,故 offset 从握手结束算起,避免小 offset 与握手包撞时间。
+- `message.offset_time`:单条消息起始相对**握手完成后**(无握手则 = 流锚 `anchor`)的时长偏移;把该消息整组(各数据段 + 对端 ACK)锚定到 `握手结束+offset`。**接续语义**:无 offset 的消息接续「正常时序游标」(上一条无 offset 消息的末尾);带 offset 的插队消息只钉自己、**不推进该游标**,故不会劫持后续无 offset 消息的接续点。用于多轮请求间隔 / 乱序。握手固定 `DefaultStep` 不参与定时,故 offset 从握手结束算起,避免小 offset 与握手包撞时间。
 - `segment.interval`:同一消息各数据段之间的时间间隔(`Offset`,如 `+10ms`);缺省 1ms,显式给出模拟慢速分段 / RTT。只作用于数据段;对端 ACK 用 `DefaultStep`(伴生控制包,不被数据段节奏传染)。
 
 **默认时间策略(保持 golden 不变)**:未显式定时的包从 `base_time` 起每 1ms 一个,接续默认序列;

@@ -424,6 +424,49 @@ func TestPlanSegmentInterval(t *testing.T) {
 	}
 }
 
+// TestPlanMessageOffsetNoHijack: 带 offset 的插队消息 B 不应污染后续无 offset 消息 C 的接续。
+// A(src,慢速 2 段 interval=100ms)占 0/100ms、ack@101ms;B(dst,offset=+50ms)插在 A 两段之间;
+// C(src,无 offset)应接续「正常时序」A 的末尾(102ms),而非被 B 劫持到 52ms。
+// 修复前 C 落在 52ms(跑到 A.seg2@100ms 之前);修复后 C 落在 102ms(A 发完之后)。
+func TestPlanMessageOffsetNoHijack(t *testing.T) {
+	s := &scenario.Scenario{
+		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
+		Flows: []scenario.FlowSpec{{
+			Name:  "f",
+			Stack: noneStack(),
+			Messages: []scenario.Message{
+				{From: "src", Segment: &scenario.Segment{MSS: 8, Interval: mustOffset(t, "+100ms")},
+					Stack: []scenario.Layer{ph("0x" + hex.EncodeToString(make([]byte, 16)))}}, // 16B -> 8/8 两段
+				{From: "dst", OffsetTime: mustOffset(t, "+50ms"),
+					Stack: []scenario.Layer{ph("0xbb")}},
+				{From: "src",
+					Stack: []scenario.Layer{ph("0xcc")}},
+			},
+		}},
+	}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(planned) != 7 { // A:2段+ack=3, B:data+ack=2, C:data+ack=2
+		t.Fatalf("期望 7 个包,得到 %d", len(planned))
+	}
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	// 写盘序(按时间):A.seg1@0, B.data@50, B.ack@51, A.seg2@100, A.ack@101, C.data@102, C.ack@103。
+	want := []time.Time{
+		base, base.Add(50 * time.Millisecond), base.Add(51 * time.Millisecond),
+		base.Add(100 * time.Millisecond), base.Add(101 * time.Millisecond),
+		base.Add(102 * time.Millisecond), base.Add(103 * time.Millisecond),
+	}
+	if !equalTimes(times(planned), want) {
+		t.Fatalf("插队不劫持时间=%v,期望 %v", times(planned), want)
+	}
+	// 关键断言:C 的两个包(102/103ms)必须排在 A.seg2(100ms)之后,即 C 接 A 而非被 B 拽走。
+	if !planned[5].Time.After(planned[3].Time) {
+		t.Errorf("C.data(%v) 应在 A.seg2(%v) 之后,说明 C 被 B 劫持了", planned[5].Time, planned[3].Time)
+	}
+}
+
 // TestPlanMessageOffsetReorder: 两条消息不同 offset,声明序 A(50ms) 在 B(10ms) 前,
 // 但 B 时间更早;稳定排序后 B 的包应排在 A 之前(乱序由排序自然实现)。
 func TestPlanMessageOffsetReorder(t *testing.T) {

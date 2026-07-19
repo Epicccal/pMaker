@@ -54,6 +54,11 @@ const DefaultStep = time.Millisecond
 // offset_time 锚定或接续——其零点是"握手完成后"(无握手则 = anchor),段间按 segment.interval 间隔。
 // 未显式定时时每包间隔 DefaultStep,与历史行为逐字节等价。
 //
+// 接续语义:无 offset 的消息接续「正常时序游标」msgCursor(上一条无 offset 消息的末尾);
+// 带 offset 的消息把自己钉到 msgAnchor+offset,但**不推进 msgCursor**——用 offset 制造的
+// 插队/乱序只影响它自己,不污染后续无 offset 消息的接续点(避免"插队劫持接续")。挥手接在
+// 最后一个实际发出的包之后(lastEnd),保证数据传完再关。详见消息循环内注释。
+//
 // 当前 flow.stack 支持 eth/ipv4/tcp/tcp_session;VLAN/GRE 等会话封装后续扩展。
 func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, error) {
 	c, err := parseFlowStack(f.Stack)
@@ -77,15 +82,26 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, er
 	// DefaultStep 不参与定时,数据通信的偏移从握手结束算起,避免小 offset 与握手包撞时间。
 	msgAnchor := cursor
 
+	// msgCursor 是"无 offset 消息"的接续游标:每条无 offset 消息从它起排,排完后推进到
+	// 该消息整组末尾。带 offset 的消息只把自己钉到 msgAnchor+offset,不推进 msgCursor——
+	// 这样用 offset 制造的插队/乱序不会污染后续无 offset 消息的接续点。真实 TCP 里一条
+	// 字节流的发送节奏由本端已发数据决定,显式插队不该拖走本端下一条消息的发送时刻。
+	msgCursor := msgAnchor
+	// lastEnd 记录所有消息实际末尾的最大值,挥手从这里起:无论中间是否有 offset 插队,
+	// 挥手都接在最后一个实际发出的包之后,保证"传完才关",不被插队消息拉偏。
+	lastEnd := msgAnchor
+
 	// 应用层消息:按 segment.mss 切段发送,对端按 per-message 回一个 ACK
 	for _, m := range f.Messages {
 		b, err := messagePayload(m)
 		if err != nil {
 			return nil, err
 		}
-		// 显式 offset_time:把本消息整组锚定到 msgAnchor+offset(握手完成后;无握手则=流锚)。
+		// 本消息起始:有 offset 钉到 msgAnchor+offset(插队,不碰 msgCursor);
+		// 无 offset 接续 msgCursor(正常时序)。
+		start := msgCursor
 		if m.OffsetTime != nil {
-			cursor = msgAnchor.Add(m.OffsetTime.Duration())
+			start = msgAnchor.Add(m.OffsetTime.Duration())
 		}
 		// 段间间隔:缺省 DefaultStep(与历史等价),显式 interval 覆盖。
 		// interval 只作用于数据段(规避节奏);对端 ACK 是伴生控制包,用 DefaultStep,
@@ -96,19 +112,30 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, er
 		}
 		from := sideOf(m.From)
 		summaryLayers := scenario.SummaryLayerNames(m.Stack)
+		t := start
 		var lastSeg time.Time
 		for _, seg := range split(b, segMSS(m)) {
-			out = appendAt(out, c.emit(from, []string{"PSH", "ACK"}, seg, summaryLayers), cursor)
-			lastSeg = cursor
-			cursor = cursor.Add(interval)
+			out = appendAt(out, c.emit(from, []string{"PSH", "ACK"}, seg, summaryLayers), t)
+			lastSeg = t
+			t = t.Add(interval)
 		}
 		// 对端 ACK 紧跟最后一段一个 DefaultStep(简化模型,非真实 delayed ACK)。
-		cursor = lastSeg.Add(DefaultStep)
-		out = appendAt(out, c.emit(from.peer(), []string{"ACK"}, nil, nil), cursor)
-		cursor = cursor.Add(DefaultStep)
+		t = lastSeg.Add(DefaultStep)
+		out = appendAt(out, c.emit(from.peer(), []string{"ACK"}, nil, nil), t)
+		end := t.Add(DefaultStep) // 本消息整组末尾(ACK 之后 +1ms,即下一条接续点)
+		// 无 offset 消息推进接续游标;带 offset 的插队消息不推进——插队只影响自己,
+		// 不污染后续无 offset 消息的接续。
+		if m.OffsetTime == nil {
+			msgCursor = end
+		}
+		if end.After(lastEnd) {
+			lastEnd = end
+		}
 	}
 
-	// 关闭:默认四次挥手;rst 表示对端(dst)单包中断连接。
+	// 关闭:默认四次挥手;rst 表示对端(dst)单包中断连接。挥手接 lastEnd(最后一个实际
+	// 发出的包之后),保证数据传完再关连接。
+	cursor = lastEnd
 	switch c.session.close {
 	case "", "fin":
 		out = appendAt(out, c.emit(sideSrc, []string{"FIN", "ACK"}, nil, nil), cursor)
