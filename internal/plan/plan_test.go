@@ -495,3 +495,47 @@ func TestPlanMessageOffsetReorder(t *testing.T) {
 		t.Fatalf("乱序排序时间=%v,期望 %v", times(planned), want)
 	}
 }
+
+// TestPlanMessageOffsetNoCrossFlowHijack: 一条 flow 内部的 message.offset_time 插队不应
+// 污染下一条无 offset flow 的接续点(问题 #1:跨流劫持)。f1 的消息用 +100s 插队,作为游离包
+// 留在 base+100s;f2 无 offset 应接续 f1 的"正常结束点"(base+2ms),而非被拖到 100s 之后。
+//
+// f1(open=none/close=none, msg offset=+100s):data@100s、ack@100s+1ms;正常结束点 normalEnd=base+2ms。
+// f2(无 offset):接续 normalEnd → data@2ms、ack@3ms。写盘序(按时间):f2 在前,f1 插队包在后。
+func TestPlanMessageOffsetNoCrossFlowHijack(t *testing.T) {
+	mkMsg := func(offset *scenario.Offset) scenario.Message {
+		return scenario.Message{
+			From:       "src",
+			OffsetTime: offset,
+			Stack:      []scenario.Layer{ph("0xab")},
+		}
+	}
+	s := &scenario.Scenario{
+		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
+		Flows: []scenario.FlowSpec{
+			{Name: "f1", Stack: noneStack(), Messages: []scenario.Message{mkMsg(mustOffset(t, "+100s"))}},
+			{Name: "f2", Stack: noneStack(), Messages: []scenario.Message{mkMsg(nil)}},
+		},
+	}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(planned) != 4 { // f1: data+ack=2, f2: data+ack=2
+		t.Fatalf("期望 4 个包,得到 %d", len(planned))
+	}
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	// f2 接续 f1 正常结束点(base+2ms):f2.data@2ms、f2.ack@3ms;f1 插队包在 100s。
+	want := []time.Time{
+		base.Add(2 * time.Millisecond), base.Add(3 * time.Millisecond),
+		base.Add(100 * time.Second), base.Add(100*time.Second + time.Millisecond),
+	}
+	if !equalTimes(times(planned), want) {
+		t.Fatalf("跨流不劫持时间=%v,期望 %v", times(planned), want)
+	}
+	// 关键断言:f2 的首包(base+2ms)必须早于 f1 的插队包(base+100s),
+	// 说明 f2 接续的是 f1 的正常结束点,而非被插队消息拖走。
+	if !planned[0].Time.Before(planned[2].Time) {
+		t.Errorf("f2 首包(%v) 应早于 f1 插队包(%v),说明 f2 被 f1 的插队消息跨流劫持了", planned[0].Time, planned[2].Time)
+	}
+}

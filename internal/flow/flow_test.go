@@ -133,7 +133,7 @@ func TestFlowSeqSegmentation(t *testing.T) {
 			Segment: &scenario.Segment{MSS: 8},
 		}},
 	}
-	pkts, err := flow.Expand(f, time.Time{})
+	pkts, _, err := flow.Expand(f, time.Time{})
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestFlowCloseRST(t *testing.T) {
 			}},
 		}},
 	}
-	pkts, err := flow.Expand(f, time.Time{})
+	pkts, _, err := flow.Expand(f, time.Time{})
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	for _, f := range s.Flows {
-		fp, err := flow.Expand(f, time.Time{})
+		fp, _, err := flow.Expand(f, time.Time{})
 		if err != nil {
 			t.Fatalf("expand: %v", err)
 		}

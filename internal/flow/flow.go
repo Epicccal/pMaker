@@ -60,10 +60,16 @@ const DefaultStep = time.Millisecond
 // 最后一个实际发出的包之后(lastEnd),保证数据传完再关。详见消息循环内注释。
 //
 // 当前 flow.stack 支持 eth/ipv4/tcp/tcp_session;VLAN/GRE 等会话封装后续扩展。
-func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, error) {
+//
+// 第二个返回值 normalEnd 是"按正常时序 flow 完整结束后的接续点",供 plan 推进默认游标——
+// 避免某条 flow 内部的 message.offset_time 插队消息把下一条无 offset flow 拖到插队时刻之后
+// (跨流劫持)。normalEnd 由 normalCursor 推导:每条消息(不论有无 offset)都按其正常持续时长
+// 占位,但 offset 把消息"钉到别处"的时间扰动(如 +100s)不计入——即插队消息贡献正常占位,
+// 不贡献延迟。无 offset 时 normalEnd == 末包接续点,行为逐字节不变。
+func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, time.Time, error) {
 	c, err := parseFlowStack(f.Stack)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	var out []scenario.PlannedPacket
 	cursor := anchor // 流内时间游标:每个包占一个槽,默认递进 DefaultStep
@@ -87,6 +93,12 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, er
 	// 这样用 offset 制造的插队/乱序不会污染后续无 offset 消息的接续点。真实 TCP 里一条
 	// 字节流的发送节奏由本端已发数据决定,显式插队不该拖走本端下一条消息的发送时刻。
 	msgCursor := msgAnchor
+	// normalCursor 是"按正常时序(每条消息都占位)flow 结束的接续点",供跨 flow 接续。
+	// 与 msgCursor 的区别:msgCursor 只被无 offset 消息推进(flow 内部下一条消息接续用,
+	// 插队不占槽——避免插队劫持本端下一条消息);normalCursor 被所有消息推进(跨 flow 接续用,
+	// 插队占正常槽——下一条 flow 接本 flow 完整正常长度之后)。两者都不含 offset 的"时间扰动"
+	// (offset 只改发包时刻,不改正常持续时长)。
+	normalCursor := msgAnchor
 	// lastEnd 记录所有消息实际末尾的最大值,挥手从这里起:无论中间是否有 offset 插队,
 	// 挥手都接在最后一个实际发出的包之后,保证"传完才关",不被插队消息拉偏。
 	lastEnd := msgAnchor
@@ -95,7 +107,7 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, er
 	for _, m := range f.Messages {
 		b, err := messagePayload(m)
 		if err != nil {
-			return nil, err
+			return nil, time.Time{}, err
 		}
 		// 本消息起始:有 offset 钉到 msgAnchor+offset(插队,不碰 msgCursor);
 		// 无 offset 接续 msgCursor(正常时序)。
@@ -128,6 +140,9 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, er
 		if m.OffsetTime == nil {
 			msgCursor = end
 		}
+		// normalCursor 始终推进:按本消息正常持续时长(end-start,与 offset 无关)累加,
+		// 供跨 flow 接续。offset 只把消息钉到别处,不改变它在该 flow 正常时序里的占位。
+		normalCursor = normalCursor.Add(end.Sub(start))
 		if end.After(lastEnd) {
 			lastEnd = end
 		}
@@ -135,6 +150,12 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, er
 
 	// 关闭:默认四次挥手;rst 表示对端(dst)单包中断连接。挥手接 lastEnd(最后一个实际
 	// 发出的包之后),保证数据传完再关连接。
+	//
+	// normalEnd 是"按正常时序 flow 完整结束后的接续点",供 plan 推进默认游标。
+	// = normalCursor(所有消息按正常占位累加的接续点末尾) + 挥手占用的步长。offset 的时间扰动
+	// 不计入 normalCursor,故 normalEnd 不含插队延迟——下一条 flow 接续在"正常结束"之后,
+	// 插队包作为游离包(在 msgAnchor+offset)独立存在。
+	normalEnd := normalCursor
 	cursor = lastEnd
 	switch c.session.close {
 	case "", "fin":
@@ -146,11 +167,13 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, er
 		cursor = cursor.Add(DefaultStep)
 		out = appendAt(out, c.emit(sideSrc, []string{"ACK"}, nil, nil), cursor)
 		cursor = cursor.Add(DefaultStep)
+		normalEnd = normalEnd.Add(4 * DefaultStep)
 	case "rst":
 		out = appendAt(out, c.emit(sideDst, []string{"RST", "ACK"}, nil, nil), cursor)
 		cursor = cursor.Add(DefaultStep)
+		normalEnd = normalEnd.Add(DefaultStep)
 	}
-	return out, nil
+	return out, normalEnd, nil
 }
 
 // appendAt 把一个 stack 包包装成带时间戳的 PlannedPacket 追加到 out。
