@@ -1,0 +1,14 @@
+base_time: "2026-01-01T00:00:00Z"
+
+flows:
+  - name: only-syn
+    offset_time: "+1s"
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
+      - tcp:  { sport: 4444, dport: 80, client_isn: 100, server_isn: 200 }
+      - tcp_session: { open: none, close: none }
+    messages:
+      - from: dst
+        stack:
+          - payload_hex: "0xdeadbeef"

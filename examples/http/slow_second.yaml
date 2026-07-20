@@ -1,14 +1,13 @@
 # examples/http/slow_second.yaml
 #
 # 演示 flow 内逐消息定时(NDR/IDS 测试重点:多轮间隔 + 慢速分段):
-# - message.offset_time: 相对"握手完成后"(无握手则 = 流锚 anchor)的时长偏移,
-#   把该消息整组(各数据段 + 对端 ACK)锚定到 握手结束+offset;缺省则接续「正常时序游标」
-#   (上一条无 offset 消息的末尾)。带 offset 的插队消息不推进该游标,故不会劫持后续
-#   无 offset 消息的接续点。
+# - message.offset_time: 相对**上一条消息末尾**的时长偏移(第一条消息相对"握手完成后"),
+#   把该消息整组(各数据段 + 对端 ACK)锚定到 上一条末尾+offset;缺省则紧接上一条末尾。
+#   链式 delta,offset>=0 天然单调,无需夹紧(慢响应拖慢下一条请求 = 正常非流水线 HTTP)。
 # - segment.interval: 同消息各数据段之间的间隔,缺省 1ms;显式给出模拟慢速分段/RTT。
 #
-# 本例:第一轮 GET /a 正常接续;第二轮 GET /b 延迟到握手后 +10s,且切成 8 字节小段、
-# 段间隔 100ms(模拟慢速客户端);resp-b 在握手后 +15s。
+# 本例:第一轮 GET /a 紧接握手;第二轮 GET /b 距 200 OK 末尾 +10s,且切成 8 字节小段、
+# 段间隔 100ms(模拟慢速客户端);resp-b 距 GET /b 末尾 +15s。
 link_type: ethernet
 seed: 42
 

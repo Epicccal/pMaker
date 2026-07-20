@@ -90,7 +90,8 @@ func TestHTTPKeepaliveLFIContent(t *testing.T) {
 }
 
 // TestHTTPSlowSecondContent 验证 slow_second 示例:两轮请求/响应内容齐全,
-// 且逐消息定时生效——GET /b 锚到流锚 +10s、resp-b 锚到 +15s(segment.interval 拉开段间隔)。
+// 且逐消息定时生效——message.offset_time 相对上一条消息末尾:GET /b 距 200 OK 末尾 +10s、
+// resp-b 距 GET /b 末尾 +15s(segment.interval 拉开段间隔)。
 func TestHTTPSlowSecondContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/http/slow_second.yaml")
 	for _, want := range [][]byte{
@@ -103,16 +104,17 @@ func TestHTTPSlowSecondContent(t *testing.T) {
 			t.Fatalf("pcap 不含 %q", want)
 		}
 	}
-	// base_time=2024-01-01;message.offset_time 的零点是"握手完成后"(握手占 3×1ms),
-	// 故 GET /b(+10s) 首段在 base+3ms+10s,resp-b(+15s) 在 base+3ms+15s。
+	// base_time=2024-01-01;握手占 3ms,GET /a 末尾 5ms,200 OK 末尾 7ms。
+	// GET /b(+10s) 相对 200 OK 末尾(7ms)→ 首段 base+7ms+10s=10.007s;
+	// GET /b 8 段(各 100ms)+ack,末尾 10.709s;resp-b(+15s) 相对 GET /b 末尾 → base+25.709s。
 	r, err := pcapgo.NewReader(bytes.NewReader(pcap))
 	if err != nil {
 		t.Fatalf("reader: %v", err)
 	}
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	wantOffsets := map[time.Duration]bool{
-		3*time.Millisecond + 10*time.Second: false, // GET /b 首段(握手后 +10s)
-		3*time.Millisecond + 15*time.Second: false, // resp-b(握手后 +15s)
+		7*time.Millisecond + 10*time.Second:                    false, // GET /b 首段(200 OK 末尾 7ms + 10s)
+		10*time.Second + 709*time.Millisecond + 15*time.Second: false, // resp-b(GET /b 末尾 10.709s + 15s = 25.709s)
 	}
 	for {
 		_, ci, err := r.ReadPacketData()
@@ -172,10 +174,10 @@ func TestInterleaveFlowStart(t *testing.T) {
 	}
 }
 
-// TestInterleaveCrossFlowIndependence 验证跨流时间独立(问题 #1 修复):
-// flow-A 内部一条消息用 offset_time:+5s 插队,flow-B 无 offset 应接续 flow-A 的"正常结束点"
-// (base+13ms),而非被插队的 5s 拖到 base+5.009s。关键断言:flow-B 的 SYN 出现在 base+13ms,
-// 远早于 flow-A 的迟到请求(base+5.003s)——说明 flow-B 没被 flow-A 的插队消息跨流劫持。
+// TestInterleaveCrossFlowIndependence 验证跨流时间独立(新模型:跨流独立 + 流内顺序):
+// flow-A 内部一条消息用 offset_time:+5s 钉到自己,flow-B 无 offset 在 base 起步并发——
+// 不被 flow-A 的 5s 迟到请求拖到其后。关键断言:flow-B 的 SYN 出现在 base+0ms(与 flow-A
+// 握手并发),远早于 flow-A 的迟到请求(base+5.003s)——两条独立流并行,flow-B 不等 flow-A。
 func TestInterleaveCrossFlowIndependence(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/interleave/cross_flow_independence.yaml")
 	r, err := pcapgo.NewReader(bytes.NewReader(pcap))
@@ -208,8 +210,8 @@ func TestInterleaveCrossFlowIndependence(t *testing.T) {
 	}
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// flow-A 的 SYN(sport=49152)在 base+0ms;flow-B 的 SYN(sport=49153)应在 base+13ms。
-	// 若被跨流劫持(未修复),flow-B 的 SYN 会出现在 base+5.009s。
+	// flow-A 的 SYN(sport=49152)在 base+0ms;flow-B 的 SYN(sport=49153)也在 base+0ms
+	// (无 offset,在 base 并发起步,不接续 flow-A)。
 	var flowBSYN time.Time
 	for _, r := range recs {
 		if r.syn && r.sport == 49153 {
@@ -220,8 +222,8 @@ func TestInterleaveCrossFlowIndependence(t *testing.T) {
 	if flowBSYN.IsZero() {
 		t.Fatal("未找到 flow-B 的 SYN(sport=49153)")
 	}
-	if got := flowBSYN.Sub(base); got != 13*time.Millisecond {
-		t.Errorf("flow-B SYN 偏移=%v,期望 13ms(接 flow-A 正常结束点);若为 5s+ 则被跨流劫持", got)
+	if got := flowBSYN.Sub(base); got != 0 {
+		t.Errorf("flow-B SYN 偏移=%v,期望 0(无 offset 在 base 并发起步);若为 5s+ 则被跨流劫持", got)
 	}
 
 	// flow-A 的迟到请求(sport=49152, GET /late)在 base+5.003s,应在 flow-B 的 SYN 之后,

@@ -1,14 +1,20 @@
 // Package plan 把 scenario 模型编排成带显式时间戳的 PlannedPacket 列表。
 //
 // standalone packets 与 flows 展开后的包在此汇流,按 Time 稳定排序,再交给 builder
-// 序列化、writer 落盘。时间模型统一为「base_time + offset_time」:
-//   - base_time 是唯一的绝对锚(ISO8601,缺省=确定性 2020 基准);
-//   - packet.offset_time / flow.offset_time 是相对 base_time 的时长偏移,
-//     显式给出时按 base+offset 放置、不推进默认游标;
-//   - 未显式定时的包从 base_time 起每 1ms 一个,接续默认序列——与旧 builder 内建
-//     时间分配等价,保证现有 golden pcap 逐字节不变。
+// 序列化、writer 落盘。时间锚为 base_time(ISO8601,缺省=确定性 2020 基准),各 offset_time
+// 的参照点因字段而异(见下)。
 //
-// 全程不使用 time.Now(),输出可复现。
+// 时间语义为「相对上一包 + 跨流独立」:
+//   - standalone packets:offset_time 相对**上一包**(第一包相对 base);无 offset 则接续默认游标
+//     (+1ms)。即每包 = 上一包 + offset(或 +1ms),SYN 扫描等"按间隔发包"场景由此表达。
+//   - flows 互相独立:flow.offset_time 相对 **base_time**(无 offset 则 = base),**不夹紧、不读
+//     packet 游标、不推进它**——无 offset 的多条 flow 在 base 并发(模拟浏览器多连接并行);
+//     想顺序就显式给递增 offset。
+//   - flow 内部由 flow.Expand 自管时间轴:message.offset_time 相对**上一条消息**(第一条相对
+//     握手完成后),链式 delta、天然单调(见 internal/flow)。
+//
+// 跨流并发后包时间会交织,故用稳定排序保证同 Time 保持声明/合并顺序,输出可复现。
+// 全程不使用 time.Now()。
 package plan
 
 import (
@@ -34,42 +40,38 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 
 	// 预估容量:standalone packets + 每条 flow 的粗略包数(握手3 + 消息段 + 挥手4 ≈ 8 起步)。
 	merged := make([]scenario.PlannedPacket, 0, len(s.Packets)+len(s.Flows)*8)
-	cursor := base // 默认序列游标:未显式定时的包从此递进 flow.DefaultStep
+	// cursor 是无 offset 包的接续游标(默认间隔 DefaultStep);prevT 是上一包的实际时刻。
+	// 二者都只服务 packets;flows 互不依赖、不消费它们。
+	cursor := base
+	prevT := base // 第一包的"上一包"= base
 
-	// ① standalone packets(声明序)。
+	// ① standalone packets(声明序):offset_time 相对上一包——有 offset 则 t=prevT+offset,
+	// 无 offset 则接续 cursor(默认 +1ms);之后 cursor/prevT 始终推进。offset>=0 故天然单调。
 	for _, p := range s.Packets {
-		var t time.Time
+		t := cursor
 		if p.OffsetTime != nil {
-			t = base.Add(p.OffsetTime.Duration()) // 显式:base+offset,不推进默认游标
-		} else {
-			t = cursor
-			cursor = cursor.Add(flow.DefaultStep)
+			t = prevT.Add(p.OffsetTime.Duration()) // 相对上一包(第一包相对 base)
 		}
 		merged = append(merged, scenario.PlannedPacket{Packet: p, Time: t})
+		cursor = t.Add(flow.DefaultStep) // 无 offset 的下一包接在本包之后 +1ms
+		prevT = t                        // 下一包的"上一包"= 本包
 	}
 
-	// ② flows(声明序):flow.Expand 自管时间轴,产出带时间戳的 PlannedPacket;plan 只汇流。
+	// ② flows(声明序):每条 flow 独立——anchor=base+flow.offset_time(无 offset 则 = base),
+	// 不夹紧、不读 cursor、不推进 cursor。无 offset 的多条 flow 在 base 并发。
 	for fi, f := range s.Flows {
-		var anchor time.Time
+		anchor := base
 		if f.OffsetTime != nil {
-			anchor = base.Add(f.OffsetTime.Duration()) // 显式:流锚 = base+offset,不推进默认游标
-		} else {
-			anchor = cursor // 缺省:接续默认序列
+			anchor = base.Add(f.OffsetTime.Duration())
 		}
-		expanded, normalEnd, err := flow.Expand(f, anchor)
+		expanded, _, err := flow.Expand(f, anchor)
 		if err != nil {
 			return nil, fmt.Errorf("flow[%d](%s): %w", fi, f.Name, err)
 		}
 		merged = append(merged, expanded...)
-		// 缺省(无 offset)的流推进默认游标到"正常结束点"(不含 message.offset_time 插队扰动)。
-		// 用 normalEnd 而非末包时间,避免某条流内部的插队消息把下一条无 offset flow 拖到
-		// 插队时刻之后(跨流劫持)。无插队时 normalEnd == 末包接续点,行为不变。
-		if f.OffsetTime == nil {
-			cursor = normalEnd
-		}
 	}
 
-	// ③ 稳定排序:同 Time 保持声明/合并顺序,保证确定性。
+	// ③ 稳定排序:跨流并发后时间交织,同 Time 保持声明/合并顺序,保证确定性。
 	sort.SliceStable(merged, func(i, j int) bool {
 		return merged[i].Time.Before(merged[j].Time)
 	})

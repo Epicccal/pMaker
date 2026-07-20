@@ -24,7 +24,7 @@ type Scenario struct {
 // flow.stack 中的 src 表示 TCP SYN 发起方,dst 表示 SYN 接收方。
 type FlowSpec struct {
 	Name       string    `yaml:"name"`
-	OffsetTime *Offset   `yaml:"offset_time"` // 流起始 = base_time + offset_time;缺省=接续默认序列
+	OffsetTime *Offset   `yaml:"offset_time"` // 流锚 = base_time + offset_time;缺省=base(跨流独立、并发,不接续别的 flow)
 	Stack      []Layer   `yaml:"stack"`
 	Messages   []Message `yaml:"messages"`
 }
@@ -34,12 +34,11 @@ type Message struct {
 	From    string   `yaml:"from"` // src | dst
 	Stack   []Layer  `yaml:"stack"`
 	Segment *Segment `yaml:"segment"`
-	// OffsetTime 是本消息起始相对"握手完成后"(无握手则 = 流锚 anchor)的时长偏移。
-	// 接续语义(见 internal/flow.Expand):无 offset 的消息接续「正常时序游标」——即上一条
-	// 无 offset 消息的整组末尾;带 offset 的消息把自己钉到 握手结束+offset,但**不推进**
-	// 该游标,故用 offset 制造的插队/乱序只影响它自己,不会污染后续无 offset 消息的接续点
-	// (避免"插队劫持接续")。用于多轮请求间的间隔/乱序。握手固定 DefaultStep 不参与定时,
-	// 故 offset 从握手结束算起,避免小 offset 与握手包撞时间。
+	// OffsetTime 是本消息起始相对**上一条消息末尾**的时长偏移(第一条消息相对"握手完成后",
+	// 无握手则 = 流锚 anchor)。接续语义(见 internal/flow.Expand):无 offset 紧接上一条末尾;
+	// 带 offset = 上一条末尾 + offset。链式 delta,offset>=0 天然单调,无需夹紧——慢响应拖慢
+	// 下一条请求(正常非流水线 HTTP)。用于多轮请求间的间隔。握手固定 DefaultStep 不参与定时,
+	// 故第一条消息的 offset 从握手结束算起,避免小 offset 与握手包撞时间。
 	OffsetTime *Offset `yaml:"offset_time"`
 }
 
@@ -55,7 +54,7 @@ type Segment struct {
 // Packet 是一个数据包:name 可选 + 由外到内的有序 layer 栈。
 type Packet struct {
 	Name          string   `yaml:"name"`
-	OffsetTime    *Offset  `yaml:"offset_time"` // 该包时刻 = base_time + offset_time;缺省=接续默认序列
+	OffsetTime    *Offset  `yaml:"offset_time"` // 该包时刻 = 上一包 + offset(第一包 = base_time+offset);缺省=接续默认游标(+1ms)
 	Stack         []Layer  `yaml:"stack"`
 	SummaryLayers []string `yaml:"-"` // flow 展开后保留应用层协议语义,仅用于 CLI 摘要
 }
