@@ -63,7 +63,7 @@ func TestPlanDefaultPacketsTiming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	base := plan.DefaultBaseTime
+	base := plan.DefaultBaseTime()
 	want := []time.Time{base, base.Add(time.Millisecond), base.Add(2 * time.Millisecond)}
 	got := times(planned)
 	if !equalTimes(got, want) {
@@ -81,7 +81,7 @@ func TestPlanDefaultFlowTiming(t *testing.T) {
 	if len(planned) != 2 {
 		t.Fatalf("期望 2 个包,得到 %d", len(planned))
 	}
-	base := plan.DefaultBaseTime
+	base := plan.DefaultBaseTime()
 	want := []time.Time{base, base.Add(time.Millisecond)}
 	if !equalTimes(times(planned), want) {
 		t.Fatalf("flow 默认时间=%v,期望 %v", times(planned), want)
@@ -190,7 +190,7 @@ func TestPlanStableSortForEqualTimes(t *testing.T) {
 	if len(planned) != 4 {
 		t.Fatalf("期望 4 个包,得到 %d", len(planned))
 	}
-	base := plan.DefaultBaseTime
+	base := plan.DefaultBaseTime()
 	// 两 flow 并发:base 各 1 个、base+1ms 各 1 个。
 	wantTimes := []time.Time{base, base, base.Add(time.Millisecond), base.Add(time.Millisecond)}
 	if !equalTimes(times(planned), wantTimes) {

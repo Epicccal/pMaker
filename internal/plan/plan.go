@@ -28,12 +28,16 @@ import (
 
 // DefaultBaseTime 是未指定 base_time 时的确定性基准(不使用 time.Now)。
 // 与历史 builder 内建基准保持一致,以保证 golden 不变。
-var DefaultBaseTime = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+//
+// 以函数暴露:time.Date 不能做 const,而可变 var 是可被全局赋值篡改的共享状态,
+// 会破坏"同一 scenario+seed 逐字节相同"的确定性。函数每次返回同一时刻,不可被
+// 外部赋值。
+func DefaultBaseTime() time.Time { return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC) }
 
 // Plan 把场景里的 packets 与 flows 汇流成按时间排序的 PlannedPacket 列表。
 func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 	// base_time 是唯一绝对锚;AbsTime 类型已保证它只能是 ISO8601 绝对时刻。
-	base := DefaultBaseTime
+	base := DefaultBaseTime()
 	if s.BaseTime != nil {
 		base = s.BaseTime.Time()
 	}
