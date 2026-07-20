@@ -88,7 +88,9 @@ func TestPlanDefaultFlowTiming(t *testing.T) {
 	}
 }
 
-// TestPlanExplicitPacketOffset: 两个不同 offset 的 packet 能分别落到 base+offset 的位置。
+// TestPlanExplicitPacketOffset: packet.offset_time 相对上一包(第一包相对 base)。
+// late(+10s) 先声明 → @base+10s(第一包,相对 base);early(+5ms) 后声明 → late+5ms = base+10.005s
+// (相对上一包 late,不再是相对 base 的 5ms)。
 func TestPlanExplicitPacketOffset(t *testing.T) {
 	base := mustAbs(t, "2024-01-01T00:00:00Z")
 	s := &scenario.Scenario{
@@ -103,13 +105,13 @@ func TestPlanExplicitPacketOffset(t *testing.T) {
 		t.Fatalf("Plan: %v", err)
 	}
 	origin := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	// 声明序 late(+10s)、early(+5ms);排序后 early(+5ms) 在前。
-	want := []time.Time{origin.Add(5 * time.Millisecond), origin.Add(10 * time.Second)}
+	// late@10s(第一包,相对 base);early = late + 5ms = 10.005s(相对上一包)。
+	want := []time.Time{origin.Add(10 * time.Second), origin.Add(10*time.Second + 5*time.Millisecond)}
 	if !equalTimes(times(planned), want) {
 		t.Fatalf("显式时间=%v,期望 %v", times(planned), want)
 	}
-	if planned[0].Name != "early" || planned[1].Name != "late" {
-		t.Fatalf("排序后 name 顺序=%v,期望 [early late]", names(planned))
+	if planned[0].Name != "late" || planned[1].Name != "early" {
+		t.Fatalf("排序后 name 顺序=%v,期望 [late early]", names(planned))
 	}
 }
 
@@ -130,7 +132,8 @@ func TestPlanFlowOffsetAnchor(t *testing.T) {
 	}
 }
 
-// TestPlanMergeAndSort: packets + flow 显式时间交织,按 Time 排序后顺序与声明序不同。
+// TestPlanMergeAndSort: packet 与 flow 跨流独立——packet @+30ms,flow @+0ms 在 base 起步
+// (不被 packet 拖到 30ms 之后)。按 Time 排序后:flow@base、flow-ack@1ms、late@30ms。
 func TestPlanMergeAndSort(t *testing.T) {
 	s := &scenario.Scenario{
 		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
@@ -158,24 +161,49 @@ func TestPlanMergeAndSort(t *testing.T) {
 	}
 }
 
-// TestPlanStableSortForEqualTimes: 同 Time 的包保持声明/合并顺序(确定性)。
+// TestPlanStableSortForEqualTimes: 无 offset 多 flow 在 base 并发——同 Time 的包保持声明/合并
+// 顺序(稳定排序保证确定性)。f1、f2 均无 offset,各自 data@base / ack@base+1ms;排序后
+// base 处 f1.data 先于 f2.data(声明序),base+1ms 处 f1.ack 先于 f2.ack。
 func TestPlanStableSortForEqualTimes(t *testing.T) {
+	mkFlow := func(name string, sport uint16) scenario.FlowSpec {
+		return scenario.FlowSpec{
+			Name: name,
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: sport, DPort: 80, ClientISN: 100, ServerISN: 200}},
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "none", Close: "none"}},
+			},
+			Messages: []scenario.Message{{
+				From:  "src",
+				Stack: []scenario.Layer{{Type: "payload_hex", Fields: scenario.PayloadHex("0xab")}},
+			}},
+		}
+	}
 	s := &scenario.Scenario{
-		Packets: []scenario.Packet{
-			udpPacket("first", mustOffset(t, "+5ms")),
-			udpPacket("second", mustOffset(t, "+5ms")),
-			udpPacket("third", mustOffset(t, "+5ms")),
-		},
+		Flows: []scenario.FlowSpec{mkFlow("f1", 1111), mkFlow("f2", 2222)},
 	}
 	planned, err := plan.Plan(s)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	got := names(planned)
-	want := []string{"first", "second", "third"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("同 Time 顺序=%v,期望 %v(稳定性被破坏)", got, want)
+	if len(planned) != 4 {
+		t.Fatalf("期望 4 个包,得到 %d", len(planned))
+	}
+	base := plan.DefaultBaseTime
+	// 两 flow 并发:base 各 1 个、base+1ms 各 1 个。
+	wantTimes := []time.Time{base, base, base.Add(time.Millisecond), base.Add(time.Millisecond)}
+	if !equalTimes(times(planned), wantTimes) {
+		t.Fatalf("并发同时间=%v,期望 %v", times(planned), wantTimes)
+	}
+	// 同 Time 保持声明序:f1(端口 1111)在前、f2(端口 2222)在后。data 方向 sport=自身端口;
+	// 对端 ACK 反转方向,故看 dport=自身端口。(sport,dport) 唯一标识每条 flow 的包。
+	type pair struct{ sport, dport uint16 }
+	wantPorts := []pair{{1111, 80}, {2222, 80}, {80, 1111}, {80, 2222}}
+	for i, w := range wantPorts {
+		sp, dp := tcpPorts(planned[i])
+		if sp != w.sport || dp != w.dport {
+			t.Fatalf("包%d (sport,dport)=(%d,%d),期望 (%d,%d)(同 Time 稳定性被破坏)", i, sp, dp, w.sport, w.dport)
 		}
 	}
 }
@@ -247,6 +275,17 @@ func names(planned []scenario.PlannedPacket) []string {
 		out[i] = pp.Name
 	}
 	return out
+}
+
+// tcpPorts 从 PlannedPacket 的层栈中提取 TCP 源/目的端口(用于区分并发 flow 的同 Time 包;
+// 对端 ACK 反转方向,故需同时看 sport/dport)。
+func tcpPorts(pp scenario.PlannedPacket) (sport, dport uint16) {
+	for _, l := range pp.Stack {
+		if tcp, ok := l.Fields.(*scenario.TCPFields); ok {
+			return tcp.SPort, tcp.DPort
+		}
+	}
+	return 0, 0
 }
 
 func equalTimes(a, b []time.Time) bool {
@@ -424,10 +463,10 @@ func TestPlanSegmentInterval(t *testing.T) {
 	}
 }
 
-// TestPlanMessageOffsetNoHijack: 带 offset 的插队消息 B 不应污染后续无 offset 消息 C 的接续。
-// A(src,慢速 2 段 interval=100ms)占 0/100ms、ack@101ms;B(dst,offset=+50ms)插在 A 两段之间;
-// C(src,无 offset)应接续「正常时序」A 的末尾(102ms),而非被 B 劫持到 52ms。
-// 修复前 C 落在 52ms(跑到 A.seg2@100ms 之前);修复后 C 落在 102ms(A 发完之后)。
+// TestPlanMessageOffsetNoHijack: 流内链式——带 offset 的消息相对上一条末尾,后续无 offset 消息
+// 紧接其后(正常非流水线 HTTP:慢响应拖慢下一条请求)。
+// A(src,无 offset,快)@0/1ms,末尾 2ms;B(dst,offset=+50ms)相对 A 末尾 → 2ms+50ms=52ms,
+// @52/53ms,末尾 54ms;C(src,无 offset)紧接 B → @54/55ms。
 func TestPlanMessageOffsetNoHijack(t *testing.T) {
 	s := &scenario.Scenario{
 		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
@@ -435,12 +474,9 @@ func TestPlanMessageOffsetNoHijack(t *testing.T) {
 			Name:  "f",
 			Stack: noneStack(),
 			Messages: []scenario.Message{
-				{From: "src", Segment: &scenario.Segment{MSS: 8, Interval: mustOffset(t, "+100ms")},
-					Stack: []scenario.Layer{ph("0x" + hex.EncodeToString(make([]byte, 16)))}}, // 16B -> 8/8 两段
-				{From: "dst", OffsetTime: mustOffset(t, "+50ms"),
-					Stack: []scenario.Layer{ph("0xbb")}},
-				{From: "src",
-					Stack: []scenario.Layer{ph("0xcc")}},
+				{From: "src", Stack: []scenario.Layer{ph("0xaa")}},
+				{From: "dst", OffsetTime: mustOffset(t, "+50ms"), Stack: []scenario.Layer{ph("0xbb")}},
+				{From: "src", Stack: []scenario.Layer{ph("0xcc")}},
 			},
 		}},
 	}
@@ -448,28 +484,29 @@ func TestPlanMessageOffsetNoHijack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	if len(planned) != 7 { // A:2段+ack=3, B:data+ack=2, C:data+ack=2
-		t.Fatalf("期望 7 个包,得到 %d", len(planned))
+	if len(planned) != 6 { // A:data+ack=2, B:data+ack=2, C:data+ack=2
+		t.Fatalf("期望 6 个包,得到 %d", len(planned))
 	}
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	// 写盘序(按时间):A.seg1@0, B.data@50, B.ack@51, A.seg2@100, A.ack@101, C.data@102, C.ack@103。
+	// A.data@0, A.ack@1;B = A 末尾(2ms)+50ms = 52ms,B.data@52, B.ack@53;C 紧接 B 末尾(54ms)@54/55。
 	want := []time.Time{
-		base, base.Add(50 * time.Millisecond), base.Add(51 * time.Millisecond),
-		base.Add(100 * time.Millisecond), base.Add(101 * time.Millisecond),
-		base.Add(102 * time.Millisecond), base.Add(103 * time.Millisecond),
+		base, base.Add(time.Millisecond),
+		base.Add(52 * time.Millisecond), base.Add(53 * time.Millisecond),
+		base.Add(54 * time.Millisecond), base.Add(55 * time.Millisecond),
 	}
 	if !equalTimes(times(planned), want) {
-		t.Fatalf("插队不劫持时间=%v,期望 %v", times(planned), want)
+		t.Fatalf("链式接续时间=%v,期望 %v", times(planned), want)
 	}
-	// 关键断言:C 的两个包(102/103ms)必须排在 A.seg2(100ms)之后,即 C 接 A 而非被 B 拽走。
-	if !planned[5].Time.After(planned[3].Time) {
-		t.Errorf("C.data(%v) 应在 A.seg2(%v) 之后,说明 C 被 B 劫持了", planned[5].Time, planned[3].Time)
+	// 关键断言:C 的两个包(54/55ms)排在 B(52/53ms)之后——B 的 offset 相对 A 末尾,C 紧接 B 而非接 A。
+	if !planned[4].Time.After(planned[2].Time) {
+		t.Errorf("C.data(%v) 应在 B.data(%v) 之后", planned[4].Time, planned[2].Time)
 	}
 }
 
-// TestPlanMessageOffsetReorder: 两条消息不同 offset,声明序 A(50ms) 在 B(10ms) 前,
-// 但 B 时间更早;稳定排序后 B 的包应排在 A 之前(乱序由排序自然实现)。
-func TestPlanMessageOffsetReorder(t *testing.T) {
+// TestPlanMessageOffsetChained: message.offset_time 相对上一条消息末尾(链式 delta,非单调也无需夹紧)。
+// A(+50ms) 第一条,相对 msgAnchor(base)→ @50/51ms,末尾 52ms;B(+10ms) 相对 A 末尾 → 52ms+10ms=62ms,
+// @62/63ms。即便 B 的 offset(10ms)小于 A 的(50ms),也只表示"B 距 A 末尾 10ms",不夹紧、不乱序。
+func TestPlanMessageOffsetChained(t *testing.T) {
 	s := &scenario.Scenario{
 		BaseTime: mustAbs(t, "2024-01-01T00:00:00Z"),
 		Flows: []scenario.FlowSpec{{
@@ -489,19 +526,18 @@ func TestPlanMessageOffsetReorder(t *testing.T) {
 		t.Fatalf("期望 4 个包,得到 %d", len(planned))
 	}
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	// 排序后:B.data@10ms, B.ack@11ms, A.data@50ms, A.ack@51ms。
-	want := []time.Time{base.Add(10 * time.Millisecond), base.Add(11 * time.Millisecond), base.Add(50 * time.Millisecond), base.Add(51 * time.Millisecond)}
+	// A@50/51ms(第一条,相对 base);B = A 末尾(52ms)+10ms = 62ms,@62/63ms。
+	want := []time.Time{base.Add(50 * time.Millisecond), base.Add(51 * time.Millisecond), base.Add(62 * time.Millisecond), base.Add(63 * time.Millisecond)}
 	if !equalTimes(times(planned), want) {
-		t.Fatalf("乱序排序时间=%v,期望 %v", times(planned), want)
+		t.Fatalf("链式 offset 时间=%v,期望 %v", times(planned), want)
 	}
 }
 
-// TestPlanMessageOffsetNoCrossFlowHijack: 一条 flow 内部的 message.offset_time 插队不应
-// 污染下一条无 offset flow 的接续点(问题 #1:跨流劫持)。f1 的消息用 +100s 插队,作为游离包
-// 留在 base+100s;f2 无 offset 应接续 f1 的"正常结束点"(base+2ms),而非被拖到 100s 之后。
+// TestPlanMessageOffsetNoCrossFlowHijack: 跨流独立——f1 的消息用 +100s 钉到自己,f2 无 offset
+// 在 base 起步并发,不被 f1 拖到 100s 之后(问题 #1:跨流劫持在新模型下天然不成立)。
 //
-// f1(open=none/close=none, msg offset=+100s):data@100s、ack@100s+1ms;正常结束点 normalEnd=base+2ms。
-// f2(无 offset):接续 normalEnd → data@2ms、ack@3ms。写盘序(按时间):f2 在前,f1 插队包在后。
+// f1(open=none/close=none, msg offset=+100s):data@100s、ack@100s+1ms。
+// f2(无 offset):独立在 base 起步 data@0、ack@1ms。写盘序(按时间):f2 在前,f1 在后。
 func TestPlanMessageOffsetNoCrossFlowHijack(t *testing.T) {
 	mkMsg := func(offset *scenario.Offset) scenario.Message {
 		return scenario.Message{
@@ -525,16 +561,15 @@ func TestPlanMessageOffsetNoCrossFlowHijack(t *testing.T) {
 		t.Fatalf("期望 4 个包,得到 %d", len(planned))
 	}
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	// f2 接续 f1 正常结束点(base+2ms):f2.data@2ms、f2.ack@3ms;f1 插队包在 100s。
+	// f2 在 base 并发起步:data@0、ack@1ms;f1 的 +100s 插队包在 100s。
 	want := []time.Time{
-		base.Add(2 * time.Millisecond), base.Add(3 * time.Millisecond),
+		base, base.Add(time.Millisecond),
 		base.Add(100 * time.Second), base.Add(100*time.Second + time.Millisecond),
 	}
 	if !equalTimes(times(planned), want) {
-		t.Fatalf("跨流不劫持时间=%v,期望 %v", times(planned), want)
+		t.Fatalf("跨流独立时间=%v,期望 %v", times(planned), want)
 	}
-	// 关键断言:f2 的首包(base+2ms)必须早于 f1 的插队包(base+100s),
-	// 说明 f2 接续的是 f1 的正常结束点,而非被插队消息拖走。
+	// 关键断言:f2 的首包(base)早于 f1 的插队包(base+100s)——f2 不被 f1 的 +100s 拖走。
 	if !planned[0].Time.Before(planned[2].Time) {
 		t.Errorf("f2 首包(%v) 应早于 f1 插队包(%v),说明 f2 被 f1 的插队消息跨流劫持了", planned[0].Time, planned[2].Time)
 	}

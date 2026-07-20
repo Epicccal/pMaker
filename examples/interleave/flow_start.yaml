@@ -8,8 +8,10 @@
 #   只接受非负时长(如 +30ms / 10s / 0s),负值与绝对时刻直接解析失败
 #   (由 AbsTime / Offset 类型结构性保证)。
 #
-# 声明序为 [late-syn(+30ms), flow quick(+0ms,+0ms/+1ms)];排序后写盘顺序为
-# [flow@0ms, flow-ack@1ms, late-syn@30ms]——显式时间让独立包与流按时间交织。
+# 跨流独立:flow quick(+0ms)的流锚 = base+0ms,与 late-syn(+30ms)互相独立——flow 不接续
+# packet 游标,故落在 base 而非被 late-syn 拖到 30ms 之后。声明序为 [late-syn(+30ms),
+# flow quick(+0ms,+0ms/+1ms)];排序后写盘顺序为 [flow@0ms, flow-ack@1ms, late-syn@30ms]
+# ——显式时间让独立包与流按时间交织。
 base_time: "2024-01-01T00:00:00Z"
 
 packets:
