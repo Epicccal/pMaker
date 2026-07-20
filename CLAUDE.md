@@ -149,7 +149,8 @@ out.pcap
 ### 多轮请求 = 更长的脚本(无需特殊逻辑)
 
 状态在整个脚本里**持续存在**,第 N 轮的 seq/ack 从上一轮继续累加。HTTP keep-alive / 流水线
-不是特例,只是 `messages` 列表更长。展开器负责在前插握手、后插挥手、按 `ack_policy` 插对端 ACK。
+不是特例,只是 `messages` 列表更长。展开器负责在前插握手、后插挥手;每条消息在最后一段后
++1ms 插一个对端 ACK(当前硬编码,未做 delayed-ACK / 可配策略)。
 
 ### schema(canonical)
 
@@ -184,11 +185,12 @@ flows:
 每条消息可挂 `segment:` 策略,把一条应用消息切成多个 TCP 段(seq 按字节偏移铺开):
 
 ```yaml
-segment: { mss: 8, order: shuffled, overlap: 4, retransmit: [1] }
-#           小段    乱序(seed 派生)  重叠段     重传第 1 段
+segment: { mss: 8, interval: "+10ms" }
+#           小段    段间间隔(缺省 1ms;显式给出模拟慢速分段/RTT)
 ```
 
-乱序 / 重叠 / 重传只是"发包顺序与 seq 的组合",状态机本身不变。检测设备的**重组能力**是主战场。
+`mss` 为切段大小,`interval` 为各数据段间时间间隔。`order`(乱序)/ `overlap`(重叠)/
+`retransmit`(重传)**尚未实现**——写入会在解析阶段被拒(未知字段校验)。检测设备的**重组能力**是主战场。
 
 ### 时间编排与汇流(已实现)
 
