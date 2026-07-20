@@ -1,0 +1,26 @@
+# 演示 standalone packet 的 offset_time「相对上一包」:每包 = 上一包 + offset(第一包相对 base)。
+# syn1(+1s)→base+1s;syn2(+2s)→syn1+2s=base+3s;syn3(+5s)→syn2+5s=base+8s(间隔 1s/2s/5s)。
+base_time: "2024-01-01T00:00:00Z"
+
+packets:
+  - name: syn1
+    offset_time: "+1s"
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
+      - tcp:  { sport: 1234, dport: 8888, flags: [SYN], seq: 1 }
+      - payload: { payload: "abcd" }
+
+  - name: syn2
+    offset_time: "+2s"
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
+      - tcp:  { sport: 2234, dport: 8888, flags: [SYN], seq: 2 }
+
+  - name: syn3
+    offset_time: "+5s"
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
+      - tcp:  { sport: 3234, dport: 8888, flags: [SYN], seq: 3 }
