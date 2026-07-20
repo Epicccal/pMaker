@@ -1,9 +1,11 @@
 package scenario
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -330,41 +332,92 @@ func (l *Layer) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// decodeKnownFields 把一个 layer 的 MappingNode 解码进 out,并在解码前校验未知字段。
+//
+// yaml.v3 的 KnownFields 只对顶层 decoder 生效,而各 layer 经 Layer.UnmarshalYAML
+// 内的 node.Decode 解码时会新建 decoder 且不继承 knownFields。本函数负责 layer 子树
+// 的未知字段校验:反射读 out 的 yaml tag 收集合法字段名,对照 node 的键报未知字段。
+// 标量/null/序列等非 MappingNode 直接交给 Decode。
+func decodeKnownFields(val *yaml.Node, typ string, out interface{}) error {
+	if val.Kind != yaml.MappingNode {
+		return val.Decode(out)
+	}
+	allowed := yamlFieldNames(out)
+	var unknown []string
+	line := val.Line
+	for i := 0; i+1 < len(val.Content); i += 2 {
+		k := val.Content[i]
+		if !allowed[k.Value] {
+			unknown = append(unknown, k.Value)
+			line = k.Line
+		}
+	}
+	if len(unknown) > 0 {
+		return fmt.Errorf("层 %q 不支持字段 %q(第 %d 行)", typ, strings.Join(unknown, ", "), line)
+	}
+	return val.Decode(out)
+}
+
+// yamlFieldNames 反射收集结构体(或其指针)的 YAML 合法字段名:优先取 yaml tag 名
+// (逗号前部分),无 tag 则用 Go 字段名。覆盖各 *Fields 结构体的直接字段。
+func yamlFieldNames(out interface{}) map[string]bool {
+	t := reflect.TypeOf(out)
+	if t == nil {
+		return nil
+	}
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	allowed := map[string]bool{}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		tag := f.Tag.Get("yaml")
+		name := strings.Split(tag, ",")[0]
+		if name == "" {
+			name = f.Name
+		}
+		if name != "-" {
+			allowed[name] = true
+		}
+	}
+	return allowed
+}
+
 func decodeFields(typ string, val *yaml.Node) (any, error) {
 	switch typ {
 	case "eth":
 		var f EthFields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "vlan":
 		var f VLANFields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "ipv4":
 		var f IPv4Fields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "ipv6":
 		var f IPv6Fields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "gre":
 		var f GREFields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "tcp":
 		var f TCPFields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "tcp_session":
 		var f TCPSessionFields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "udp":
 		var f UDPFields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "icmp":
 		var f ICMPFields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "icmpv6", "icmp6":
 		var f ICMPv6Fields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "payload":
 		var f PayloadFields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "payload_hex":
 		var s string
 		if err := val.Decode(&s); err != nil {
@@ -373,13 +426,13 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 		return PayloadHex(s), nil
 	case "dns":
 		var f DNSFields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "http_request":
 		var f HTTPReqFields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	case "http_response":
 		var f HTTPRespFields
-		return &f, val.Decode(&f)
+		return &f, decodeKnownFields(val, typ, &f)
 	default:
 		return nil, fmt.Errorf("未知层类型 %q", typ)
 	}
@@ -392,7 +445,15 @@ func Load(path string) (*Scenario, error) {
 		return nil, err
 	}
 	var s Scenario
-	if err := yaml.Unmarshal(data, &s); err != nil {
+	// 未知字段一律报错而非静默忽略(带行号+字段名)。两层保障:
+	//   - 顶层 decoder 开 KnownFields(true):覆盖 Scenario 直系字段树(packets/flows/
+	//     messages/segment 等)。
+	//   - decodeKnownFields:各 layer 经 Layer.UnmarshalYAML 内的 node.Decode 解码,
+	//     yaml.v3 会新建 decoder 且不继承 knownFields,故 layer 内子字段由它在解码前
+	//     反射校验补上(见 decodeKnownFields)。
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&s); err != nil {
 		return nil, fmt.Errorf("解析 %s: %w", path, err)
 	}
 	if s.LinkType == "" {
