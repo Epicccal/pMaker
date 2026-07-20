@@ -3,6 +3,7 @@ package scenario
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSummarizePackets(t *testing.T) {
@@ -137,5 +138,60 @@ func TestValidateSegmentIntervalNeedsMSS(t *testing.T) {
 	}}}}
 	if err := Validate(s3); err != nil {
 		t.Fatalf("Validate() 只 mss 不应报错,得到 %v", err)
+	}
+}
+
+// TestSummarizePlannedWithTime: SummarizePlanned 保留 PlannedPacket.Time,
+// FormatPacketSummary 在序号与源 IP 之间输出 ISO8601 时间列;反向包仍归一化为 <-。
+func TestSummarizePlannedWithTime(t *testing.T) {
+	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	planned := []PlannedPacket{
+		{Packet: Packet{Stack: []Layer{
+			{Type: "eth"},
+			{Type: "ipv4", Fields: &IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
+			{Type: "tcp"},
+		}}, Time: base},
+		{Packet: Packet{Stack: []Layer{
+			{Type: "eth"},
+			{Type: "ipv4", Fields: &IPv4Fields{Src: "10.0.0.80", Dst: "10.0.0.10"}},
+			{Type: "tcp"},
+		}}, Time: base.Add(time.Millisecond)},
+	}
+
+	got := SummarizePlanned(planned)
+	want := []string{
+		"[1] 2020-01-01T00:00:00.000000Z 10.0.0.10 -> 10.0.0.80  eth/ipv4/tcp",
+		"[2] 2020-01-01T00:00:00.001000Z 10.0.0.10 <- 10.0.0.80  eth/ipv4/tcp",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("摘要数量=%d,期望 %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if line := FormatPacketSummary(i+1, got[i]); line != w {
+			t.Errorf("第%d行=%q,期望 %q", i+1, line, w)
+		}
+	}
+}
+
+// TestSummarizePacketsNoTime: SummarizePackets 路径无时间信息,
+// FormatPacketSummary 保持不含时间列的原格式(向后兼容)。
+func TestSummarizePacketsNoTime(t *testing.T) {
+	pkts := []Packet{{
+		Stack: []Layer{
+			{Type: "eth"},
+			{Type: "ipv4", Fields: &IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
+			{Type: "tcp"},
+		},
+	}}
+	got := SummarizePackets(pkts)
+	if len(got) != 1 {
+		t.Fatalf("摘要数量=%d,期望 1", len(got))
+	}
+	if got[0].HasTime {
+		t.Errorf("SummarizePackets 不应带时间信息,得到 HasTime=true")
+	}
+	want := "[1] 10.0.0.10 -> 10.0.0.80  eth/ipv4/tcp"
+	if line := FormatPacketSummary(1, got[0]); line != want {
+		t.Errorf("格式=%q,期望 %q", line, want)
 	}
 }
