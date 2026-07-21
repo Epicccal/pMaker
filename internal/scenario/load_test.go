@@ -170,3 +170,139 @@ func TestValidateAcceptsMessageID(t *testing.T) {
           - payload: { payload: "cccc" }
 `)
 }
+
+// startAfterScenario 用模板 + 给定的两条 flow YAML 段拼一个场景,供 start_after 校验测试。
+func startAfterScenario(flowsYAML string) string {
+	return "link_type: ethernet\nseed: 42\nflows:\n" + flowsYAML
+}
+
+// twoFlowYAML 生成两条 flow:第一条(name=control)的 dst 消息带 message_id: pasv;
+// 第二条(name=data)的 start_after 由参数给出。用于各种 start_after 引用校验。
+func twoFlowYAML(startAfter string) string {
+	return "  - name: control\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        stack:
+          - payload: { payload: "PASV" }
+      - from: dst
+        message_id: pasv
+        stack:
+          - payload: { payload: "227" }
+  - name: data
+    start_after: "` + startAfter + `"
+    stack:
+` + flowStackYAML + `    messages:
+      - from: src
+        stack:
+          - payload: { payload: "data" }
+`
+}
+
+// loadValidateErr 走 Load + Validate,返回 error(nil 表示通过)。
+func loadValidateErr(t *testing.T, name, body string) error {
+	t.Helper()
+	path := writeScenario(t, name, body)
+	s, err := scenario.Load(path)
+	if err != nil {
+		t.Fatalf("Load %s 失败(应可解析): %v", name, err)
+	}
+	return scenario.Validate(s)
+}
+
+func TestStartAfterAcceptsValid(t *testing.T) {
+	if err := loadValidateErr(t, "ok.yaml", startAfterScenario(twoFlowYAML("control.pasv"))); err != nil {
+		t.Fatalf("合法 start_after 应通过 Validate: %v", err)
+	}
+}
+
+func TestStartAfterRejectsMalformed(t *testing.T) {
+	err := loadValidateErr(t, "bad.yaml", startAfterScenario(twoFlowYAML("noformat")))
+	if err == nil {
+		t.Fatal("期望 Validate 拒绝格式错误的 start_after,实际通过")
+	}
+	for _, want := range []string{"start_after", "格式"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("错误应包含 %q,得到: %v", want, err)
+		}
+	}
+}
+
+func TestStartAfterRejectsUnknownFlow(t *testing.T) {
+	err := loadValidateErr(t, "noflow.yaml", startAfterScenario(twoFlowYAML("ghost.pasv")))
+	if err == nil {
+		t.Fatal("期望 Validate 拒绝引用未知 flow 的 start_after,实际通过")
+	}
+	for _, want := range []string{"未知 flow", "ghost"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("错误应包含 %q,得到: %v", want, err)
+		}
+	}
+}
+
+func TestStartAfterRejectsUnknownMessage(t *testing.T) {
+	err := loadValidateErr(t, "nomsg.yaml", startAfterScenario(twoFlowYAML("control.ghost")))
+	if err == nil {
+		t.Fatal("期望 Validate 拒绝引用未知 message_id 的 start_after,实际通过")
+	}
+	for _, want := range []string{"未知 message_id", "ghost"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("错误应包含 %q,得到: %v", want, err)
+		}
+	}
+}
+
+func TestStartAfterRejectsSelfReference(t *testing.T) {
+	// flow a 既被自引,又含 message_id pasv(故引用存在),但构成自环。
+	body := "link_type: ethernet\nseed: 42\nflows:\n  - name: a\n    start_after: \"a.pasv\"\n    stack:\n" + flowStackYAML + `    messages:
+      - from: dst
+        message_id: pasv
+        stack:
+          - payload: { payload: "x" }
+`
+	err := loadValidateErr(t, "self.yaml", body)
+	if err == nil {
+		t.Fatal("期望 Validate 拒绝 start_after 自引,实际通过")
+	}
+	if !strings.Contains(err.Error(), "循环依赖") {
+		t.Errorf("错误应提及循环依赖,得到: %v", err)
+	}
+}
+
+func TestStartAfterRejectsCycle(t *testing.T) {
+	// a.pasv 存在,b.pasv 存在;a 引 b.pasv,b 引 a.pasv → 2-环。
+	flowA := "  - name: a\n    start_after: \"b.pasv\"\n    stack:\n" + flowStackYAML + `    messages:
+      - from: dst
+        message_id: pasv
+        stack:
+          - payload: { payload: "x" }
+`
+	flowB := "  - name: b\n    start_after: \"a.pasv\"\n    stack:\n" + flowStackYAML + `    messages:
+      - from: dst
+        message_id: pasv
+        stack:
+          - payload: { payload: "y" }
+`
+	err := loadValidateErr(t, "cycle.yaml", "link_type: ethernet\nseed: 42\nflows:\n"+flowA+flowB)
+	if err == nil {
+		t.Fatal("期望 Validate 拒绝 start_after 2-环,实际通过")
+	}
+	if !strings.Contains(err.Error(), "循环依赖") {
+		t.Errorf("错误应提及循环依赖,得到: %v", err)
+	}
+}
+
+func TestValidateRejectsDuplicateFlowName(t *testing.T) {
+	flowA := "  - name: dup\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        stack:
+          - payload: { payload: "a" }
+`
+	err := loadValidateErr(t, "dupname.yaml", "link_type: ethernet\nseed: 42\nflows:\n"+flowA+flowA)
+	if err == nil {
+		t.Fatal("期望 Validate 拒绝重复 flow 名,实际通过")
+	}
+	for _, want := range []string{"dup", "不唯一"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("错误应包含 %q,得到: %v", want, err)
+		}
+	}
+}

@@ -216,7 +216,8 @@ segment: { mss: 8, interval: "+10ms" }
 - `base_time`:场景里唯一的绝对锚(`AbsTime`,仅 ISO8601,UTC);缺省=确定性 2020 基准。它是各时间链的起点(flow 锚、第一包/第一条消息的"上一项")。写 `+1s` 这类偏移在解析阶段即失败。
 - 所有 `Offset` 字段(`packet/flow/message.offset_time`、`segment.interval`)**只接受非负时长**;负值在解析阶段即失败——负偏移通常意味着 `base_time` 选错了起点(应把 `base_time` 提前,而非用负 offset 够到零点之前)。
 - `packet.offset_time`:该包相对**上一包**的时长偏移(`Offset`,如 `+1.5s`/`+500ms`/`0s`);该包时刻 = `上一包时刻 + offset`(第一包 = `base + offset`)。缺省则接续默认游标(+1ms)。
-- `flow.offset_time`:流起始相对 `base_time` 的时长偏移,即流锚 `anchor = base + flow.offset_time`;缺省则 `anchor=base`(跨流独立、并发,不接续别的 flow / 不读 packet 游标)。
+- `flow.offset_time`:流起始相对流锚基准的时长偏移,即 `anchor = 流锚基准 + flow.offset_time`。**流锚基准语境相关**:无 `start_after` 时为 `base_time`(缺省则 `anchor=base`,跨流独立、并发,不接续别的 flow / 不读 packet 游标);置 `start_after` 时为被引消息的整组完成时刻(msgCursor)。缺省 `offset_time`=0(紧接 `base` 或被引 msgCursor)。
+- `flow.start_after`:可选,形如 `"flow名.message_id"`,置则本 flow 锚基准 = 被引消息整组完成时刻(msgCursor = 对端 ACK + DefaultStep),`anchor = msgCursor + flow.offset_time`(缺省 0 紧接)。用于"一个 flow 在另一个 flow 某消息完成后开始"(如 FTP 控制通道触发数据通道)。这是**显式跨流依赖**(opt-in),默认独立性不变;plan 两阶段拓扑展开(无 `start_after` 的先展开登记 msgid→时刻,有 `start_after` 的多遍解析),循环依赖在校验阶段(`validateStartAfter` 三色 DFS)拦截。被引 message 须在该 flow 内有唯一 `message_id`;被引 flow 须具名且唯一。被引 flow 可声明在后(拓扑序,非声明序)。
 - `message.offset_time`:单条消息起始相对**上一条消息末尾**的时长偏移(第一条相对握手完成后 = 流锚 `anchor`);把该消息整组(各数据段 + 对端 ACK)锚定到 `上一条末尾 + offset`。链式 delta、天然单调,用于多轮请求间隔(慢响应拖慢下一条)。握手固定 `DefaultStep` 不参与定时,故第一条消息的 offset 从握手结束算起,避免小 offset 与握手包撞时间。
 - `segment.interval`:同一消息各数据段之间的时间间隔(`Offset`,如 `+10ms`);缺省 1ms,显式给出模拟慢速分段 / RTT。只作用于数据段;对端 ACK 用 `DefaultStep`(伴生控制包,不被数据段节奏传染)。
 

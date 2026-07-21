@@ -25,8 +25,12 @@ type Scenario struct {
 // FlowSpec 是一条有状态会话;展开器把它降解成一串 Packet(见 internal/flow)。
 // flow.stack 中的 src 表示 TCP SYN 发起方,dst 表示 SYN 接收方。
 type FlowSpec struct {
-	Name       string    `yaml:"name"`
-	OffsetTime *Offset   `yaml:"offset_time"` // 流锚 = base_time + offset_time;缺省=base(跨流独立、并发,不接续别的 flow)
+	Name       string  `yaml:"name"`
+	OffsetTime *Offset `yaml:"offset_time"` // 流锚 = base_time + offset_time;缺省=base(跨流独立、并发,不接续别的 flow)
+	// StartAfter 可选,形如 "flow名.message_id";置则本 flow 的锚 = 被引消息整组完成时刻
+	// (msgCursor)+ offset_time(缺省 0 紧接),实现"一个 flow 在另一个 flow 某消息完成后开始"
+	// (如 FTP 控制通道触发数据通道)。见 internal/plan 的两阶段拓扑编排。
+	StartAfter string    `yaml:"start_after"`
 	Stack      []Layer   `yaml:"stack"`
 	Messages   []Message `yaml:"messages"`
 }
@@ -491,6 +495,14 @@ func Validate(s *Scenario) error {
 			return fmt.Errorf("flow[%d](%s): %w", i, f.Name, err)
 		}
 	}
+	// flow 名唯一(start_after 按名引用 flow,重名会歧义)与 start_after 引用/循环校验
+	// 需要所有 flow 的 message_id 集合,故放在 per-flow 循环之后。
+	if err := validateFlowNames(s.Flows); err != nil {
+		return err
+	}
+	if err := validateStartAfter(s.Flows); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -577,6 +589,139 @@ func validateFlow(f FlowSpec) error {
 		}
 	}
 	return nil
+}
+
+// SplitStartAfter 把 "flow名.message_id" 拆成 (flow, msg)。按第一个 '.' 切分,
+// 故 message_id 本身可含 '.'。格式非法(flow 名或 msg 名为空)返回 ok=false。
+// Validate 与 plan 共用此解析。
+func SplitStartAfter(s string) (flow, msg string, ok bool) {
+	i := strings.Index(s, ".")
+	if i <= 0 || i == len(s)-1 { // '.' 不存在 / 在首 / 在尾 → 两段必有空
+		return "", "", false
+	}
+	return s[:i], s[i+1:], true
+}
+
+// flowNameCounts 统计非空 flow 名出现次数,供唯一性校验(镜像 packetNameCounts)。
+func flowNameCounts(flows []FlowSpec) map[string]int {
+	out := map[string]int{}
+	for _, f := range flows {
+		if f.Name != "" {
+			out[f.Name]++
+		}
+	}
+	return out
+}
+
+// validateFlowNames 校验非空 flow 名唯一:start_after 按名引用 flow,重名会歧义。
+func validateFlowNames(flows []FlowSpec) error {
+	for name, count := range flowNameCounts(flows) {
+		if count > 1 {
+			return fmt.Errorf("flow 名 %q 不唯一(出现 %d 次,start_after 按名引用会歧义)", name, count)
+		}
+	}
+	return nil
+}
+
+// validateStartAfter 校验所有 flow 的 start_after:格式合法、引用的 flow 存在且唯一、
+// 引用的 message_id 存在于该 flow,且依赖关系无环(含自引)。纯结构分析,不需要 Expand。
+//
+// 引用存在性依赖各 flow 的 message_id 集合(已由 validateFlow 保证同 flow 内唯一);
+// 循环检测对具名 flow 做三色 DFS,边为 f.Name → 被引 flow 名。未具名的 start_after
+// flow 是纯消费者(不能被引用),不进图。
+func validateStartAfter(flows []FlowSpec) error {
+	// flow 名 → 其具名 message_id 集合(用于校验被引 message 存在)。
+	msgIDs := map[string]map[string]bool{}
+	nameCount := flowNameCounts(flows)
+	for _, f := range flows {
+		if f.Name == "" {
+			continue
+		}
+		set := map[string]bool{}
+		for _, m := range f.Messages {
+			if m.MessageID != "" {
+				set[m.MessageID] = true
+			}
+		}
+		msgIDs[f.Name] = set
+	}
+
+	// 逐个校验 start_after 引用,并构建依赖边(具名引用方 → 被引 flow 名)。
+	edges := map[string]string{} // 引用方 flow 名 → 被引 flow 名(仅具名引用方)
+	for _, f := range flows {
+		if f.StartAfter == "" {
+			continue
+		}
+		refFlow, refMsg, ok := SplitStartAfter(f.StartAfter)
+		if !ok {
+			return fmt.Errorf("flow %q 的 start_after %q 格式应为 \"flow名.message_id\"", f.Name, f.StartAfter)
+		}
+		count := nameCount[refFlow]
+		if count == 0 {
+			return fmt.Errorf("flow %q 的 start_after 引用未知 flow %q", f.Name, refFlow)
+		}
+		if count > 1 {
+			return fmt.Errorf("flow %q 的 start_after 引用的 flow %q 不唯一", f.Name, refFlow)
+		}
+		if !msgIDs[refFlow][refMsg] {
+			return fmt.Errorf("flow %q 的 start_after 引用 flow %q 中未知 message_id %q", f.Name, refFlow, refMsg)
+		}
+		if f.Name != "" {
+			edges[f.Name] = refFlow
+		}
+	}
+
+	// 三色 DFS 检环。edges[f.Name]==f.Name 即自引 1-环。
+	const (
+		white = 0 // 未访问
+		gray  = 1 // 当前 DFS 栈中
+		black = 2 // 已完成
+	)
+	color := map[string]int{}
+	var path []string
+	var dfs func(name string) error
+	dfs = func(name string) error {
+		color[name] = gray
+		path = append(path, name)
+		if next, ok := edges[name]; ok {
+			if color[next] == gray {
+				// 找到环:从 next 在 path 中的位置到末尾,再接回 next。
+				cycle := append([]string{}, path[indexString(path, next):]...)
+				cycle = append(cycle, next)
+				return fmt.Errorf("start_after 循环依赖: %s", strings.Join(cycle, " → "))
+			}
+			if color[next] == white {
+				if err := dfs(next); err != nil {
+					return err
+				}
+			}
+		}
+		path = path[:len(path)-1]
+		color[name] = black
+		return nil
+	}
+	// 按声明序遍历具名引用方,保证报错路径稳定(不依赖 map 迭代序)。
+	for _, f := range flows {
+		if f.Name == "" {
+			continue
+		}
+		if color[f.Name] == white {
+			if err := dfs(f.Name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// indexString 返回 s 在 slice 中首次出现的下标,不存在返回 -1。
+func indexString(slice []string, s string) int {
+	for i, v := range slice {
+		if v == s {
+			return i
+		}
+	}
+	return -1
 }
 
 func validateLayer(l Layer) error {
