@@ -91,8 +91,8 @@ func cmdGen(args []string) int {
 func printGenerationSummary(path string, planned []scenario.PlannedPacket, count int) {
 	fmt.Printf("生成文件: %s\n", path)
 	fmt.Println("Pcap组成:")
-	for i, summary := range scenario.SummarizePlanned(planned) {
-		fmt.Println(scenario.FormatPacketSummary(i+1, summary))
+	for _, line := range scenario.FormatPacketSummaries(scenario.SummarizePlanned(planned)) {
+		fmt.Println(line)
 	}
 	fmt.Printf("已生成 %d 个包\n", count)
 }
