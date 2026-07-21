@@ -105,3 +105,68 @@ packets:
 		t.Fatalf("合法场景应通过 KnownFields 校验,实际失败: %v", err)
 	}
 }
+
+// loadValid 走 Load + Validate 全路径(语义校验在 Validate,不在 Load/KnownFields)。
+func loadValid(t *testing.T, name, body string) *scenario.Scenario {
+	t.Helper()
+	path := writeScenario(t, name, body)
+	s, err := scenario.Load(path)
+	if err != nil {
+		t.Fatalf("Load %s 失败: %v", name, err)
+	}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("Validate %s 失败: %v", name, err)
+	}
+	return s
+}
+
+const flowStackYAML = `      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000 }
+      - tcp_session: { open: handshake, close: fin }
+`
+
+// TestValidateRejectsDuplicateMessageID 验证同一 flow 内 message_id 重复被 Validate 拒,
+// 并带字段名 + id 值。
+func TestValidateRejectsDuplicateMessageID(t *testing.T) {
+	path := writeScenario(t, "dupmsgid.yaml", "link_type: ethernet\nseed: 42\nflows:\n  - name: f\n    stack:\n"+flowStackYAML+`    messages:
+      - from: src
+        message_id: dup
+        stack:
+          - payload: { payload: "aaaa" }
+      - from: dst
+        message_id: dup
+        stack:
+          - payload: { payload: "bbbb" }
+`)
+	s, err := scenario.Load(path)
+	if err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	err = scenario.Validate(s)
+	if err == nil {
+		t.Fatal("期望 Validate 拒绝同一 flow 内重复 message_id,实际通过")
+	}
+	for _, want := range []string{"message_id", "dup", "重复"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("错误信息应包含 %q,得到: %v", want, err)
+		}
+	}
+}
+
+// TestValidateAcceptsMessageID 验证 message_id 可选、不设与唯一设置都通过 Validate。
+func TestValidateAcceptsMessageID(t *testing.T) {
+	loadValid(t, "okmsgid.yaml", "link_type: ethernet\nseed: 42\nflows:\n  - name: f\n    stack:\n"+flowStackYAML+`    messages:
+      - from: src
+        message_id: first
+        stack:
+          - payload: { payload: "aaaa" }
+      - from: dst
+        message_id: second
+        stack:
+          - payload: { payload: "bbbb" }
+      - from: src
+        stack:
+          - payload: { payload: "cccc" }
+`)
+}

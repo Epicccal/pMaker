@@ -40,6 +40,9 @@ type Message struct {
 	// 带 offset 则 = 上一条末尾 + offset。第一条消息的"上一条"= 握手完成后
 	// (无握手则 = 流锚 anchor)。用于多轮请求间的间隔。
 	OffsetTime *Offset `yaml:"offset_time"`
+	// MessageID 是本消息的可选标识;供其它 flow 的 start_after 引用本消息整组完成
+	// 时刻(msgCursor)。同一 flow 内必须唯一;不设则不被引用。见 internal/plan。
+	MessageID string `yaml:"message_id"`
 }
 
 // Segment 是消息的分段策略。MSS 为实际切段大小(0=不切,整条一段)。
@@ -547,6 +550,7 @@ func validateFlow(f FlowSpec) error {
 			return fmt.Errorf("stack 需要 %s 层", required)
 		}
 	}
+	seenMsgID := map[string]bool{}
 	for j, m := range f.Messages {
 		if m.From != "src" && m.From != "dst" {
 			return fmt.Errorf("messages[%d].from 只能是 src/dst,得到 %q", j, m.From)
@@ -558,6 +562,13 @@ func validateFlow(f FlowSpec) error {
 		case *HTTPReqFields, *HTTPRespFields, *PayloadFields, PayloadHex:
 		default:
 			return fmt.Errorf("messages[%d].stack[0] 不支持 %q", j, m.Stack[0].Type)
+		}
+		// message_id 供跨流 start_after 引用,同一 flow 内必须唯一(否则引用歧义)。
+		if m.MessageID != "" {
+			if seenMsgID[m.MessageID] {
+				return fmt.Errorf("messages[%d].message_id %q 在同一 flow 内重复", j, m.MessageID)
+			}
+			seenMsgID[m.MessageID] = true
 		}
 		// segment.interval 只在切段(mss>0)时才有意义:不设 mss 时整条不切,interval 无处生效,
 		// 静默吞掉会让用户误以为段间隔已生效。此处尽早报错。
