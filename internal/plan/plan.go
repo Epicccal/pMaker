@@ -68,7 +68,7 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 		if f.OffsetTime != nil {
 			anchor = base.Add(f.OffsetTime.Duration())
 		}
-		expanded, _, err := flow.Expand(f, anchor)
+		expanded, _, _, err := flow.Expand(f, anchor)
 		if err != nil {
 			return nil, fmt.Errorf("flow[%d](%s): %w", fi, f.Name, err)
 		}

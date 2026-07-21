@@ -133,7 +133,7 @@ func TestFlowSeqSegmentation(t *testing.T) {
 			Segment: &scenario.Segment{MSS: 8},
 		}},
 	}
-	pkts, _, err := flow.Expand(f, time.Time{})
+	pkts, _, _, err := flow.Expand(f, time.Time{})
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -157,6 +157,47 @@ func TestFlowSeqSegmentation(t *testing.T) {
 	}
 }
 
+// TestFlowExpandMessageIDTimes 校验 Expand 第三返回值:显式设了 message_id 的消息,
+// 其映射值 = 该消息整组完成时刻 msgCursor(= 对端 ACK + DefaultStep),未设的不收录。
+func TestFlowExpandMessageIDTimes(t *testing.T) {
+	f := scenario.FlowSpec{
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 1000, ServerISN: 5000}},
+			{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "handshake", Close: "none"}},
+		},
+		Messages: []scenario.Message{
+			{From: "src", MessageID: "m1", Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "aaaa"}}}},
+			{From: "dst", MessageID: "m2", Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "bbbb"}}}},
+		},
+	}
+	_, _, msgids, err := flow.Expand(f, time.Time{})
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	// 握手占 0/1/2ms;m1 start=3ms,数据段@3,ACK@4,完成 msgCursor=5ms;
+	// m2 start=5ms,数据段@5,ACK@6,完成 msgCursor=7ms。锚为 time.Time{}(零时刻)。
+	zero := time.Time{}
+	want := map[string]time.Time{
+		"m1": zero.Add(5 * time.Millisecond),
+		"m2": zero.Add(7 * time.Millisecond),
+	}
+	if len(msgids) != len(want) {
+		t.Fatalf("期望 %d 个具名消息,得到 %d(%v)", len(want), len(msgids), msgids)
+	}
+	for k, w := range want {
+		got, ok := msgids[k]
+		if !ok {
+			t.Errorf("缺少 message_id %q", k)
+			continue
+		}
+		if !got.Equal(w) {
+			t.Errorf("message_id %q 时刻=%v,期望 %v", k, got, w)
+		}
+	}
+}
+
 // TestFlowCloseRST 校验 close:rst 由 server 单包中断,不再生成 FIN 挥手。
 func TestFlowCloseRST(t *testing.T) {
 	f := scenario.FlowSpec{
@@ -174,7 +215,7 @@ func TestFlowCloseRST(t *testing.T) {
 			}},
 		}},
 	}
-	pkts, _, err := flow.Expand(f, time.Time{})
+	pkts, _, _, err := flow.Expand(f, time.Time{})
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -201,7 +242,7 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	for _, f := range s.Flows {
-		fp, _, err := flow.Expand(f, time.Time{})
+		fp, _, _, err := flow.Expand(f, time.Time{})
 		if err != nil {
 			t.Fatalf("expand: %v", err)
 		}
