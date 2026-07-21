@@ -255,3 +255,56 @@ func TestFormatPacketSummariesAlignsColumns(t *testing.T) {
 		t.Errorf("末行序号=%q,期望 [12]", lines[11][:4])
 	}
 }
+
+// TestSummarizeWithPorts: 摘要端点应带上 TCP/UDP 源目端口;反向包端口随方向归一
+// (左恒为 base 源端端口、右恒为 base 目的端端口,仅箭头翻转);无 TCP/UDP 层的包不显示端口。
+func TestSummarizeWithPorts(t *testing.T) {
+	pkts := []Packet{
+		// [1] 正向请求:src=client(49152) -> dst=server(80)。base=(client,server)。
+		{Stack: []Layer{
+			{Type: "eth"},
+			{Type: "ipv4", Fields: &IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
+			{Type: "tcp", Fields: &TCPFields{SPort: 49152, DPort: 80}},
+		}},
+		// [2] 反向响应:实际 src=server(80)、dst=client(49152);归一为 client <- server。
+		{Stack: []Layer{
+			{Type: "eth"},
+			{Type: "ipv4", Fields: &IPv4Fields{Src: "10.0.0.80", Dst: "10.0.0.10"}},
+			{Type: "tcp", Fields: &TCPFields{SPort: 80, DPort: 49152}},
+		}},
+		// [3] UDP:端口照样展示。
+		{Stack: []Layer{
+			{Type: "eth"},
+			{Type: "ipv4", Fields: &IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
+			{Type: "udp", Fields: &UDPFields{SPort: 5353, DPort: 5353}},
+		}},
+		// [4] ICMP:无 TCP/UDP 层,端点仅显示 IP,不带端口。
+		{Stack: []Layer{
+			{Type: "eth"},
+			{Type: "ipv4", Fields: &IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
+			{Type: "icmp"},
+		}},
+		// [5] IPv6 + TCP:端口同样拼接。
+		{Stack: []Layer{
+			{Type: "eth"},
+			{Type: "ipv6", Fields: &IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2"}},
+			{Type: "tcp", Fields: &TCPFields{SPort: 443, DPort: 443}},
+		}},
+	}
+	got := SummarizePackets(pkts)
+	want := []string{
+		"[1] 10.0.0.10:49152 -> 10.0.0.80:80  eth/ipv4/tcp",
+		"[2] 10.0.0.10:49152 <- 10.0.0.80:80  eth/ipv4/tcp",
+		"[3] 10.0.0.10:5353 -> 10.0.0.80:5353  eth/ipv4/udp",
+		"[4] 10.0.0.10 -> 10.0.0.80  eth/ipv4/icmp",
+		"[5] [2001:db8::1]:443 -> [2001:db8::2]:443  eth/ipv6/tcp",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("摘要数量=%d,期望 %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if line := FormatPacketSummary(i+1, got[i]); line != w {
+			t.Errorf("第%d行=%q,期望 %q", i+1, line, w)
+		}
+	}
+}

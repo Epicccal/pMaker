@@ -215,8 +215,8 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 		t.Fatalf("摘要数量=%d,期望至少 6", len(summaries))
 	}
 	want := map[int]string{
-		4: "[4] 10.0.0.10 -> 10.0.0.80  eth/ipv4/tcp/http",
-		6: "[6] 10.0.0.10 <- 10.0.0.80  eth/ipv4/tcp/http",
+		4: "[4] 10.0.0.10:49152 -> 10.0.0.80:80  eth/ipv4/tcp/http",
+		6: "[6] 10.0.0.10:49152 <- 10.0.0.80:80  eth/ipv4/tcp/http",
 	}
 	for n, w := range want {
 		if line := scenario.FormatPacketSummary(n, summaries[n-1]); line != w {
