@@ -504,7 +504,7 @@ func TestPlanMessageOffsetNoHijack(t *testing.T) {
 }
 
 // TestPlanMessageOffsetChained: message.offset_time 相对上一条消息末尾(链式 delta,非单调也无需夹紧)。
-// A(+50ms) 第一条,相对 msgAnchor(base)→ @50/51ms,末尾 52ms;B(+10ms) 相对 A 末尾 → 52ms+10ms=62ms,
+// A(+50ms) 第一条,相对握手完成后(base)→ @50/51ms,末尾 52ms;B(+10ms) 相对 A 末尾 → 52ms+10ms=62ms,
 // @62/63ms。即便 B 的 offset(10ms)小于 A 的(50ms),也只表示"B 距 A 末尾 10ms",不夹紧、不乱序。
 func TestPlanMessageOffsetChained(t *testing.T) {
 	s := &scenario.Scenario{
