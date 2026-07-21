@@ -7,7 +7,7 @@
 //   - 跨流独立由 plan 保证:每条 flow 的 anchor=base+flow.offset_time(无 offset 则 = base),
 //     互不依赖、可并行;flow 内部不推导跨流接续。
 //   - 流内链式:单游标 msgCursor(= 上一条消息末尾),每条消息 start = msgCursor + offset
-//     (无 offset 则紧接 msgCursor);第一条消息的"上一条"= 握手完成后(msgAnchor)。
+//     (无 offset 则紧接 msgCursor);第一条消息的"上一条"= 握手完成后。
 //     offset>=0 天然单调,无需夹紧;慢响应拖慢下一条请求(正常非流水线 HTTP)。
 //
 // 详见 Expand 的文档注释。

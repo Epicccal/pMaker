@@ -55,7 +55,7 @@ const DefaultStep = time.Millisecond
 //
 // 流内时间模型为「相对上一条消息」(链式 delta):
 //   - 握手占 anchor 起(固定 DefaultStep,不参与定时);第一条消息的"上一条"= 握手完成后
-//     (无握手则 = anchor)= msgAnchor,避免小 offset 与握手包撞时间。
+//     (无握手则 = anchor),避免小 offset 与握手包撞时间。
 //   - 单游标 msgCursor(= 上一条消息末尾):每条消息 start = msgCursor + offset(无 offset 则紧接
 //     msgCursor)。offset>=0 故天然单调,无需夹紧;慢响应自然拖慢下一条请求(正常非流水线 HTTP)。
 //   - 每条消息(不论有无 offset)都把 msgCursor 推进到本消息整组末尾;挥手接在 msgCursor 之后
@@ -86,10 +86,9 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, ti
 	}
 
 	// message.offset_time 相对"上一条消息的末尾":每条消息 = 上一条末尾 + offset(无 offset 则紧接)。
-	// 第一条消息的"上一条"= 握手完成后(无握手则 = 流锚 anchor),即 msgAnchor。offset>=0 故天然
-	// 单调,无需夹紧。握手固定 DefaultStep 不参与定时,避免小 offset 与握手包撞时间。
-	msgAnchor := cursor // 第一条消息的"上一条"= 握手完成后(无握手则 = 流锚 anchor)
-	msgCursor := msgAnchor
+	// 第一条消息的"上一条"= 握手完成后(无握手则 = 流锚 anchor),避免小 offset 与握手包撞时间。
+	// offset>=0 故天然单调,无需夹紧。
+	msgCursor := cursor // 单游标:上一条消息末尾;首条以握手完成后(无握手则 anchor)为参照
 
 	// 应用层消息:按 segment.mss 切段发送,对端按 per-message 回一个 ACK
 	for _, m := range f.Messages {
