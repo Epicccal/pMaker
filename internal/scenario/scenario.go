@@ -36,11 +36,9 @@ type Message struct {
 	From    string   `yaml:"from"` // src | dst
 	Stack   []Layer  `yaml:"stack"`
 	Segment *Segment `yaml:"segment"`
-	// OffsetTime 是本消息起始相对**上一条消息末尾**的时长偏移(第一条消息相对"握手完成后",
-	// 无握手则 = 流锚 anchor)。接续语义(见 internal/flow.Expand):无 offset 紧接上一条末尾;
-	// 带 offset = 上一条末尾 + offset。链式 delta,offset>=0 天然单调,无需夹紧——慢响应拖慢
-	// 下一条请求(正常非流水线 HTTP)。用于多轮请求间的间隔。握手固定 DefaultStep 不参与定时,
-	// 故第一条消息的 offset 从握手结束算起,避免小 offset 与握手包撞时间。
+	// OffsetTime 是本消息起始相对上一条消息末尾的时长偏移:缺省紧接上一条末尾,
+	// 带 offset 则 = 上一条末尾 + offset。第一条消息的"上一条"= 握手完成后
+	// (无握手则 = 流锚 anchor)。用于多轮请求间的间隔。
 	OffsetTime *Offset `yaml:"offset_time"`
 }
 
@@ -115,17 +113,18 @@ func ParsePayloadHex(s string) ([]byte, error) {
 	return hex.DecodeString(s)
 }
 
-// AbsTime 是绝对时刻(ISO8601),仅 base_time 使用:场景里唯一的绝对锚,
-// offset_time 都相对它计算。写成形如 "+1s" 的偏移会在解析阶段失败。
+// AbsTime 是绝对时刻,仅 base_time 使用:场景里唯一的绝对锚,各 offset_time 的参考点
+// 最终都溯源到它。按 UTC 解析 ISO8601/RFC3339(如 2024-01-01T00:00:00Z),也兼容
+// 2024-01-01、2024-01-01 00:00:00 等宽松写法;写成形如 "+1s" 的偏移会在解析阶段失败。
 type AbsTime struct {
 	t time.Time
 }
 
-// UnmarshalYAML 把标量解析为 ISO8601 绝对时刻(UTC)。
+// UnmarshalYAML 把标量解析为绝对时刻(按 UTC;见 parseAbsTime 支持的格式)。
 func (a *AbsTime) UnmarshalYAML(node *yaml.Node) error {
 	var s string
 	if err := node.Decode(&s); err != nil {
-		return fmt.Errorf("base_time 需为字符串(ISO8601): %w", err)
+		return fmt.Errorf("base_time 需为字符串(如 2024-01-01T00:00:00Z): %w", err)
 	}
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -142,8 +141,9 @@ func (a *AbsTime) UnmarshalYAML(node *yaml.Node) error {
 // Time 返回解析后的绝对时刻。
 func (a *AbsTime) Time() time.Time { return a.t }
 
-// Offset 是相对 base_time 的时长偏移,packet.offset_time / flow.offset_time /
-// message.offset_time / segment.interval 使用。
+// Offset 是非负时长偏移:packet.offset_time(相对上一包)、flow.offset_time(相对 base_time)、
+// message.offset_time(相对上一条消息末尾)、segment.interval(同消息各数据段间隔)使用——
+// 参考点因字段而异(见各字段注释与 internal/plan / internal/flow)。
 // 仅接受非负时长(如 +1.5s / 500ms / 0s);负值与绝对时刻均在解析阶段失败——
 // 负偏移通常意味着 base_time 选错了起点(应把 base_time 提前,而非用负 offset 够到零点之前)。
 type Offset struct {
