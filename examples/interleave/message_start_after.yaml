@@ -1,0 +1,59 @@
+# examples/interleave/message_start_after.yaml
+#
+# 演示 message 级 start_after:本 flow 的"第二条消息"在另一个 flow 的某条消息完成后才开始,
+# 而非默认的"紧接上一条消息末尾"。这是比 flow 级 start_after 更细的粒度——不必把整条
+# flow 的握手都推迟,只让某一条消息等跨流事件。
+#
+# 引用目标两种形态:
+#   - "flow名"          → 该 flow 整流结束(挥手后)
+#   - "flow名.message_id" → 该消息整组完成(msgCursor)
+#
+# 这里 control 流发一条 PASV 227(带 message_id: pasv);data 流有两条消息:
+#   ① GREETING:无 start_after,紧接 data 流锚(base)。
+#   ② RETR:   start_after "control.pasv",锚到 control.pasv 整组完成时刻 + 紧接(无 offset)。
+# 故 RETR 不会在 GREETING 后立刻发,而是等控制通道 227 收完。模拟"控制通道触发数据流里
+# 某条迟到请求"——其余消息仍按默认链式游标正常推进。
+#
+# 时间线(base=2024-01-01T00:00:00Z,默认步长 1ms,open=none 无握手):
+#
+#   control:        PASV-req data@base/ack@+1;  PASV-227 data@+2/ack@+3,msgCursor=+4  (message_id: pasv)
+#   data:          GREETING data@base/ack@+1,msgCursor=+2(默认链式,不等 control)
+#   data RETR:     start_after control.pasv → 锚 base+4;data@+4/ack@+5
+#
+# 注意:data.GREETING 与 control 前 4 包同 base,声明序 control 在前;RETR 的 data 落在 +4ms。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  # 控制通道:发 PASV 请求,服务端回 227(带 message_id 供引用)。
+  - name: control
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 21, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: none, close: none }
+    messages:
+      - from: src
+        stack:
+          - payload: { payload: "PASV\r\n" }
+      - from: dst
+        message_id: pasv           # ← 被 data.RETR 引用
+        stack:
+          - payload: { payload: "227 Entering Passive Mode (10,0,0,80,195,80).\r\n" }
+
+  # 数据通道:GREETING 紧接 base;RETR 等 control.pasv 完成后才开始。
+  - name: data
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49153, dport: 50000, client_isn: 9000, server_isn: 7000, mss: 1460 }
+      - tcp_session: { open: none, close: none }
+    messages:
+      - from: dst
+        stack:
+          - payload: { payload: "220 Greeting.\r\n" }
+      - from: src
+        start_after: "control.pasv"   # ← 等 227 收完再发 RETR
+        stack:
+          - payload: { payload: "RETR file\r\n" }
