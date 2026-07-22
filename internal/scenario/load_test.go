@@ -219,7 +219,7 @@ func TestStartAfterRejectsMalformed(t *testing.T) {
 	if err == nil {
 		t.Fatal("期望 Validate 拒绝格式错误的 start_after,实际通过")
 	}
-	for _, want := range []string{"start_after", "格式"} {
+	for _, want := range []string{"start_after", "未知 flow"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("错误应包含 %q,得到: %v", want, err)
 		}
@@ -304,5 +304,86 @@ func TestValidateRejectsDuplicateFlowName(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("错误应包含 %q,得到: %v", want, err)
 		}
+	}
+}
+
+// TestStartAfterMessageLevel 校验 message 级 start_after:合法引用另一 flow 的 message_id 通过。
+func TestStartAfterMessageLevel(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: a\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        message_id: trig
+        stack:
+          - payload: { payload: "x" }
+` +
+		"  - name: b\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        stack:
+          - payload: { payload: "y" }
+      - from: src
+        start_after: "a.trig"
+        stack:
+          - payload: { payload: "z" }
+`
+	if err := loadValidateErr(t, "msgok.yaml", body); err != nil {
+		t.Fatalf("合法 message 级 start_after 应通过: %v", err)
+	}
+}
+
+// TestStartAfterMessageLevelFlowRef:裸 flow 名引用(整流结束)应通过。
+func TestStartAfterMessageLevelFlowRef(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: a\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        stack:
+          - payload: { payload: "x" }
+` +
+		"  - name: b\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        start_after: "a"
+        stack:
+          - payload: { payload: "z" }
+`
+	if err := loadValidateErr(t, "msgflow.yaml", body); err != nil {
+		t.Fatalf("合法 message 级 start_after(裸 flow 名)应通过: %v", err)
+	}
+}
+
+// TestStartAfterMessageLevelSameFlowRejected:message 级 start_after 同流自引应被拒。
+func TestStartAfterMessageLevelSameFlowRejected(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n  - name: a\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        message_id: trig
+        stack:
+          - payload: { payload: "x" }
+      - from: src
+        start_after: "a.trig"
+        stack:
+          - payload: { payload: "z" }
+`
+	err := loadValidateErr(t, "msgself.yaml", body)
+	if err == nil {
+		t.Fatal("期望 Validate 拒绝 message 级 start_after 同流自引,实际通过")
+	}
+	if !strings.Contains(err.Error(), "禁止引用本 flow") {
+		t.Errorf("错误应提及禁止引用本 flow,得到: %v", err)
+	}
+}
+
+// TestStartAfterMessageLevelUnknownFlow:message 级引用未知 flow 应被拒。
+func TestStartAfterMessageLevelUnknownFlow(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: a\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        start_after: "ghost.pasv"
+        stack:
+          - payload: { payload: "x" }
+`
+	err := loadValidateErr(t, "msgnoflow.yaml", body)
+	if err == nil {
+		t.Fatal("期望 Validate 拒绝 message 级 start_after 引用未知 flow,实际通过")
+	}
+	if !strings.Contains(err.Error(), "未知 flow") {
+		t.Errorf("错误应提及未知 flow,得到: %v", err)
 	}
 }
