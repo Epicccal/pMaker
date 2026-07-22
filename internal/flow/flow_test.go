@@ -133,7 +133,7 @@ func TestFlowSeqSegmentation(t *testing.T) {
 			Segment: &scenario.Segment{MSS: 8},
 		}},
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{})
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestFlowExpandMessageIDTimes(t *testing.T) {
 			{From: "dst", MessageID: "m2", Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "bbbb"}}}},
 		},
 	}
-	_, _, msgids, err := flow.Expand(f, time.Time{})
+	_, _, msgids, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestFlowCloseRST(t *testing.T) {
 			}},
 		}},
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{})
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	for _, f := range s.Flows {
-		fp, _, _, err := flow.Expand(f, time.Time{})
+		fp, _, _, err := flow.Expand(f, time.Time{}, nil)
 		if err != nil {
 			t.Fatalf("expand: %v", err)
 		}
