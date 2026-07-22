@@ -736,3 +736,154 @@ func TestPlanStartAfterCycleDefense(t *testing.T) {
 		t.Errorf("错误应提及循环依赖,得到: %v", err)
 	}
 }
+
+// --- message 级 start_after 测试 ---
+
+// msgFlowWithTrigger:open=none,两条 payload 消息,第二条带 message_id=trigger。
+func msgFlowWithTrigger(name string, sport uint16) scenario.FlowSpec {
+	f := baseFlow(name, nil)
+	f.Stack[2].Fields.(*scenario.TCPFields).SPort = sport
+	f.Messages = []scenario.Message{
+		{From: "src", Stack: []scenario.Layer{ph("0xaa")}},
+		{From: "src", MessageID: "trigger", Stack: []scenario.Layer{ph("0xbb")}},
+	}
+	return f
+}
+
+func TestPlanMessageStartAfterMsgRef(t *testing.T) {
+	b := baseFlow("b", nil)
+	b.Stack[2].Fields.(*scenario.TCPFields).SPort = 2222
+	b.Messages = []scenario.Message{
+		{From: "src", Stack: []scenario.Layer{ph("0xcc")}},
+		{From: "src", StartAfter: "a.trigger", Stack: []scenario.Layer{ph("0xdd")}},
+	}
+	s := &scenario.Scenario{Flows: []scenario.FlowSpec{
+		msgFlowWithTrigger("a", 1111),
+		b,
+	}}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	base := plan.DefaultBaseTime()
+	got := times(planned)
+	want := []time.Time{
+		base, base.Add(time.Millisecond),
+		base, base.Add(time.Millisecond),
+		base.Add(2 * time.Millisecond), base.Add(3 * time.Millisecond),
+		base.Add(4 * time.Millisecond), base.Add(5 * time.Millisecond),
+	}
+	if !equalTimeMultiset(got, want) {
+		t.Fatalf("message start_after 时间=%v,期望 %v", got, want)
+	}
+}
+
+func TestPlanMessageStartAfterFlowRef(t *testing.T) {
+	a := scenario.FlowSpec{
+		Name: "a",
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 100, ServerISN: 200}},
+			{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "none", Close: "fin"}},
+		},
+		Messages: []scenario.Message{{From: "src", Stack: []scenario.Layer{ph("0xaa")}}},
+	}
+	b := baseFlow("b", nil)
+	b.Stack[2].Fields.(*scenario.TCPFields).SPort = 2222
+	b.Messages = []scenario.Message{
+		{From: "src", StartAfter: "a", Stack: []scenario.Layer{ph("0xbb")}},
+	}
+	s := &scenario.Scenario{Flows: []scenario.FlowSpec{a, b}}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	base := plan.DefaultBaseTime()
+	var bData time.Time
+	for _, pp := range planned {
+		sp, _ := tcpPorts(pp)
+		if sp == 2222 {
+			if bData.IsZero() || pp.Time.Before(bData) {
+				bData = pp.Time
+			}
+		}
+	}
+	if !bData.Equal(base.Add(6 * time.Millisecond)) {
+		t.Fatalf("B.msg0 data=%v,期望 base+6ms(A 整流结束)", bData)
+	}
+}
+
+func TestPlanMessageStartAfterSameFlowRejected(t *testing.T) {
+	s := &scenario.Scenario{Flows: []scenario.FlowSpec{
+		msgFlowWithTrigger("a", 1111),
+	}}
+	s.Flows[0].Messages[1].StartAfter = "a.trigger"
+	if err := scenario.Validate(s); err == nil {
+		t.Fatal("期望 Validate 拒绝同流自引的 message start_after,实际通过")
+	} else if !strings.Contains(err.Error(), "禁止引用本 flow") {
+		t.Errorf("错误应提及禁止引用本 flow,得到: %v", err)
+	}
+}
+
+func TestPlanMessageStartAfterForwardRef(t *testing.T) {
+	b := baseFlow("b", nil)
+	b.Stack[2].Fields.(*scenario.TCPFields).SPort = 2222
+	b.Messages = []scenario.Message{
+		{From: "src", Stack: []scenario.Layer{ph("0xcc")}},
+		{From: "src", StartAfter: "a.trigger", Stack: []scenario.Layer{ph("0xdd")}},
+	}
+	s := &scenario.Scenario{Flows: []scenario.FlowSpec{
+		b,
+		msgFlowWithTrigger("a", 1111),
+	}}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	base := plan.DefaultBaseTime()
+	bPorts := tcpPortSet(t, planned, 2222) // sport=2222 的是 B 的数据段(msg0-data, msg1-data)
+	if len(bPorts) != 2 {
+		t.Fatalf("B 应有 2 个数据段,得到 %d (%v)", len(bPorts), bPorts)
+	}
+	// msg0-data@base, msg1-data@base+4(= A.trigger cursor)。
+	if !bPorts[1].Equal(base.Add(4 * time.Millisecond)) {
+		t.Fatalf("前向引用 B.msg1 data=%v,期望 base+4ms", bPorts[1])
+	}
+}
+
+func equalTimeMultiset(a, b []time.Time) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ca := append([]time.Time(nil), a...)
+	cb := append([]time.Time(nil), b...)
+	sortTimes(ca)
+	sortTimes(cb)
+	for i := range ca {
+		if !ca[i].Equal(cb[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func sortTimes(s []time.Time) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1].After(s[j]); j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
+}
+
+func tcpPortSet(t *testing.T, planned []scenario.PlannedPacket, sport uint16) []time.Time {
+	t.Helper()
+	var out []time.Time
+	for _, pp := range planned {
+		sp, _ := tcpPorts(pp)
+		if sp == sport {
+			out = append(out, pp.Time)
+		}
+	}
+	return out
+}
