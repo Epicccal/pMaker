@@ -243,6 +243,77 @@ func TestInterleaveCrossFlowIndependence(t *testing.T) {
 	}
 }
 
+// TestFTPControlTriggersData 验证 start_after 跨流引用:数据通道的 SYN(握手)恰好落在
+// 控制通道 PASV 227 消息整组完成时刻(msgCursor),紧接(无额外 offset)。
+//
+// 时间线(base=2024-01-01T00:00:00Z):
+//
+//	control 握手 0/1/2ms;PASV 请求 data@3/ack@4;PASV 227 data@5/ack@6,msgCursor=7ms;
+//	data 握手 SYN @ base+7ms(= control.pasv 的 msgCursor)。
+func TestFTPControlTriggersData(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/ftp/control_triggers_data.yaml")
+	r, err := pcapgo.NewReader(bytes.NewReader(pcap))
+	if err != nil {
+		t.Fatalf("pcap reader: %v", err)
+	}
+	type rec struct {
+		ts           time.Time
+		syn          bool
+		sport, dport uint16
+	}
+	var recs []rec
+	for {
+		raw, ci, err := r.ReadPacketData()
+		if err != nil {
+			break
+		}
+		p := gopacket.NewPacket(raw, r.LinkType(), gopacket.Default)
+		tcpL := p.Layer(layers.LayerTypeTCP)
+		var rec rec
+		rec.ts = ci.Timestamp
+		if tcpL != nil {
+			tcp := tcpL.(*layers.TCP)
+			rec.syn = tcp.SYN
+			rec.sport = uint16(tcp.SrcPort)
+			rec.dport = uint16(tcp.DstPort)
+		}
+		recs = append(recs, rec)
+	}
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	// 数据通道 SYN:sport=49153、dport=50000,应在 base+7ms(= control.pasv msgCursor)。
+	var dataSYN time.Time
+	for _, r := range recs {
+		if r.syn && r.sport == 49153 && r.dport == 50000 {
+			if dataSYN.IsZero() {
+				dataSYN = r.ts
+			}
+		}
+	}
+	if dataSYN.IsZero() {
+		t.Fatal("未找到数据通道 SYN(sport=49153,dport=50000)")
+	}
+	if got := dataSYN.Sub(base); got != 7*time.Millisecond {
+		t.Errorf("数据通道 SYN 偏移=%v,期望 7ms(= control.pasv 的 msgCursor,紧接)", got)
+	}
+
+	// 控制通道 PASV 227 的对端 ACK 应在 base+6ms(其 +1ms 即 msgCursor=base+7ms,正是 dataSYN)。
+	var pasvACK time.Time
+	for _, r := range recs {
+		// PASV 227 数据段是服务端->客户端(sport=21、dport=49152);对端 ACK 由 src 发出
+		// (sport=49152、dport=21),落在 227 之后。
+		if r.sport == 49152 && r.dport == 21 && r.ts.Sub(base) >= 6*time.Millisecond && r.ts.Sub(base) < 7*time.Millisecond {
+			pasvACK = r.ts
+		}
+	}
+	if pasvACK.IsZero() {
+		t.Fatal("未找到控制通道 PASV 227 的对端 ACK(应落 base+6ms)")
+	}
+	if !pasvACK.Add(time.Millisecond).Equal(dataSYN) {
+		t.Errorf("PASV 对端 ACK(%v)+1ms = %v,应等于数据通道 SYN(%v)", pasvACK, pasvACK.Add(time.Millisecond), dataSYN)
+	}
+}
+
 func TestICMPEchoContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/icmp/echo.yaml")
 	icmpPackets := readICMPPackets(t, pcap)

@@ -65,15 +65,19 @@ const DefaultStep = time.Millisecond
 //
 // 当前 flow.stack 支持 eth/ipv4/tcp/tcp_session;VLAN/GRE 等会话封装后续扩展。
 //
-// 第二个返回值是该 flow 真正结束的时刻(挥手后),仅信息性——plan 不再用它推进 packet 游标
-// (flows 互相独立,不接续)。
-func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, time.Time, error) {
+// 返回值:
+//   - 第二个返回值是该 flow 真正结束的时刻(挥手后),仅信息性——plan 不再用它推进 packet 游标
+//     (flows 互相独立,不接续)。
+//   - 第三个返回值是 message_id → 该消息整组完成时刻(msgCursor)的映射,仅收录显式设了
+//     message_id 的消息;供 plan 解析其它 flow 的 start_after 引用。空(无具名消息)时为 nil。
+func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, time.Time, map[string]time.Time, error) {
 	c, err := parseFlowStack(f.Stack)
 	if err != nil {
-		return nil, time.Time{}, err
+		return nil, time.Time{}, nil, err
 	}
 	var out []scenario.PlannedPacket
-	cursor := anchor // 流内时间游标:每个包占一个槽,默认递进 DefaultStep
+	var msgids map[string]time.Time // message_id → 本消息整组完成时刻(msgCursor)
+	cursor := anchor                // 流内时间游标:每个包占一个槽,默认递进 DefaultStep
 
 	// 三次握手(SYN / SYN,ACK 携带通告 MSS)
 	if c.session.open == "" || c.session.open == "handshake" {
@@ -94,7 +98,7 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, ti
 	for _, m := range f.Messages {
 		b, err := messagePayload(m)
 		if err != nil {
-			return nil, time.Time{}, err
+			return nil, time.Time{}, msgids, err
 		}
 		// 本消息起始:无 offset 紧接 msgCursor(上一条末尾);有 offset = msgCursor + offset。
 		start := msgCursor
@@ -122,6 +126,13 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, ti
 		out = appendAt(out, c.emit(from.peer(), []string{"ACK"}, nil, nil), t)
 		end := t.Add(DefaultStep) // 本消息整组末尾(ACK 之后 +1ms,即下一条接续点)
 		msgCursor = end           // 每条消息都推进游标(顺序语义)
+		// 收录具名消息的整组完成时刻(msgCursor),供 plan 解析 start_after 引用。
+		if m.MessageID != "" {
+			if msgids == nil {
+				msgids = map[string]time.Time{}
+			}
+			msgids[m.MessageID] = msgCursor
+		}
 	}
 
 	// 关闭:默认四次挥手;rst 表示对端(dst)单包中断连接。挥手接 msgCursor(最后一条消息末尾)。
@@ -140,7 +151,7 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, ti
 		out = appendAt(out, c.emit(sideDst, []string{"RST", "ACK"}, nil, nil), cursor)
 		cursor = cursor.Add(DefaultStep)
 	}
-	return out, cursor, nil
+	return out, cursor, msgids, nil
 }
 
 // appendAt 把一个 stack 包包装成带时间戳的 PlannedPacket 追加到 out。
