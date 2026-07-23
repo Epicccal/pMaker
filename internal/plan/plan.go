@@ -10,11 +10,16 @@
 //   - flows 默认互相独立:flow.offset_time 相对 **base_time**(无 offset 则 = base),**不夹紧、不读
 //     packet 游标、不推进它**——无 offset 的多条 flow 在 base 并发(模拟浏览器多连接并行);
 //     想顺序就显式给递增 offset。
-//   - flow 的 start_after(opt-in):形如 "flow名.message_id",置则该 flow 锚 = 被引消息整组完成
-//     时刻(msgCursor)+ offset_time(缺省 0 紧接)。用于"一个 flow 在另一个 flow 某消息完成后
-//     开始"(如 FTP 控制通道触发数据通道)。此时 offset_time 的参照点从 base 变为被引 msgCursor。
-//     这是**显式跨流依赖**,默认独立性不变;Plan 用两阶段拓扑展开(无 start_after 的先展开并登记
-//     msgid→时刻,有 start_after 的多遍解析),循环依赖在校验阶段拦截。
+//   - flow 的 start_after(opt-in):形如 "flow名"(该 flow 整流结束,挥手后)或 "flow名.message_id"
+//     (该消息整组完成,msgCursor);置则该 flow 锚 = 被引时刻 + offset_time(缺省 0 紧接)。用于"一个 flow
+//     在另一个 flow / 另一个 flow 某消息完成后开始"(如 FTP 控制通道触发数据通道)。这是**显式跨流依赖**,
+//     默认独立性不变;Plan 用多遍拓扑展开(被引 flow 先展开并登记时刻,引用方多遍解析),循环依赖在校验阶段拦截。
+//   - message 级 start_after(同形 "flow名" 或 "flow名.message_id"):某条消息的起点锚到被引时刻而非
+//     默认的"上一条消息末尾",实现"某条消息在另一个 flow / 另一个 flow 某消息完成后才开始"(如控制通道触发本
+//     flow 某条迟到请求)。message 级只读被引时刻,不改变 flow 自身的 anchor;禁止同流自引。同一 flow 内多条
+//     message 可各自 start_after 不同被引 flow,该 flow 整体视作依赖这些被引 flow(建边 = f.Name → refFlow)。
+//     Plan 展开该 flow 时把 resolve 回调注入 Expand:resolve 从已展开 flow 的 registry(整流结束时刻与 msgCursor)
+//     查被引时刻;被引 flow 须先于引用方展开,多遍拓扑天然处理。
 //   - flow 内部由 flow.Expand 自管时间轴:message.offset_time 相对**上一条消息**(第一条相对
 //     握手完成后),链式 delta、天然单调(见 internal/flow)。
 //
@@ -39,12 +44,35 @@ import (
 // 外部赋值。
 func DefaultBaseTime() time.Time { return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC) }
 
+// resolvedT 记录一个已展开具名 flow 的时刻:整流结束(挥手后,供裸 flow 名引用)与
+// message_id→msgCursor(供 "flow名.message_id" 引用)。flow 级与 message 级 start_after 共用。
+type resolvedT struct {
+	flowEnd    time.Time
+	msgCursors map[string]time.Time
+}
+
 // Plan 把场景里的 packets 与 flows 汇流成按时间排序的 PlannedPacket 列表。
 func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 	// base_time 是唯一绝对锚;AbsTime 类型已保证它只能是 ISO8601 绝对时刻。
 	base := DefaultBaseTime()
 	if s.BaseTime != nil {
 		base = s.BaseTime.Time()
+	}
+
+	// resolvedT 见包级定义。registry 记录已展开具名 flow 的两类时刻(整流结束 / msgCursor)。
+	registry := map[string]resolvedT{}
+	// resolve 从 registry 查被引时刻:裸 flow 名 → flowEnd;带 msg → msgCursor。
+	// 闭包捕获 registry(共享可变),随展开推进,被引 flow 入表后即可命中。
+	resolve := func(refFlow, refMsg string) (time.Time, bool) {
+		r, ok := registry[refFlow]
+		if !ok {
+			return time.Time{}, false
+		}
+		if refMsg == "" {
+			return r.flowEnd, true
+		}
+		t, ok := r.msgCursors[refMsg]
+		return t, ok
 	}
 
 	// 预估容量:standalone packets + 每条 flow 的粗略包数(握手3 + 消息段 + 挥手4 ≈ 8 起步)。
@@ -66,46 +94,45 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 		prevT = t                        // 下一包的"上一包"= 本包
 	}
 
-	// ② flows:两阶段拓扑展开。
-	//   - Phase 1:无 start_after 的 flow,声明序,各自 anchor=base+offset(无 offset 则 base),
-	//     互不依赖、可并行(跨流独立)。展开后把具名 flow 的 message_id→完成时刻收入 registry。
-	//   - Phase 2:有 start_after 的 flow,多遍依赖序(声明序为平手):被引 flow 已在 registry 中
-	//     即可解析 anchor=被引消息 msgCursor + offset_time(缺省 0 紧接),展开并收入自己的 msgid 表
-	//     (供后续依赖它的 flow)。被引 flow 可声明在后(前向引用),多遍天然处理。
-	//     无 start_after 的 flow 不读/推进 packet 游标。
-	registry := map[string]map[string]time.Time{} // flow 名 → message_id → 整组完成时刻
-	expandFlow := func(f scenario.FlowSpec, anchorBase time.Time, fi int) error {
+	// ② flows:多遍拓扑展开。
+	//   - registry 记录每个已展开具名 flow 的两类时刻:整流结束(挥手后,供裸 flow 名引用)与
+	//     message_id→msgCursor(供 "flow名.message_id" 引用)。flow 级与 message 级 start_after 共用。
+	//   - 每遍按声明序扫剩余 flow,凡其所有被引 flow(flow 级 start_after 的被引 flow + 各 message 级
+	//     start_after 的被引 flow)均已展开入 registry 即可展开;否则留待下一遍。声明序为平手,被引 flow
+	//     可声明在后(前向引用)。被引时刻通过 resolve 回调注入 Expand:裸 flow 名取 flowEnd,带 msg 取
+	//     msgCursor。无 start_after 的 flow 不读/推进 packet 游标(跨流独立)。
+	//   - 循环依赖正常由 validateStartAfter 在校验阶段拦截;此处的 no-progress 是防御纵深。
+	expandFlow := func(f scenario.FlowSpec, fi int) error {
+		// flow 锚基准:无 start_after = base;有则 = 被引时刻(此时被引 flow 必已展开,resolve 必命中)。
+		anchorBase := base
+		if f.StartAfter != "" {
+			refFlow, refMsg, _ := scenario.SplitStartAfter(f.StartAfter)
+			got, ok := resolve(refFlow, refMsg)
+			if !ok {
+				// canExpand 已保证被引 flow 入表;到此处说明校验被绕过(如被引 message_id 不存在)。
+				return fmt.Errorf("flow[%d](%s): start_after %q 被引 flow/message 未展开", fi, f.Name, f.StartAfter)
+			}
+			anchorBase = got
+		}
 		anchor := anchorBase
 		if f.OffsetTime != nil {
 			anchor = anchorBase.Add(f.OffsetTime.Duration())
 		}
-		expanded, _, msgids, err := flow.Expand(f, anchor)
+		expanded, flowEnd, msgids, err := flow.Expand(f, anchor, resolve)
 		if err != nil {
 			return fmt.Errorf("flow[%d](%s): %w", fi, f.Name, err)
 		}
 		merged = append(merged, expanded...)
 		if f.Name != "" {
-			registry[f.Name] = msgids
+			registry[f.Name] = resolvedT{flowEnd: flowEnd, msgCursors: msgids}
 		}
 		return nil
 	}
 
-	// Phase 1:无 start_after 的 flow,声明序。
-	for fi, f := range s.Flows {
-		if f.StartAfter != "" {
-			continue
-		}
-		if err := expandFlow(f, base, fi); err != nil {
-			return nil, err
-		}
-	}
-
-	// Phase 2:有 start_after 的 flow,多遍直至全部解析。
+	// 多遍直至全部展开。
 	remaining := make([]int, 0, len(s.Flows))
-	for fi, f := range s.Flows {
-		if f.StartAfter != "" {
-			remaining = append(remaining, fi)
-		}
+	for fi := range s.Flows {
+		remaining = append(remaining, fi)
 	}
 	for len(remaining) > 0 {
 		progress := false
@@ -113,14 +140,11 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 		next := make([]int, 0, len(remaining))
 		for _, fi := range remaining {
 			f := s.Flows[fi]
-			refFlow, refMsg, _ := scenario.SplitStartAfter(f.StartAfter)
-			// registry[refFlow] 可能为 nil(被引 flow 未具名或未展开);nil 内层 map 读取在 Go 中安全。
-			mc, ok := registry[refFlow][refMsg]
-			if !ok {
-				next = append(next, fi) // 被引 flow 尚未展开,留待下一遍
+			if !flowDepsResolved(f, registry) {
+				next = append(next, fi) // 有被引 flow 尚未展开,留待下一遍
 				continue
 			}
-			if err := expandFlow(f, mc, fi); err != nil {
+			if err := expandFlow(f, fi); err != nil {
 				return nil, err
 			}
 			progress = true
@@ -137,4 +161,34 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 		return merged[i].Time.Before(merged[j].Time)
 	})
 	return merged, nil
+}
+
+// flowDepsResolved 判断 flow f 的所有 start_after 被引 flow 是否均已展开入 registry。
+// 既看 flow 级 start_after,也看各 message 级 start_after;裸 flow 名引用需被引 flow 的 flowEnd
+// 已入表(被引 flow 具名才会入表),带 msg 引用需对应 msgCursor 已入表。
+func flowDepsResolved(f scenario.FlowSpec, registry map[string]resolvedT) bool {
+	check := func(ref string) bool {
+		refFlow, refMsg, ok := scenario.SplitStartAfter(ref)
+		if !ok {
+			return false
+		}
+		r, ok := registry[refFlow]
+		if !ok {
+			return false
+		}
+		if refMsg == "" {
+			return !r.flowEnd.IsZero()
+		}
+		t, ok := r.msgCursors[refMsg]
+		return ok && !t.IsZero()
+	}
+	if f.StartAfter != "" && !check(f.StartAfter) {
+		return false
+	}
+	for _, m := range f.Messages {
+		if m.StartAfter != "" && !check(m.StartAfter) {
+			return false
+		}
+	}
+	return true
 }

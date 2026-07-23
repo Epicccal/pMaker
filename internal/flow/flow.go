@@ -9,6 +9,15 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
+// ResolveRef 解析 start_after 引用为绝对时刻。形如 "flow名" → 该 flow 整流结束(挥手后);
+// "flow名.message_id" → 该消息整组完成(msgCursor)。refFlow/refMsg 由 scenario.SplitStartAfter
+// 拆出。msg=="" 表示引用整流结束,取 flowEnd[refFlow];否则取 msgCursors[refFlow][refMsg]。
+// 未解析到返回 (zero,false)。
+type ResolveRef func(refFlow, refMsg string) (time.Time, bool)
+
+// noopResolve 是无跨流依赖时的占位解析器,恒返回未命中(本 flow 无 message 级 start_after)。
+func noopResolve(refFlow, refMsg string) (time.Time, bool) { return time.Time{}, false }
+
 type side int
 
 const (
@@ -66,11 +75,18 @@ const DefaultStep = time.Millisecond
 // 当前 flow.stack 支持 eth/ipv4/tcp/tcp_session;VLAN/GRE 等会话封装后续扩展。
 //
 // 返回值:
-//   - 第二个返回值是该 flow 真正结束的时刻(挥手后),仅信息性——plan 不再用它推进 packet 游标
-//     (flows 互相独立,不接续)。
+//   - 第二个返回值是该 flow 真正结束的时刻(挥手后),供 plan 解析裸 flow 名引用(整流结束)。
 //   - 第三个返回值是 message_id → 该消息整组完成时刻(msgCursor)的映射,仅收录显式设了
-//     message_id 的消息;供 plan 解析其它 flow 的 start_after 引用。空(无具名消息)时为 nil。
-func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, time.Time, map[string]time.Time, error) {
+//     message_id 的消息;供 plan 解析其它 flow / message 的 start_after 引用。空(无具名消息)时为 nil。
+//
+// resolve 解析 message 级 start_after 引用为被引时刻(整流结束或某消息 msgCursor)。
+// 当某条 message 设了 start_after 时,其起点 = resolve(被引)+ offset_time(缺省 0 紧接),
+// 取代默认的"上一条消息末尾";之后仍以本消息整组末尾推进 msgCursor。nil 时用 noopResolve
+// (本 flow 无 message 级 start_after,行为与历史逐字节等价)。
+func Expand(f scenario.FlowSpec, anchor time.Time, resolve ResolveRef) ([]scenario.PlannedPacket, time.Time, map[string]time.Time, error) {
+	if resolve == nil {
+		resolve = noopResolve
+	}
 	c, err := parseFlowStack(f.Stack)
 	if err != nil {
 		return nil, time.Time{}, nil, err
@@ -100,10 +116,22 @@ func Expand(f scenario.FlowSpec, anchor time.Time) ([]scenario.PlannedPacket, ti
 		if err != nil {
 			return nil, time.Time{}, msgids, err
 		}
-		// 本消息起始:无 offset 紧接 msgCursor(上一条末尾);有 offset = msgCursor + offset。
+		// 本消息起始:默认 = 上一条末尾 + offset(无 offset 紧接 msgCursor)。
+		// message 级 start_after 把参照点从 msgCursor 改为被引时刻(整流结束或某消息 msgCursor),
+		// 再 + offset_time。offset>=0 故天然单调。
 		start := msgCursor
+		if m.StartAfter != "" {
+			refFlow, refMsg, _ := scenario.SplitStartAfter(m.StartAfter)
+			got, ok := resolve(refFlow, refMsg)
+			if !ok {
+				// 被引时刻未解析到:plan 在展开前应保证被引 flow 已展开,此处不应到达。
+				// 落到 msgCursor(默认行为)是安全的退化,但提示用户引用未生效。
+				return nil, time.Time{}, msgids, fmt.Errorf("message 的 start_after %q 未能解析(被引 flow/message 未展开)", m.StartAfter)
+			}
+			start = got
+		}
 		if m.OffsetTime != nil {
-			start = msgCursor.Add(m.OffsetTime.Duration())
+			start = start.Add(m.OffsetTime.Duration())
 		}
 		// 段间间隔:缺省 DefaultStep(与历史等价),显式 interval 覆盖。
 		// interval 只作用于数据段(规避节奏);对端 ACK 是伴生控制包,用 DefaultStep,

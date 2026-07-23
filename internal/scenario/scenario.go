@@ -27,9 +27,10 @@ type Scenario struct {
 type FlowSpec struct {
 	Name       string  `yaml:"name"`
 	OffsetTime *Offset `yaml:"offset_time"` // 流锚 = base_time + offset_time;缺省=base(跨流独立、并发,不接续别的 flow)
-	// StartAfter 可选,形如 "flow名.message_id";置则本 flow 的锚 = 被引消息整组完成时刻
-	// (msgCursor)+ offset_time(缺省 0 紧接),实现"一个 flow 在另一个 flow 某消息完成后开始"
-	// (如 FTP 控制通道触发数据通道)。见 internal/plan 的两阶段拓扑编排。
+	// StartAfter 可选,形如 "flow名"(该 flow 整流结束,挥手后)或 "flow名.message_id"
+	// (该消息整组完成,msgCursor);置则本 flow 的锚 = 被引时刻 + offset_time(缺省 0 紧接),
+	// 实现"一个 flow 在另一个 flow / 另一个 flow 某消息完成后开始"(如 FTP 控制通道触发数据通道)。
+	// 见 internal/plan 的多遍拓扑编排。
 	StartAfter string    `yaml:"start_after"`
 	Stack      []Layer   `yaml:"stack"`
 	Messages   []Message `yaml:"messages"`
@@ -47,6 +48,12 @@ type Message struct {
 	// MessageID 是本消息的可选标识;供其它 flow 的 start_after 引用本消息整组完成
 	// 时刻(msgCursor)。同一 flow 内必须唯一;不设则不被引用。见 internal/plan。
 	MessageID string `yaml:"message_id"`
+	// StartAfter 可选,形如 "flow名"(该 flow 整流结束,挥手后)或 "flow名.message_id"
+	// (该消息整组完成,msgCursor);置则本消息起点 = 被引时刻 + offset_time(缺省 0 紧接),
+	// 实现"某条消息在另一个 flow / 另一个 flow 某消息完成后才开始"(如控制通道触发本流
+	// 某条迟到请求)。禁止引用本 flow(同流自引);流内顺序由 message 链式游标保证。
+	// 见 internal/plan 的多遍拓扑编排与 internal/flow 的 resolve 回调。
+	StartAfter string `yaml:"start_after"`
 }
 
 // Segment 是消息的分段策略。MSS 为实际切段大小(0=不切,整条一段)。
@@ -591,12 +598,20 @@ func validateFlow(f FlowSpec) error {
 	return nil
 }
 
-// SplitStartAfter 把 "flow名.message_id" 拆成 (flow, msg)。按第一个 '.' 切分,
-// 故 message_id 本身可含 '.'。格式非法(flow 名或 msg 名为空)返回 ok=false。
+// SplitStartAfter 把 start_after 引用拆成 (flow, msg):"flow名" → (flow, ""),
+// "flow名.message_id" → (flow, msg)。按第一个 '.' 切分,故 message_id 本身可含 '.'。
+// 格式非法(flow 名为空,或 '.' 在首/尾使两段有空)返回 ok=false。msg=="" 表示引用整流结束。
 // Validate 与 plan 共用此解析。
 func SplitStartAfter(s string) (flow, msg string, ok bool) {
 	i := strings.Index(s, ".")
-	if i <= 0 || i == len(s)-1 { // '.' 不存在 / 在首 / 在尾 → 两段必有空
+	if i < 0 {
+		// 裸 flow 名:引用整流结束(挥手后)。空串非法。
+		if s == "" {
+			return "", "", false
+		}
+		return s, "", true
+	}
+	if i <= 0 || i == len(s)-1 { // '.' 在首 / 在尾 → 两段必有空
 		return "", "", false
 	}
 	return s[:i], s[i+1:], true
@@ -623,12 +638,14 @@ func validateFlowNames(flows []FlowSpec) error {
 	return nil
 }
 
-// validateStartAfter 校验所有 flow 的 start_after:格式合法、引用的 flow 存在且唯一、
-// 引用的 message_id 存在于该 flow,且依赖关系无环(含自引)。纯结构分析,不需要 Expand。
+// validateStartAfter 校验所有 start_after 引用(flow 级与 message 级):格式合法、
+// 引用的 flow 存在且唯一、引用的 message_id 存在于该 flow、不引用本 flow(message 级
+// 禁止同流自引,flow 级自引即自环由循环检测兜底),且依赖关系无环。纯结构分析,不需要 Expand。
 //
-// 引用存在性依赖各 flow 的 message_id 集合(已由 validateFlow 保证同 flow 内唯一);
-// 循环检测对具名 flow 做三色 DFS,边为 f.Name → 被引 flow 名。未具名的 start_after
-// flow 是纯消费者(不能被引用),不进图。
+// 依赖图以"具名 flow"为节点,边为 f.Name → 被引 flow 名:flow 级 start_after 产生一条边;
+// message 级 start_after 引用被引 flow,也产生一条边(f.Name → refFlow,同 f 内多条 message
+// 引用同一被引 flow 合并为一条)。被引 flow 是否具名不影响边:edges 存在性即代表有出边,
+// DFS 检环时若 next 不在 color 中(未具名被引 flow)直接当作无出边的叶子,不会误判。
 func validateStartAfter(flows []FlowSpec) error {
 	// flow 名 → 其具名 message_id 集合(用于校验被引 message 存在)。
 	msgIDs := map[string]map[string]bool{}
@@ -646,32 +663,57 @@ func validateStartAfter(flows []FlowSpec) error {
 		msgIDs[f.Name] = set
 	}
 
-	// 逐个校验 start_after 引用,并构建依赖边(具名引用方 → 被引 flow 名)。
-	edges := map[string]string{} // 引用方 flow 名 → 被引 flow 名(仅具名引用方)
-	for _, f := range flows {
-		if f.StartAfter == "" {
-			continue
-		}
-		refFlow, refMsg, ok := SplitStartAfter(f.StartAfter)
+	// 校验单个引用:格式、被引 flow 存在且唯一、被引 message 存在(若指定 msg)。
+	// 返回被引 flow 名,供建边。refFlow 自引(裸 flow 名或 msg 形式指向同 flow)由调用方判定。
+	checkRef := func(owner, ref string) (refFlow string, err error) {
+		refFlow, refMsg, ok := SplitStartAfter(ref)
 		if !ok {
-			return fmt.Errorf("flow %q 的 start_after %q 格式应为 \"flow名.message_id\"", f.Name, f.StartAfter)
+			return "", fmt.Errorf("%s 的 start_after %q 格式应为 \"flow名\" 或 \"flow名.message_id\"", owner, ref)
 		}
 		count := nameCount[refFlow]
 		if count == 0 {
-			return fmt.Errorf("flow %q 的 start_after 引用未知 flow %q", f.Name, refFlow)
+			return "", fmt.Errorf("%s 的 start_after 引用未知 flow %q", owner, refFlow)
 		}
 		if count > 1 {
-			return fmt.Errorf("flow %q 的 start_after 引用的 flow %q 不唯一", f.Name, refFlow)
+			return "", fmt.Errorf("%s 的 start_after 引用的 flow %q 不唯一", owner, refFlow)
 		}
-		if !msgIDs[refFlow][refMsg] {
-			return fmt.Errorf("flow %q 的 start_after 引用 flow %q 中未知 message_id %q", f.Name, refFlow, refMsg)
+		if refMsg != "" && !msgIDs[refFlow][refMsg] {
+			return "", fmt.Errorf("%s 的 start_after 引用 flow %q 中未知 message_id %q", owner, refFlow, refMsg)
 		}
-		if f.Name != "" {
-			edges[f.Name] = refFlow
+		return refFlow, nil
+	}
+
+	edges := map[string]string{} // 引用方 flow 名 → 被引 flow 名(同 flow 多条引用合并)
+	for _, f := range flows {
+		// flow 级 start_after。
+		if f.StartAfter != "" {
+			refFlow, err := checkRef(fmt.Sprintf("flow %q", f.Name), f.StartAfter)
+			if err != nil {
+				return err
+			}
+			if f.Name != "" {
+				edges[f.Name] = refFlow
+			}
+		}
+		// message 级 start_after:禁止同流自引(链式 msgCursor 已保证流内顺序,自引或循环无意义)。
+		for j, m := range f.Messages {
+			if m.StartAfter == "" {
+				continue
+			}
+			refFlow, err := checkRef(fmt.Sprintf("flow %q 的 message[%d]", f.Name, j), m.StartAfter)
+			if err != nil {
+				return err
+			}
+			if f.Name != "" && refFlow == f.Name {
+				return fmt.Errorf("flow %q 的 message[%d] 的 start_after 禁止引用本 flow(同流自引)", f.Name, j)
+			}
+			if f.Name != "" {
+				edges[f.Name] = refFlow
+			}
 		}
 	}
 
-	// 三色 DFS 检环。edges[f.Name]==f.Name 即自引 1-环。
+	// 三色 DFS 检环。edges[f.Name]==f.Name 即 flow 级自引 1-环。
 	const (
 		white = 0 // 未访问
 		gray  = 1 // 当前 DFS 栈中
