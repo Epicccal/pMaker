@@ -384,6 +384,84 @@ func TestMessageStartAfter(t *testing.T) {
 	}
 }
 
+// TestFTPBidirectionalInterleave 验证消息级双向交错的 start_after(方案 B 核心场景):
+// FTP 控制通道的 150 触发数据通道开始,数据通道整流结束再触发控制通道的 226。
+// 方案 A 已让 Validate 放行(事件粒度无环);方案 B 让 plan.Plan 真正展开它(算时与发包解耦)。
+//
+// 关键断言:control.150 的包时刻 < data 的包时刻 < control.226 的包时刻——双向交错成立。
+func TestFTPBidirectionalInterleave(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/ftp/bidirectional_interleave.yaml")
+	r, err := pcapgo.NewReader(bytes.NewReader(pcap))
+	if err != nil {
+		t.Fatalf("pcap reader: %v", err)
+	}
+	type rec struct {
+		ts           time.Time
+		sport, dport uint16
+		payload      bool
+	}
+	var recs []rec
+	for {
+		raw, ci, err := r.ReadPacketData()
+		if err != nil {
+			break
+		}
+		p := gopacket.NewPacket(raw, r.LinkType(), gopacket.Default)
+		var sp, dp uint16
+		if tcp := p.Layer(layers.LayerTypeTCP); tcp != nil {
+			tc := tcp.(*layers.TCP)
+			sp, dp = uint16(tc.SrcPort), uint16(tc.DstPort)
+		}
+		recs = append(recs, rec{ts: ci.Timestamp, sport: sp, dport: dp, payload: p.ApplicationLayer() != nil})
+	}
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// 控制通道用 sport=49152/dport=21;数据通道用 sport=49153/dport=50000。
+	// 150/226 均由服务端发出(sport=21,dport=49152,带 payload)。首个=150,末个=226。
+	// 数据通道任意包:sport=49153 或 dport=49153。
+	var msg150, msg226 time.Time
+	var dataFirst, dataLast time.Time
+	for _, r := range recs {
+		if r.sport == 21 && r.dport == 49152 && r.payload {
+			if msg150.IsZero() {
+				msg150 = r.ts
+			}
+			msg226 = r.ts
+		}
+		if r.sport == 49153 || r.dport == 49153 {
+			if dataFirst.IsZero() || r.ts.Before(dataFirst) {
+				dataFirst = r.ts
+			}
+			if r.ts.After(dataLast) {
+				dataLast = r.ts
+			}
+		}
+	}
+	if msg150.IsZero() || msg226.IsZero() {
+		t.Fatalf("未找到 control 的 150/226 报文: 150=%v 226=%v", msg150, msg226)
+	}
+	if dataFirst.IsZero() {
+		t.Fatal("未找到数据通道包")
+	}
+	// 期望时刻:150@base+5ms,data 首@base+7ms(= control.pasv msgCursor),226@base+16ms(= data flowEnd)。
+	if got := msg150.Sub(base); got != 5*time.Millisecond {
+		t.Errorf("150 报文偏移=%v,期望 5ms", got)
+	}
+	if got := dataFirst.Sub(base); got != 7*time.Millisecond {
+		t.Errorf("数据通道首包偏移=%v,期望 7ms(= control.pasv msgCursor)", got)
+	}
+	if got := msg226.Sub(base); got != 16*time.Millisecond {
+		t.Errorf("226 报文偏移=%v,期望 16ms(= data flowEnd)", got)
+	}
+	// 双向交错:150 < data < 226。
+	if !msg150.Before(dataFirst) {
+		t.Errorf("150(%v) 应早于数据通道首包(%v)", msg150, dataFirst)
+	}
+	if !dataLast.Before(msg226) {
+		t.Errorf("数据通道末包(%v) 应早于 226(%v)", dataLast, msg226)
+	}
+}
+
 func TestICMPEchoContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/icmp/echo.yaml")
 	icmpPackets := readICMPPackets(t, pcap)
