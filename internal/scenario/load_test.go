@@ -387,3 +387,63 @@ func TestStartAfterMessageLevelUnknownFlow(t *testing.T) {
 		t.Errorf("错误应提及未知 flow,得到: %v", err)
 	}
 }
+
+// TestStartAfterAcceptsFTPStyleInterleave 验证事件粒度循环检测放行 FTP 式合法交错:
+// control.dataStart(=data 流锚) 依赖 control.150(消息级);
+// control.226 依赖 data 流整流结束(消息级 start_after "data",data 整流完后才发 226)。
+// flow 粒度会把 control→data 与 data→control 压成 2-环而误拦;事件粒度下两条跨流边
+// 分别落在 control.150↔data.flowStart 与 control.226↔data.flowEnd,中间隔着流内链
+// control.150→control.226,方向一致、不成环。
+func TestStartAfterAcceptsFTPStyleInterleave(t *testing.T) {
+	// control: 发 RETR(带 id:retr)、收 150(带 id:pasv)、收 226(start_after data,等数据通道整流结束)。
+	control := "  - name: control\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        message_id: retr
+        stack:
+          - payload: { payload: "RETR x\r\n" }
+      - from: dst
+        message_id: pasv
+        stack:
+          - payload: { payload: "150\r\n" }
+      - from: dst
+        start_after: "data"
+        stack:
+          - payload: { payload: "226\r\n" }
+`
+	// data: 整流 start_after control.pasv(150 收完后才开始)。
+	data := "  - name: data\n    start_after: \"control.pasv\"\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        stack:
+          - payload: { payload: "file-bytes\r\n" }
+`
+	err := loadValidateErr(t, "interleave.yaml", "link_type: ethernet\nseed: 42\nflows:\n"+control+data)
+	if err != nil {
+		t.Fatalf("FTP 式合法交错应通过 Validate: %v", err)
+	}
+}
+
+// TestStartAfterMessageLevelCycleRejected 验证事件粒度仍能拦住真正的跨流消息级环:
+// a.msgA start_after b.msgB,b.msgB start_after a.msgA。
+func TestStartAfterMessageLevelCycleRejected(t *testing.T) {
+	flowA := "  - name: a\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        message_id: msgA
+        start_after: "b.msgB"
+        stack:
+          - payload: { payload: "a\r\n" }
+`
+	flowB := "  - name: b\n    stack:\n" + flowStackYAML + `    messages:
+      - from: src
+        message_id: msgB
+        start_after: "a.msgA"
+        stack:
+          - payload: { payload: "b\r\n" }
+`
+	err := loadValidateErr(t, "msgcycle.yaml", "link_type: ethernet\nseed: 42\nflows:\n"+flowA+flowB)
+	if err == nil {
+		t.Fatal("期望 Validate 拒绝跨流消息级 2-环,实际通过")
+	}
+	if !strings.Contains(err.Error(), "循环依赖") {
+		t.Errorf("错误应提及循环依赖,得到: %v", err)
+	}
+}
