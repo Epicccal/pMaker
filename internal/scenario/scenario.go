@@ -642,10 +642,15 @@ func validateFlowNames(flows []FlowSpec) error {
 // 引用的 flow 存在且唯一、引用的 message_id 存在于该 flow、不引用本 flow(message 级
 // 禁止同流自引,flow 级自引即自环由循环检测兜底),且依赖关系无环。纯结构分析,不需要 Expand。
 //
-// 依赖图以"具名 flow"为节点,边为 f.Name → 被引 flow 名:flow 级 start_after 产生一条边;
-// message 级 start_after 引用被引 flow,也产生一条边(f.Name → refFlow,同 f 内多条 message
-// 引用同一被引 flow 合并为一条)。被引 flow 是否具名不影响边:edges 存在性即代表有出边,
-// DFS 检环时若 next 不在 color 中(未具名被引 flow)直接当作无出边的叶子,不会误判。
+// 循环检测在**事件粒度**而非 flow 粒度上进行。节点是 flow 的"起点 / 终点"与每条
+// 参与引用的 message(具名被引 或 带引用);边 X→Y 表示"X 依赖 Y(X 在 Y 之后发生)"。
+// 这样同一 flow 的前段被别的 flow 引用、后段又依赖别的 flow 的**合法交错**(典型如
+// FTP:控制通道的 150 触发数据通道、数据通道整流结束再触发控制通道的 226)不会被
+// 误判为环——150 在 226 之前,事件链是有向无环的。
+//
+// 对比:flow 粒度把"control 依赖 data"与"data 依赖 control"压成两个整流节点的 2-环
+// 而误拦。事件粒度下这两条边分别落在 control.226 ↔ data.flowEnd,与 control.150 ↔
+// data.flowStart,中间隔着流内链 control.150 → ... → control.226,方向一致、不成环。
 func validateStartAfter(flows []FlowSpec) error {
 	// flow 名 → 其具名 message_id 集合(用于校验被引 message 存在)。
 	msgIDs := map[string]map[string]bool{}
@@ -664,7 +669,7 @@ func validateStartAfter(flows []FlowSpec) error {
 	}
 
 	// 校验单个引用:格式、被引 flow 存在且唯一、被引 message 存在(若指定 msg)。
-	// 返回被引 flow 名,供建边。refFlow 自引(裸 flow 名或 msg 形式指向同 flow)由调用方判定。
+	// 返回被引 flow 名,供建边。refFlow 自引(裸 flow 名或 msg 形式指向同 flow)由循环检测兜底。
 	checkRef := func(owner, ref string) (refFlow string, err error) {
 		refFlow, refMsg, ok := SplitStartAfter(ref)
 		if !ok {
@@ -683,17 +688,44 @@ func validateStartAfter(flows []FlowSpec) error {
 		return refFlow, nil
 	}
 
-	edges := map[string]string{} // 引用方 flow 名 → 被引 flow 名(同 flow 多条引用合并)
-	for _, f := range flows {
+	// refEdge 描述一条 start_after 依赖。flowLevel=true 表示 flow 级引用,引用方是 flow
+	// 起点(flowStart);否则是 message 级引用,引用方是 fi/msgIdx 那条消息。refMsg=="" 表示
+	// 引用被引 flow 的整流结束(flowEnd),否则引用 refFlow.refMsg 那条消息。
+	type refEdge struct {
+		flowLevel bool
+		fi        int // 引用方 flow 序号
+		msgIdx    int // message 级时引用方消息序号
+		refFlow   string
+		refMsg    string
+	}
+	var refs []refEdge
+	// 被引目标收集:哪些 flow 被裸引用(需 flowEnd 节点)、哪些 (flow,msgid) 被引用(需 msg 节点)。
+	bareRef := map[string]bool{}           // flow 名 -> 被裸引用(取 flowEnd)
+	msgRef := map[string]map[string]bool{} // flow 名 -> 被引用的 message_id 集合
+	collectTarget := func(ref string) {
+		refFlow, refMsg, ok := SplitStartAfter(ref)
+		if !ok {
+			return
+		}
+		if refMsg == "" {
+			bareRef[refFlow] = true
+			return
+		}
+		if msgRef[refFlow] == nil {
+			msgRef[refFlow] = map[string]bool{}
+		}
+		msgRef[refFlow][refMsg] = true
+	}
+	for fi, f := range flows {
 		// flow 级 start_after。
 		if f.StartAfter != "" {
 			refFlow, err := checkRef(fmt.Sprintf("flow %q", f.Name), f.StartAfter)
 			if err != nil {
 				return err
 			}
-			if f.Name != "" {
-				edges[f.Name] = refFlow
-			}
+			_, refMsg, _ := SplitStartAfter(f.StartAfter)
+			refs = append(refs, refEdge{flowLevel: true, fi: fi, refFlow: refFlow, refMsg: refMsg})
+			collectTarget(f.StartAfter)
 		}
 		// message 级 start_after:禁止同流自引(链式 msgCursor 已保证流内顺序,自引或循环无意义)。
 		for j, m := range f.Messages {
@@ -707,48 +739,172 @@ func validateStartAfter(flows []FlowSpec) error {
 			if f.Name != "" && refFlow == f.Name {
 				return fmt.Errorf("flow %q 的 message[%d] 的 start_after 禁止引用本 flow(同流自引)", f.Name, j)
 			}
-			if f.Name != "" {
-				edges[f.Name] = refFlow
-			}
+			_, refMsg, _ := SplitStartAfter(m.StartAfter)
+			refs = append(refs, refEdge{flowLevel: false, fi: fi, msgIdx: j, refFlow: refFlow, refMsg: refMsg})
+			collectTarget(m.StartAfter)
 		}
 	}
 
-	// 三色 DFS 检环。edges[f.Name]==f.Name 即 flow 级自引 1-环。
+	// 建事件依赖图。先定哪些 flow 参与引用(引用方 或 被引方),再为它们建节点并连流内链。
+	g := newEventGraph()
+	active := make([]bool, len(flows))
+	for fi, f := range flows {
+		if f.StartAfter != "" {
+			active[fi] = true
+		}
+		for _, m := range f.Messages {
+			if m.StartAfter != "" {
+				active[fi] = true
+			}
+		}
+		if f.Name != "" && (bareRef[f.Name] || len(msgRef[f.Name]) > 0) {
+			active[fi] = true
+		}
+	}
+
+	// flow 序号 -> flowStart / flowEnd 节点;消息节点按 (fi,j) 索引,具名消息另按 flow.msgid 索引供解引用。
+	startNode := map[int]int{}
+	endNode := map[int]int{}
+	msgNodeByPos := map[[2]int]int{}             // [fi, j] -> 节点
+	msgNodeByName := map[string]map[string]int{} // flow 名 -> msgid -> 节点
+	for fi, f := range flows {
+		if !active[fi] {
+			continue
+		}
+		label := f.Name
+		if label == "" {
+			label = "#" + strconv.Itoa(fi)
+		}
+		s := g.add("start:" + label)
+		e := g.add("end:" + label)
+		startNode[fi] = s
+		endNode[fi] = e
+
+		// 参与消息:带引用(start_after) 或 msgid 被引。其余消息不入图——跨过它们连相邻参与消息
+		// 仍是真实"之后"关系(后一条真的在前一条之后),只会保守地多加真依赖,不会造出假环。
+		var parts []int
+		for j, m := range f.Messages {
+			refBy := f.Name != "" && msgRef[f.Name] != nil && msgRef[f.Name][m.MessageID]
+			if m.StartAfter == "" && !refBy {
+				continue
+			}
+			mlabel := "msg:" + label + "#" + strconv.Itoa(j)
+			if m.MessageID != "" {
+				mlabel = "msg:" + label + "." + m.MessageID
+			}
+			n := g.add(mlabel)
+			msgNodeByPos[[2]int{fi, j}] = n
+			if m.MessageID != "" && f.Name != "" {
+				if msgNodeByName[f.Name] == nil {
+					msgNodeByName[f.Name] = map[string]int{}
+				}
+				msgNodeByName[f.Name][m.MessageID] = n
+			}
+			parts = append(parts, n)
+		}
+
+		// 流内链(X 依赖前一个参与消息;首个依赖 flowStart;flowEnd 依赖末个,无参与消息则依赖 flowStart)。
+		for i := 1; i < len(parts); i++ {
+			g.dep(parts[i], parts[i-1])
+		}
+		if len(parts) > 0 {
+			g.dep(parts[0], s)
+			g.dep(e, parts[len(parts)-1])
+		} else {
+			g.dep(e, s)
+		}
+	}
+
+	// 连 start_after 边:引用方节点 -> 被引方节点(被引 flow 必参与,故 endNode/msgNodeByName 已建)。
+	for _, r := range refs {
+		var from int
+		if r.flowLevel {
+			from = startNode[r.fi]
+		} else {
+			from = msgNodeByPos[[2]int{r.fi, r.msgIdx}]
+		}
+		var to int
+		if r.refMsg == "" {
+			to = endNode[flowIndexByName(flows, r.refFlow)]
+		} else {
+			to = msgNodeByName[r.refFlow][r.refMsg]
+		}
+		g.dep(from, to)
+	}
+
+	// 三色 DFS 检环。回边(指向当前栈中灰节点的边)即环。
+	if err := g.detectCycle(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// eventGraph 是事件粒度的有向依赖图。adj[i] 为节点 i 依赖的节点集(X→Y:X 在 Y 之后)。
+// 节点按 label 去重(add);环即 start_after 死锁。
+type eventGraph struct {
+	label []string
+	adj   [][]int
+	key   map[string]int
+}
+
+func newEventGraph() *eventGraph {
+	return &eventGraph{key: map[string]int{}}
+}
+
+// add 返回 label 对应的节点序号,已存在则复用。
+func (g *eventGraph) add(label string) int {
+	if i, ok := g.key[label]; ok {
+		return i
+	}
+	i := len(g.label)
+	g.label = append(g.label, label)
+	g.adj = append(g.adj, nil)
+	g.key[label] = i
+	return i
+}
+
+// dep 记录 from 依赖 to(from 在 to 之后发生)。
+func (g *eventGraph) dep(from, to int) {
+	g.adj[from] = append(g.adj[from], to)
+}
+
+// detectCycle 用三色 DFS 找环;有环则返回"循环依赖"错误,环上节点 label 用 " → " 连接。
+// 按节点序遍历,报错路径稳定(不依赖 map 迭代序)。
+func (g *eventGraph) detectCycle() error {
 	const (
 		white = 0 // 未访问
 		gray  = 1 // 当前 DFS 栈中
 		black = 2 // 已完成
 	)
-	color := map[string]int{}
-	var path []string
-	var dfs func(name string) error
-	dfs = func(name string) error {
-		color[name] = gray
-		path = append(path, name)
-		if next, ok := edges[name]; ok {
-			if color[next] == gray {
-				// 找到环:从 next 在 path 中的位置到末尾,再接回 next。
-				cycle := append([]string{}, path[indexString(path, next):]...)
-				cycle = append(cycle, next)
+	color := make([]int, len(g.label))
+	var stack []int
+	var dfs func(u int) error
+	dfs = func(u int) error {
+		color[u] = gray
+		stack = append(stack, u)
+		for _, v := range g.adj[u] {
+			switch color[v] {
+			case gray:
+				// 回边 u->v:v 在当前栈中。从 v 在 stack 的位置到末尾,再接回 v,即为环。
+				cycle := make([]string, 0, len(stack)-indexOfInt(stack, v)+1)
+				for _, n := range stack[indexOfInt(stack, v):] {
+					cycle = append(cycle, g.label[n])
+				}
+				cycle = append(cycle, g.label[v])
 				return fmt.Errorf("start_after 循环依赖: %s", strings.Join(cycle, " → "))
-			}
-			if color[next] == white {
-				if err := dfs(next); err != nil {
+			case white:
+				if err := dfs(v); err != nil {
 					return err
 				}
 			}
 		}
-		path = path[:len(path)-1]
-		color[name] = black
+		stack = stack[:len(stack)-1]
+		color[u] = black
 		return nil
 	}
-	// 按声明序遍历具名引用方,保证报错路径稳定(不依赖 map 迭代序)。
-	for _, f := range flows {
-		if f.Name == "" {
-			continue
-		}
-		if color[f.Name] == white {
-			if err := dfs(f.Name); err != nil {
+	for i := range g.label {
+		if color[i] == white {
+			if err := dfs(i); err != nil {
 				return err
 			}
 		}
@@ -756,10 +912,20 @@ func validateStartAfter(flows []FlowSpec) error {
 	return nil
 }
 
-// indexString 返回 s 在 slice 中首次出现的下标,不存在返回 -1。
-func indexString(slice []string, s string) int {
-	for i, v := range slice {
-		if v == s {
+// flowIndexByName 返回具名 flow(名唯一,见 validateFlowNames)的声明序号;未命名/不存在返回 -1。
+func flowIndexByName(flows []FlowSpec, name string) int {
+	for i, f := range flows {
+		if name != "" && f.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// indexOfInt 返回 v 在 slice 中首次出现的下标,不存在返回 -1。
+func indexOfInt(slice []int, v int) int {
+	for i, x := range slice {
+		if x == v {
 			return i
 		}
 	}
