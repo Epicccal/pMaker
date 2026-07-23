@@ -1,0 +1,68 @@
+# examples/ftp/bidirectional_interleave.yaml
+#
+# 演示消息级双向交错的 start_after:FTP 控制通道与数据通道是两条独立 TCP 五元组流,
+# 但应用层时序双向交错——控制通道的 150 触发数据通道开始,数据通道整流结束再触发
+# 控制通道的 226。这是方案 B(消息粒度两段式展开)要打通的核心场景:方案 A 已让
+# Validate 放行它(事件粒度无环),方案 B 让 plan.Plan 真正展开它(算时与发包解耦)。
+#
+# 时序(无环有向链):
+#
+#   control: RETR ─► 150 ──────────────────────────────────────► 226
+#                    │ (150 后开始)                          ▲ (数据传完才发 226)
+#                    ▼                                       │
+#   data:             SYN/SYN-ACK/ACK ─► [文件内容] ─► 挥手 ─┘
+#
+#   - data flow 级 start_after: control.pasv(=150 报文)→ 数据通道在 150 收完后才开始握手。
+#   - control 的 226 报文 message 级 start_after: data → 226 在数据通道整流结束(挥手后)才发。
+#
+# 时间线(base=2024-01-01T00:00:00Z,默认步长 1ms,open=handshake/close=fin):
+#
+#   control 握手:        base+0/1/2ms(msgCursor=3ms)
+#   control RETR:        base+3(data)/4(ack),末尾 5ms        (message_id: retr)
+#   control 150:         base+5(data)/6(ack),msgCursor=7ms    (message_id: pasv) ← data 引用此
+#   data 握手(SYN 起):  base+7ms(= control.pasv 的 msgCursor,紧接)
+#   data 握手:           base+7/8/9ms
+#   data 文件内容:       base+10(data)/11(ack),末尾 12ms
+#   data 挥手:           base+12/13/14/15ms,flowEnd=16ms      ← control.226 引用此
+#   control 226:         base+16(data)/17(ack),末尾 18ms      (start_after: data)
+#   control 挥手:       base+18/19/20/21ms
+#
+# 关键断言:control.150 的包时刻 < data 的包时刻 < control.226 的包时刻。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  # 控制通道:发 RETR,收 150(带 message_id: pasv 供 data 引用),收 226(等 data 整流结束)。
+  - name: control
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 21, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        message_id: retr
+        stack:
+          - payload: { payload: "RETR file\r\n" }
+      - from: dst
+        message_id: pasv           # ← 被 data flow 级引用
+        stack:
+          - payload: { payload: "150 Opening data connection\r\n" }
+      - from: dst
+        start_after: "data"        # ← 等数据通道整流结束(挥手后)再发 226
+        stack:
+          - payload: { payload: "226 Transfer complete\r\n" }
+
+  # 数据通道:control.pasv(150)收完后紧接握手,传一段文件内容,挥手。
+  - name: data
+    start_after: "control.pasv"
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49153, dport: 50000, client_isn: 9000, server_isn: 7000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: dst
+        stack:
+          - payload: { payload: "file-bytes\r\n" }
