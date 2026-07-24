@@ -57,9 +57,6 @@ func BuildStartAfterGraph(flows []FlowSpec) *StartAfterGraph {
 		return i
 	}
 
-	nameCount := flowNameCounts(flows)
-	_ = nameCount // 基本校验(被引 flow 唯一、被引 message 存在)由 validateStartAfter 先行
-
 	// 收集 start_after 引用边与被引目标。
 	type refEdge struct {
 		flowLevel bool
@@ -236,61 +233,4 @@ func (g *StartAfterGraph) DetectCycle() error {
 		}
 	}
 	return nil
-}
-
-// TopoOrder 返回事件节点的拓扑序(依赖在前,被依赖... 见下)。边语义为"X 依赖 Y(X 在 Y 之后)",
-// 故 Y(被依赖项)应先算出时刻;拓扑序把被依赖项排在前面。返回的序里,每个节点出现在它所有
-// 依赖项之后。按节点序做稳定 Kahn,保证确定性(不依赖 map 迭代序)。图有环时返回 nil。
-func (g *StartAfterGraph) TopoOrder() []int {
-	n := len(g.Nodes)
-	// indeg[i] = 有多少条边指向 i(即有多少节点依赖 i)。
-	// 边 from->to 表示 from 依赖 to;故 to 的入度 = 依赖 to 的节点数。拓扑序要 to 先出。
-	indeg := make([]int, n)
-	for _, adj := range g.Adj {
-		for _, to := range adj {
-			indeg[to]++
-		}
-	}
-	// 用按序号升序的最小堆语义:每次取序号最小的入度为 0 节点,保证稳定。
-	var queue []int
-	for i := 0; i < n; i++ {
-		if indeg[i] == 0 {
-			queue = append(queue, i)
-		}
-	}
-	// queue 保持升序插入;取出首元素即可(最小序号优先)。
-	out := make([]int, 0, n)
-	for len(queue) > 0 {
-		u := queue[0]
-		queue = queue[1:]
-		out = append(out, u)
-		for _, to := range g.Adj[u] {
-			indeg[to]--
-			if indeg[to] == 0 {
-				// 插入并保持升序,保证稳定确定性。
-				pos := sortSearchInt(queue, to)
-				queue = append(queue, 0)
-				copy(queue[pos+1:], queue[pos:])
-				queue[pos] = to
-			}
-		}
-	}
-	if len(out) != n {
-		return nil // 有环
-	}
-	return out
-}
-
-// sortSearchInt 返回 v 在已升序的 slice 中应插入的位置(首个 > v 的下标)。
-func sortSearchInt(slice []int, v int) int {
-	lo, hi := 0, len(slice)
-	for lo < hi {
-		mid := (lo + hi) / 2
-		if slice[mid] < v {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo
 }
