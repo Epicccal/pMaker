@@ -69,6 +69,16 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   (非负时长),不依赖运行期校验。**各 offset_time 的参照点因字段而异**:`packet.offset_time` 相对
   **上一包**(第一包相对 base);`flow.offset_time` 相对 **base_time**(跨流独立、可并行,flow 不消费/推进
   packet 游标);`message.offset_time` 相对 **上一条消息**(第一条相对握手完成后)。
+- **已实现消息粒度两段式展开(方案 B)**:支持 FTP 控制通道 ↔ 数据通道这种**消息级双向交错**的
+  `start_after` 场景(数据通道 `start_after: control.150` + 控制通道 226 报文 `start_after: data`)。
+  `plan.Plan` 改为**两段式**——阶段一(`scheduler`)按事件粒度递归+记忆化**只算时刻不发包**:
+  每个 flowStart / 每条 message 的 start 与 msgCursor / flowEnd 都是独立事件,各自只依赖其引用的事件,
+  被引事件先算出、引用方后算,FTP 式 `control.150 → data → control.226` 在事件粒度有向无环故能算通
+  (整流粒度会把它压成"互等对方整流先完成"的死锁);阶段二各 flow 拿着已算好的 per-message 起始
+  时刻表独立 `flow.Expand`(seq/ack 状态单次展开内连续维护)。事件依赖图(`scenario.StartAfterGraph`)
+  由 `validateStartAfter` 与 plan 的算时阶段共用(`BuildStartAfterGraph`),避免两包重复实现图逻辑;
+  真环(跨流消息级互引)仍由校验阶段三色 DFS 拦截。`flow.Expand` 的 `schedule` 参数注入 per-message
+  起始时刻;无跨流依赖时退化为 `resolve` 回调路径,行为与历史逐字节等价。
 - **未实现 / 简化**:flow 的 overlap / 重传 / IP 分片未做(乱序与段间 RTT 已由 `message.offset_time` /
   `segment.interval` 覆盖);
   畸形开关 `fix_lengths` / `checksum` **解析但忽略**(build 时 `slog.Warn`),真正的畸形 / 原始字节兜底待做;
