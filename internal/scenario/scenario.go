@@ -668,84 +668,49 @@ func validateStartAfter(flows []FlowSpec) error {
 		msgIDs[f.Name] = set
 	}
 
-	// 校验单个引用:格式、被引 flow 存在且唯一、被引 message 存在(若指定 msg)。
-	// 返回被引 flow 名,供建边。refFlow 自引(裸 flow 名或 msg 形式指向同 flow)由循环检测兜底。
-	checkRef := func(owner, ref string) (refFlow string, err error) {
+	// 引用合法性校验(格式、被引 flow 存在且唯一、被引 message 存在)在独立于建图的
+	// checkRef 中完成;依赖图与检环由 BuildStartAfterGraph + DetectCycle 负责。
+	checkRef := func(owner, ref string) error {
 		refFlow, refMsg, ok := SplitStartAfter(ref)
 		if !ok {
-			return "", fmt.Errorf("%s 的 start_after %q 格式应为 \"flow名\" 或 \"flow名.message_id\"", owner, ref)
+			return fmt.Errorf("%s 的 start_after %q 格式应为 \"flow名\" 或 \"flow名.message_id\"", owner, ref)
 		}
 		count := nameCount[refFlow]
 		if count == 0 {
-			return "", fmt.Errorf("%s 的 start_after 引用未知 flow %q", owner, refFlow)
+			return fmt.Errorf("%s 的 start_after 引用未知 flow %q", owner, refFlow)
 		}
 		if count > 1 {
-			return "", fmt.Errorf("%s 的 start_after 引用的 flow %q 不唯一", owner, refFlow)
+			return fmt.Errorf("%s 的 start_after 引用的 flow %q 不唯一", owner, refFlow)
 		}
 		if refMsg != "" && !msgIDs[refFlow][refMsg] {
-			return "", fmt.Errorf("%s 的 start_after 引用 flow %q 中未知 message_id %q", owner, refFlow, refMsg)
+			return fmt.Errorf("%s 的 start_after 引用 flow %q 中未知 message_id %q", owner, refFlow, refMsg)
 		}
-		return refFlow, nil
+		return nil
 	}
 
-	// refEdge 描述一条 start_after 依赖。flowLevel=true 表示 flow 级引用,引用方是 flow
-	// 起点(flowStart);否则是 message 级引用,引用方是 fi/msgIdx 那条消息。refMsg=="" 表示
-	// 引用被引 flow 的整流结束(flowEnd),否则引用 refFlow.refMsg 那条消息。
-	type refEdge struct {
-		flowLevel bool
-		fi        int // 引用方 flow 序号
-		msgIdx    int // message 级时引用方消息序号
-		refFlow   string
-		refMsg    string
-	}
-	var refs []refEdge
-	// 被引目标收集:哪些 flow 被裸引用(需 flowEnd 节点)、哪些 (flow,msgid) 被引用(需 msg 节点)。
-	bareRef := map[string]bool{}           // flow 名 -> 被裸引用(取 flowEnd)
-	msgRef := map[string]map[string]bool{} // flow 名 -> 被引用的 message_id 集合
-	collectTarget := func(ref string) {
-		refFlow, refMsg, ok := SplitStartAfter(ref)
-		if !ok {
-			return
-		}
-		if refMsg == "" {
-			bareRef[refFlow] = true
-			return
-		}
-		if msgRef[refFlow] == nil {
-			msgRef[refFlow] = map[string]bool{}
-		}
-		msgRef[refFlow][refMsg] = true
-	}
-	for fi, f := range flows {
+	for _, f := range flows {
 		// flow 级 start_after。
 		if f.StartAfter != "" {
-			refFlow, err := checkRef(fmt.Sprintf("flow %q", f.Name), f.StartAfter)
-			if err != nil {
+			if err := checkRef(fmt.Sprintf("flow %q", f.Name), f.StartAfter); err != nil {
 				return err
 			}
-			_, refMsg, _ := SplitStartAfter(f.StartAfter)
-			refs = append(refs, refEdge{flowLevel: true, fi: fi, refFlow: refFlow, refMsg: refMsg})
-			collectTarget(f.StartAfter)
 		}
 		// message 级 start_after:禁止同流自引(链式 msgCursor 已保证流内顺序,自引或循环无意义)。
 		for j, m := range f.Messages {
 			if m.StartAfter == "" {
 				continue
 			}
-			refFlow, err := checkRef(fmt.Sprintf("flow %q 的 message[%d]", f.Name, j), m.StartAfter)
-			if err != nil {
+			refFlow, _, _ := SplitStartAfter(m.StartAfter)
+			if err := checkRef(fmt.Sprintf("flow %q 的 message[%d]", f.Name, j), m.StartAfter); err != nil {
 				return err
 			}
 			if f.Name != "" && refFlow == f.Name {
 				return fmt.Errorf("flow %q 的 message[%d] 的 start_after 禁止引用本 flow(同流自引)", f.Name, j)
 			}
-			_, refMsg, _ := SplitStartAfter(m.StartAfter)
-			refs = append(refs, refEdge{flowLevel: false, fi: fi, msgIdx: j, refFlow: refFlow, refMsg: refMsg})
-			collectTarget(m.StartAfter)
 		}
 	}
 
-	// 建事件依赖图(BuildStartAfterGraph 与本函数共用图逻辑,见 start_after_graph.go),
+	// 建事件依赖图(BuildStartAfterGraph 与 plan 算时阶段共用图逻辑,见 start_after_graph.go),
 	// 再三色 DFS 检环。回边(指向当前栈中灰节点的边)即环。
 	g := BuildStartAfterGraph(flows)
 	if err := g.DetectCycle(); err != nil {
