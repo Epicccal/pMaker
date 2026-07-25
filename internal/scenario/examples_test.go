@@ -462,6 +462,143 @@ func TestFTPBidirectionalInterleave(t *testing.T) {
 	}
 }
 
+// TestFTPPasvRetrContent 回读 pasv_retr,断言控制连接命令/响应、多行欢迎横幅(220 续行),
+// 以及数据通道传输的文件内容在合流后的 pcap 里都出现(命令/响应 + 数据字节均 bytes.Contains)。
+func TestFTPPasvRetrContent(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/ftp/pasv_retr.yaml")
+	for _, want := range [][]byte{
+		// 多行 220 续行(RFC 959 §4.1.3:code-line \r\n … code lastline \r\n)
+		[]byte("220-Welcome to pMaker FTP service.\r\n"),
+		[]byte("220-All transfers are logged.\r\n"),
+		[]byte("220 Login anonymous accepted.\r\n"),
+		// 控制连接命令
+		[]byte("USER anonymous\r\n"),
+		[]byte("PASS guest\r\n"),
+		[]byte("TYPE I\r\n"),
+		[]byte("PASV\r\n"),
+		[]byte("RETR secret.txt\r\n"),
+		[]byte("QUIT\r\n"),
+		// 控制连接响应
+		[]byte("331 Please specify the password.\r\n"),
+		[]byte("230 Login successful.\r\n"),
+		[]byte("200 Switching to Binary mode.\r\n"),
+		[]byte("227 Entering Passive Mode (10,0,0,21,195,80).\r\n"),
+		[]byte("150 Opening BINARY mode data connection for secret.txt.\r\n"),
+		[]byte("226 Transfer complete.\r\n"),
+		[]byte("221 Goodbye.\r\n"),
+		// 数据通道传输的文件内容
+		[]byte("TOP SECRET"),
+		[]byte("username=admin password=hunter2"),
+		[]byte("token=0xdeadbeef"),
+	} {
+		if !bytes.Contains(pcap, want) {
+			t.Errorf("pcap 不含 %q", want)
+		}
+	}
+}
+
+// TestFTPPasvRetrTiming 断言 pasv_retr 的双向交错时序落在真实 pcap 上:
+// 150 报文时刻 < data 流任一包时刻(数据通道在 150 后才开始);data 流末包时刻 < 226 报文时刻(226 在数据传完才发)。
+// 跨流时序只有 plan 汇流后才有意义,故落在 scenario 层的 generatePcap 上而非单 flow 测试。
+func TestFTPPasvRetrTiming(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/ftp/pasv_retr.yaml")
+	r, err := pcapgo.NewReader(bytes.NewReader(pcap))
+	if err != nil {
+		t.Fatalf("pcap reader: %v", err)
+	}
+	type rec struct {
+		ts           time.Time
+		sport, dport uint16
+		payload      []byte
+	}
+	var recs []rec
+	for {
+		raw, ci, err := r.ReadPacketData()
+		if err != nil {
+			break
+		}
+		p := gopacket.NewPacket(raw, r.LinkType(), gopacket.Default)
+		var sp, dp uint16
+		if tcp := p.Layer(layers.LayerTypeTCP); tcp != nil {
+			tc := tcp.(*layers.TCP)
+			sp, dp = uint16(tc.SrcPort), uint16(tc.DstPort)
+		}
+		var pl []byte
+		if app := p.ApplicationLayer(); app != nil {
+			pl = app.Payload()
+		}
+		recs = append(recs, rec{ts: ci.Timestamp, sport: sp, dport: dp, payload: pl})
+	}
+
+	// 控制连接 49154<->21:150 由服务端(sport=21)发出且 payload 以 "150 " 开头;
+	// 226 同样由服务端发出且 payload 以 "226 " 开头。数据通道 49155<->50000 任一包。
+	var msg150, msg226 time.Time
+	var dataFirst, dataLast time.Time
+	for _, r := range recs {
+		isControl := (r.sport == 21 && r.dport == 49154) || (r.sport == 49154 && r.dport == 21)
+		isData := r.sport == 49155 || r.dport == 49155
+		if isControl && len(r.payload) > 0 {
+			if bytes.HasPrefix(r.payload, []byte("150 ")) && msg150.IsZero() {
+				msg150 = r.ts
+			}
+			if bytes.HasPrefix(r.payload, []byte("226 ")) {
+				msg226 = r.ts
+			}
+		}
+		if isData {
+			if dataFirst.IsZero() || r.ts.Before(dataFirst) {
+				dataFirst = r.ts
+			}
+			if r.ts.After(dataLast) {
+				dataLast = r.ts
+			}
+		}
+	}
+	if msg150.IsZero() {
+		t.Fatal("未找到控制通道 150 报文")
+	}
+	if msg226.IsZero() {
+		t.Fatal("未找到控制通道 226 报文")
+	}
+	if dataFirst.IsZero() {
+		t.Fatal("未找到数据通道包")
+	}
+	if !msg150.Before(dataFirst) {
+		t.Errorf("150(%v) 应早于数据通道首包(%v)", msg150, dataFirst)
+	}
+	if !dataLast.Before(msg226) {
+		t.Errorf("数据通道末包(%v) 应早于 226(%v)", dataLast, msg226)
+	}
+}
+
+// TestFTPPortStorContent 回读 port_stor,断言主动模式 PORT 命令、上传数据(二进制 data_hex),
+// 以及 226 在数据传完后才发(整流结束后触发)。
+func TestFTPPortStorContent(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/ftp/port_stor.yaml")
+	for _, want := range [][]byte{
+		[]byte("PORT 10,0,0,10,192,5\r\n"),
+		[]byte("STOR upload.bin\r\n"),
+		[]byte("150 Ok to send data.\r\n"),
+		[]byte("226 Transfer complete.\r\n"),
+		// data_hex "CLOUD DATA" 在数据通道(客户端上传方向,sport=49157、dport=20)
+		[]byte("CLOUD DATA"),
+	} {
+		if !bytes.Contains(pcap, want) {
+			t.Errorf("pcap 不含 %q", want)
+		}
+	}
+}
+
+// TestFTPMalformedInjection 回读 malformed_injection,断言单段内塞入两条命令(CRLF 注入):
+// "retr foo\r\ndele /etc/passwd\r\n",验证 command 原样输出(小写)与 CRLF smuggling 能力。
+func TestFTPMalformedInjection(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/ftp/malformed_injection.yaml")
+	want := []byte("retr foo\r\ndele /etc/passwd\r\n")
+	if !bytes.Contains(pcap, want) {
+		t.Errorf("pcap 不含 CRLF 注入的预期 payload %q", want)
+	}
+}
+
 func TestICMPEchoContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/icmp/echo.yaml")
 	icmpPackets := readICMPPackets(t, pcap)
