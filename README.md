@@ -89,7 +89,7 @@
 - IPv4 / IPv6
 - TCP / UDP
 - ICMPv4 / ICMPv6
-- HTTP / DNS
+- HTTP / DNS / FTP
 - ...
 
 </td>

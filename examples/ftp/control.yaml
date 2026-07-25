@@ -1,0 +1,22 @@
+# examples/ftp/control.yaml
+#
+# 两个独立的 FTP 控制连接数据包(stack 模型,演示 ftp_request/ftp_response 作为 payload 生产层):
+#   ① 客户端 USER 命令
+#   ② 服务器 331 响应
+# 完整带数据连接的 FTP 会话见 pasv_retr.yaml / port_stor.yaml 的 flows 场景。
+link_type: ethernet
+seed: 42
+packets:
+  - name: ftp-user
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.21", ttl: 64 }
+      - tcp:  { sport: 49160, dport: 21, flags: [PSH, ACK], seq: 1001, ack: 5001 }
+      - ftp_request: { command: USER, args: anonymous }
+
+  - name: ftp-331
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.21", dst: "10.0.0.10", ttl: 64 }
+      - tcp:  { sport: 21, dport: 49160, flags: [PSH, ACK], seq: 5001, ack: 1015 }
+      - ftp_response: { code: 331, message: "Please specify the password." }
