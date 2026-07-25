@@ -1,0 +1,19 @@
+# examples/ftp/malformed_injection.yaml
+#
+# FTP 畸形/规避用例:CRLF 命令注入(FTP request smuggling)。
+#
+# 一个看似普通的 RETR 请求,参数里藏了 \r\n + 第二条命令 DELE,
+# 单个 TCP 段内塞入两条 FTP 命令。测试 IDS 能否识别命令注入、
+# 是否会被"一行一命令"的简单解析欺骗。同时命令用小写,验证对大小写的处理。
+link_type: ethernet
+seed: 42
+packets:
+  - name: ftp-injection
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.21", ttl: 64 }
+      - tcp:  { sport: 49170, dport: 21, flags: [PSH, ACK], seq: 1001, ack: 5001 }
+      # args 含 CRLF 注入:序列化为 "retr foo\r\ndele /etc/passwd\r\n"
+      - ftp_request:
+          command: retr
+          args: "foo\r\ndele /etc/passwd"
