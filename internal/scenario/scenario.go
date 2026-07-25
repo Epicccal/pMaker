@@ -328,6 +328,21 @@ type (
 		Headers map[string]string `yaml:"headers"`
 		Body    string            `yaml:"body"`
 	}
+	// FTPRequestFields 是一条 FTP 控制连接命令:COMMAND[ arg]\r\n。
+	// command 原样输出(不强制大写),以便构造小写/非标命令等畸形用例。
+	FTPRequestFields struct {
+		Command string `yaml:"command"`
+		Args    string `yaml:"args"`
+	}
+	// FTPResponseFields 是一条 FTP 控制连接响应。
+	// 单行:message -> "code message\r\n"。
+	// 多行(续行):lines -> "code-line1\r\n…\rcode lastline\r\n",
+	// 最后一行用空格前缀,其余用连字符前缀(RFC 959 §4.1.3)。
+	FTPResponseFields struct {
+		Code    int      `yaml:"code"`
+		Message string   `yaml:"message"`
+		Lines   []string `yaml:"lines"`
+	}
 )
 
 // UnmarshalYAML 把单键 map(`- eth: {...}`)读成 {Type, Fields},保序由外层 list 保证。
@@ -446,6 +461,12 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 		return &f, decodeKnownFields(val, typ, &f)
 	case "http_response":
 		var f HTTPRespFields
+		return &f, decodeKnownFields(val, typ, &f)
+	case "ftp_request":
+		var f FTPRequestFields
+		return &f, decodeKnownFields(val, typ, &f)
+	case "ftp_response":
+		var f FTPResponseFields
 		return &f, decodeKnownFields(val, typ, &f)
 	default:
 		return nil, fmt.Errorf("未知层类型 %q", typ)
@@ -578,7 +599,7 @@ func validateFlow(f FlowSpec) error {
 			return fmt.Errorf("messages[%d].stack 当前需恰好一个 payload 生产层,得到 %d 个", j, len(m.Stack))
 		}
 		switch m.Stack[0].Fields.(type) {
-		case *HTTPReqFields, *HTTPRespFields, *PayloadFields, PayloadHex:
+		case *HTTPReqFields, *HTTPRespFields, *FTPRequestFields, *FTPResponseFields, *PayloadFields, PayloadHex:
 		default:
 			return fmt.Errorf("messages[%d].stack[0] 不支持 %q", j, m.Stack[0].Type)
 		}
@@ -825,6 +846,20 @@ func validateLayer(l Layer) error {
 			if _, err := ParsePayloadHex(f.PayloadHex); err != nil {
 				return err
 			}
+		}
+	case *FTPRequestFields:
+		if f.Command == "" {
+			return fmt.Errorf("需要 command")
+		}
+	case *FTPResponseFields:
+		if f.Code == 0 {
+			return fmt.Errorf("需要 code")
+		}
+		if f.Message != "" && len(f.Lines) > 0 {
+			return fmt.Errorf("message 与 lines 只能配置一个")
+		}
+		if f.Message == "" && len(f.Lines) == 0 {
+			return fmt.Errorf("需要 message 或 lines")
 		}
 	case PayloadHex:
 		if _, err := ParsePayloadHex(string(f)); err != nil {

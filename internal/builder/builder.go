@@ -155,6 +155,10 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			serLayers = append(serLayers, gopacket.Payload(serializeHTTPReq(f)))
 		case *scenario.HTTPRespFields:
 			serLayers = append(serLayers, gopacket.Payload(serializeHTTPResp(f)))
+		case *scenario.FTPRequestFields:
+			serLayers = append(serLayers, gopacket.Payload(serializeFTPReq(f)))
+		case *scenario.FTPResponseFields:
+			serLayers = append(serLayers, gopacket.Payload(serializeFTPResp(f)))
 		default:
 			return nil, fmt.Errorf("不支持的层类型 %q", l.Type)
 		}
