@@ -3,6 +3,7 @@ package flow_test
 import (
 	"bytes"
 	"encoding/hex"
+	"slices"
 	"testing"
 	"time"
 
@@ -266,6 +267,56 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 	}
 }
 
+// TestFTPPasvRetrShape 回读 pasv_retr,验证合流后是两条独立五元组的 TCP 流(用 sport 区分),
+// 且数据通道的 sport/dport 与控制连接不同(端口角色独立)。shape(端口/握手)放 flow 层验证;
+// 跨流时序(150<data<226)在 scenario 层 TestFTPPasvRetrTiming 单独断言——flow.Expand 单 flow
+// 无跨流概念。
+func TestFTPPasvRetrShape(t *testing.T) {
+	data := genFlow(t, "../../examples/ftp/pasv_retr.yaml")
+	tcps := readTCP(t, data)
+	sports := map[uint16]bool{}
+	for _, tc := range tcps {
+		sports[uint16(tc.SrcPort)] = true
+	}
+	// 控制连接 sport=49154、数据连接 sport=49155(以及反向 21 / 50000)各自独立。
+	if !sports[49154] {
+		t.Errorf("缺少控制连接 sport=49154 的包(独立五元组未生成)")
+	}
+	if !sports[49155] {
+		t.Errorf("缺少数据通道 sport=49155 的包(独立五元组未生成)")
+	}
+	// 两条流都应有自己的握手 SYN(各开 open=handshake)。
+	synBySport := map[uint16]int{}
+	for _, tc := range tcps {
+		if tc.SYN && !tc.ACK {
+			synBySport[uint16(tc.SrcPort)]++
+		}
+	}
+	for _, sp := range []uint16{49154, 49155} {
+		if synBySport[sp] == 0 {
+			t.Errorf("sport=%d 缺少自己的 SYN(握手),两条流应各自独立握手", sp)
+		}
+	}
+}
+
+// TestFTPPortStorShape 回读 port_stor,验证主动模式:服务器从 20 端口发起数据连接 SYN
+// (data 流 src=服务器,整条 stack 反转),数据通道 sport=20、dport=49157,与控制连接不同。
+func TestFTPPortStorShape(t *testing.T) {
+	data := genFlow(t, "../../examples/ftp/port_stor.yaml")
+	tcps := readTCP(t, data)
+	// 控制连接 49156<->21;数据连接由服务器(20)主动连客户端(49157)。
+	var dataSYN *layers.TCP
+	for _, tc := range tcps {
+		if tc.SYN && !tc.ACK && uint16(tc.SrcPort) == 20 && uint16(tc.DstPort) == 49157 {
+			dataSYN = tc
+			break
+		}
+	}
+	if dataSYN == nil {
+		t.Fatalf("未找到主动模式数据通道 SYN(sport=20 -> dport=49157,应由服务器发起)")
+	}
+}
+
 func mssOption(tc *layers.TCP) uint16 {
 	for _, o := range tc.Options {
 		if o.OptionType == layers.TCPOptionKindMSS && len(o.OptionData) == 2 {
@@ -285,10 +336,5 @@ func tcpOf(p scenario.Packet) *scenario.TCPFields {
 }
 
 func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ss, s)
 }
