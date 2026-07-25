@@ -21,6 +21,8 @@ func writeScenario(t *testing.T, name, body string) string {
 
 // TestLoadRejectsUnknownSegmentFields 验证 segment 的未实现字段(order/overlap/retransmit)
 // 在解析层被拒,并带字段名。
+//
+// 覆盖 scenario.go 的 Load(KnownFields)与 validateLayer 路径。
 func TestLoadRejectsUnknownSegmentFields(t *testing.T) {
 	path := writeScenario(t, "seg.yaml", `link_type: ethernet
 seed: 42
@@ -92,6 +94,8 @@ packets:
 }
 
 // TestLoadAcceptsValidScenario 回归保护:合法场景不被未知字段校验误伤。
+//
+// 覆盖 scenario.go 的 Load + Validate 全路径。
 func TestLoadAcceptsValidScenario(t *testing.T) {
 	path := writeScenario(t, "ok.yaml", `link_type: ethernet
 seed: 42
@@ -103,6 +107,57 @@ packets:
 `)
 	if _, err := scenario.Load(path); err != nil {
 		t.Fatalf("合法场景应通过 KnownFields 校验,实际失败: %v", err)
+	}
+}
+
+// TestValidateQuoteFromReference 校验 Validate 拦截 quote_from 引用未知 packet。
+func TestValidateQuoteFromReference(t *testing.T) {
+	s := &scenario.Scenario{Packets: []scenario.Packet{{
+		Stack: []scenario.Layer{{Type: "icmp", Fields: &scenario.ICMPFields{QuoteFrom: "missing"}}},
+	}}}
+	err := scenario.Validate(s)
+	if err == nil || !strings.Contains(err.Error(), `quote_from 引用未知 packet "missing"`) {
+		t.Fatalf("Validate() error=%v,期望 quote_from 未知引用", err)
+	}
+}
+
+// TestValidateSegmentIntervalNeedsMSS: segment.interval 必须配 mss>0,否则整条不切、
+// interval 无处生效,会被静默吞掉。validate 应尽早报错。
+func TestValidateSegmentIntervalNeedsMSS(t *testing.T) {
+	stack := []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+		{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80}},
+		{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "none", Close: "none"}},
+	}
+	// 包内测试可直接构造 Offset(校验只看 Interval 指针非 nil,不看 Duration 值)。
+	interval := &scenario.Offset{}
+	msg := func(seg *scenario.Segment) scenario.Message {
+		return scenario.Message{From: "src", Stack: []scenario.Layer{{Type: "payload_hex", Fields: scenario.PayloadHex("0xab")}}, Segment: seg}
+	}
+
+	// interval 无 mss → 报错。
+	s := &scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "f", Stack: stack, Messages: []scenario.Message{
+		msg(&scenario.Segment{Interval: interval}), // mss=0
+	}}}}
+	if err := scenario.Validate(s); err == nil || !strings.Contains(err.Error(), "interval 需配合 mss>0") {
+		t.Fatalf("Validate() error=%v,期望 interval 需配合 mss>0", err)
+	}
+
+	// interval + mss>0 → 通过。
+	s2 := &scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "f", Stack: stack, Messages: []scenario.Message{
+		msg(&scenario.Segment{MSS: 8, Interval: interval}),
+	}}}}
+	if err := scenario.Validate(s2); err != nil {
+		t.Fatalf("Validate() 有 mss 时不应报错,得到 %v", err)
+	}
+
+	// 只 mss 无 interval → 通过。
+	s3 := &scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "f", Stack: stack, Messages: []scenario.Message{
+		msg(&scenario.Segment{MSS: 8}),
+	}}}}
+	if err := scenario.Validate(s3); err != nil {
+		t.Fatalf("Validate() 只 mss 不应报错,得到 %v", err)
 	}
 }
 

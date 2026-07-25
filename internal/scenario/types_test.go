@@ -8,6 +8,8 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
+// TestPayloadHexRequiresPrefix 校验 ParsePayloadHex(见 types.go)对 0x 前缀的强制要求,
+// 并覆盖 validateLayer 对 payload_hex 标量层的校验路径。
 func TestPayloadHexRequiresPrefix(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
 		got, err := scenario.ParsePayloadHex("0xdeadbeef")
