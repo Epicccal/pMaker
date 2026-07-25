@@ -54,8 +54,8 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 
 最小出包链路已打通:`pmaker gen -f <yaml> -o <pcap>` 可真正出包。
 
-- **已实现 stack 模型**:层 eth / vlan(Dot1Q)/ ipv4 / gre / tcp / udp / icmp / dns / payload / payload_hex / http_request / http_response;
-  next-proto 自动串接、TCP/UDP checksum 伪首部、ICMP echo request/reply、DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV、确定性时间戳、golden + gopacket 回读测试。
+- **已实现 stack 模型**:层 eth / vlan(Dot1Q)/ ipv4 / gre / tcp / udp / icmp / dns / payload / payload_hex / http_request / http_response / ftp_request / ftp_response;
+  next-proto 自动串接、TCP/UDP checksum 伪首部、ICMP echo request/reply、DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV、FTP 控制连接命令/响应(RFC 959 多行续行)、确定性时间戳、golden + gopacket 回读测试。FTP 控制通道 ↔ 数据通道用**两条独立 flow + `start_after`** 表达(message 级双向交错:数据 `start_after control.<150>`、226 `start_after data`),不引入 `data_connection` 等关联字段。
 - **已实现 flow 基础版**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
   HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
 - **已实现 flow 逐消息定时**:`message.offset_time`(相对上一条消息末尾的偏移,锚定单条消息整组)、
