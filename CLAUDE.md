@@ -40,7 +40,6 @@ internal/
   builder/           # scenario 模型 -> gopacket layers -> 字节;BuildPlanned 消费已排序的 PlannedPacket
   flow/              # 有状态流:TCP 握手、seq/ack 递推(只产 stack 包,不含时间)
   plan/              # 时间编排:packets + flows 汇流成 PlannedPacket,按 Time 排序
-  proto/             # 各协议/封装层构造助手(eth/vlan/qinq/gre/mpls/vxlan/ip/tcp/udp/dns...),按需拆分
   writer/            # pcap 输出、LinkType(时间戳取自 builder.OutPacket.Time)
 examples/            # 可直接运行的示例场景 YAML,按协议分目录:examples/<协议>/<name>.yaml
 ```
@@ -83,6 +82,13 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   `segment.interval` 覆盖);
   畸形开关 `fix_lengths` / `checksum` **解析但忽略**(build 时 `slog.Warn`),真正的畸形 / 原始字节兜底待做;
   HTTP 头按 key 排序输出(未保留原序)。
+
+> **源码组织**:builder 与 scenario 包已按职责拆分。`builder/dns.go` 留构包逻辑(buildDNS/buildDNSRR*/
+> dnsName*/dnsRawLayer),`builder/dns_enum.go` 收纯字符串↔枚举映射(dnsType/dnsClass/dnsOpCode/dnsRCode/
+> dnsQR/parseDNSRRNumber/validateDNSName)。scenario 包拆为 types.go(顶层结构体与 Hex/PayloadHex)、
+> time.go(AbsTime/Offset)、layer_fields.go(各层 *Fields)、layer_decode.go(Layer 解码分发)、
+> scenario.go(Load/Validate/Warnings)、start_after_graph.go、ftp_consistency.go、describe.go(见 doc.go)。
+> 测试按「一一对应 + 公共辅助集中」组织,详见下文「测试文件命名规约」。
 
 ## 核心数据流
 
@@ -356,9 +362,20 @@ packets:
 2. **回读校验**:生成的 pcap 能被 gopacket 正确解析(规范包场景)。
 3. **可选集成**:若环境有 `tshark`,可用 `tshark -r out.pcap` 交叉验证协议解析(集成测试,非必需依赖)。
 
+## 测试文件命名规约
+
+1. **一一对应**:`xxx.go` ↔ `xxx_test.go`;不写看不出归属的 `load_test.go` / `payload_hex_test.go` 这类名字。
+   已拆分的示例:`scenario/time.go` ↔ `scenario/time_test.go`、`builder/dns.go` ↔ `builder/dns_test.go`、
+   `builder/dns_enum.go`(纯枚举映射,无对应测试文件时与 dns_test 共测)、`plan/plan.go` ↔ `plan/plan_test.go`。
+2. **公共测试辅助单独放 `helpers_test.go`**:跨多个测试文件复用的 `genPcap` / `buildPackets` / `readPackets` /
+   `mustAbs` / `mustOffset` / 栈构造器等集中在 `helpers_test.go`,不要在每个测试文件里复制。
+   (若需被非 `_test` 文件引用则命名为 `testing.go`。)
+3. **集成 / golden 测试可保留跨文件命名**(如 `examples_test.go`、`ftp_interleave_test.go`),
+   但需在文件注释顶部写明覆盖范围。
+
 ## 新增一个协议的步骤(清单)
 
-1. `internal/proto/` 加该协议的构造助手(优先复用 gopacket 现成 layer)。
+1. `internal/builder/` 加该协议的构造助手(优先复用 gopacket 现成 layer);新协议单独成文件(`proto.go`),与 `builder.go` 的层派发解耦。
 2. `internal/scenario/` 加该协议的 schema 结构体 + 校验规则。
 3. `internal/builder/` 接线:scenario 字段 → layer;暴露畸形开关(关闭 fix/checksum、raw 注入)。
    **若是封装层**,还须实现 next-proto/ethertype 的自动推导,并允许逐层显式覆盖。
