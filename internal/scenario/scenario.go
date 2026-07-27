@@ -391,12 +391,12 @@ func validateLayer(l Layer) error {
 			}
 		}
 	case *FTPRequestFields:
-		if f.Command == "" {
-			return fmt.Errorf("需要 command")
+		if err := validateFTPCommand(f.Command); err != nil {
+			return err
 		}
 	case *FTPResponseFields:
-		if f.Code == 0 {
-			return fmt.Errorf("需要 code")
+		if err := validateFTPResponseCode(f.Code); err != nil {
+			return err
 		}
 		if f.Message != "" && len(f.Lines) > 0 {
 			return fmt.Errorf("message 与 lines 只能配置一个")
