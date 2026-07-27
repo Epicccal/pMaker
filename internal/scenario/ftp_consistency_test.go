@@ -172,3 +172,57 @@ func TestFTPConsistency_NonFTPFlowIgnored(t *testing.T) {
 		t.Fatalf("非控制通道流不应被当作 227 协商扫描,实际: %v", warnings)
 	}
 }
+
+// TestFTPConsistency_PASVRoleOK: 227 协商 IP=控制连接服务器侧(dst),角色一致 → 无角色告警。
+func TestFTPConsistency_PASVRoleOK(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStack +
+		"    messages:\n      - from: dst\n        stack:\n" +
+		"          - ftp_response: { code: 227, message: \"Entering Passive Mode (10,0,0,21,195,80).\" }\n"
+	warnings := loadWarnings(t, "pasv_role_ok.yaml", body)
+	for _, w := range warnings {
+		if strings.Contains(w, "角色") {
+			t.Fatalf("227 协商 IP=服务器侧不应触发角色告警,实际: %v", warnings)
+		}
+	}
+}
+
+// TestFTPConsistency_PASVRoleMismatch: 227 协商 IP=客户端地址,与服务器角色不符 → 告警。
+func TestFTPConsistency_PASVRoleMismatch(t *testing.T) {
+	// 227 协商 10.0.0.10(控制连接客户端 src),而非服务器 dst 10.0.0.21。
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStack +
+		"    messages:\n      - from: dst\n        stack:\n" +
+		"          - ftp_response: { code: 227, message: \"Entering Passive Mode (10,0,0,10,195,80).\" }\n"
+	warnings := loadWarnings(t, "pasv_role_mismatch.yaml", body)
+	if !containsWarning(warnings, "角色") || !containsWarning(warnings, "10.0.0.10") || !containsWarning(warnings, "10.0.0.21") {
+		t.Fatalf("期望 227 角色不匹配告警(含 10.0.0.10 与 10.0.0.21),实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_PORTRoleMismatch: PORT 协商 IP=服务器地址,与客户端角色不符 → 告警。
+func TestFTPConsistency_PORTRoleMismatch(t *testing.T) {
+	// PORT 协商 10.0.0.21(控制连接服务器 dst),而非客户端 src 10.0.0.10。
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStack +
+		"    messages:\n      - from: src\n        stack:\n" +
+		"          - ftp_request: { command: PORT, args: \"10,0,0,21,192,5\" }\n"
+	warnings := loadWarnings(t, "port_role_mismatch.yaml", body)
+	if !containsWarning(warnings, "角色") || !containsWarning(warnings, "10.0.0.21") || !containsWarning(warnings, "10.0.0.10") {
+		t.Fatalf("期望 PORT 角色不匹配告警(含 10.0.0.21 与 10.0.0.10),实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_PORTRoleOK: PORT 协商 IP=客户端地址(src),角色一致 → 无角色告警。
+func TestFTPConsistency_PORTRoleOK(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStack +
+		"    messages:\n      - from: src\n        stack:\n" +
+		"          - ftp_request: { command: PORT, args: \"10,0,0,10,192,5\" }\n"
+	warnings := loadWarnings(t, "port_role_ok.yaml", body)
+	for _, w := range warnings {
+		if strings.Contains(w, "角色") {
+			t.Fatalf("PORT 协商 IP=客户端侧不应触发角色告警,实际: %v", warnings)
+		}
+	}
+}
