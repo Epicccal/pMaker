@@ -5,6 +5,10 @@
 # 一个看似普通的 RETR 请求,参数里藏了 \r\n + 第二条命令 DELE,
 # 单个 TCP 段内塞入两条 FTP 命令。测试 IDS 能否识别命令注入、
 # 是否会被"一行一命令"的简单解析欺骗。同时命令用小写,验证对大小写的处理。
+#
+# 注:结构化 ftp_request.command 现在校验合法基线(已知命令表),非标动词须走
+# 原始字节通道。本用例命令本身仍是合法动词(retr),畸形点在 args 的 CRLF 注入,
+# 故仍走 ftp_request;若要注入自定义动词,改用 payload / payload_hex。
 link_type: ethernet
 seed: 42
 packets:
