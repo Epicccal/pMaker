@@ -41,11 +41,13 @@ type ftpNegotiation struct {
 	port     uint16 // 协商端口 p1*256+p2
 }
 
-// flowEndpoint 是一条 flow 用于匹配的端点摘要:最近的 IPv4 dst 与 TCP/UDP dport,
-// 以及是否为控制通道候选。
+// flowEndpoint 是一条 flow 用于匹配的端点摘要:最近的 IPv4 src/dst 与 TCP/UDP dport,
+// 以及是否为控制通道候选。srcIP/dstIP 用于 FTP 协商地址 ↔ 控制连接角色校验。
 type flowEndpoint struct {
+	srcIP  string
 	dstIP  string
 	dport  uint16
+	sport  uint16
 	isCtrl bool
 }
 
@@ -64,14 +66,17 @@ func CheckFTPDataPortConsistency(s *Scenario) []string {
 		for _, l := range f.Stack {
 			switch v := l.Fields.(type) {
 			case *IPv4Fields:
+				ep.srcIP = v.Src
 				ep.dstIP = v.Dst
 			case *TCPFields:
 				ep.dport = v.DPort
+				ep.sport = v.SPort
 				if v.DPort == 21 || v.SPort == 21 {
 					ep.isCtrl = true
 				}
 			case *UDPFields:
 				ep.dport = v.DPort
+				ep.sport = v.SPort
 				if v.DPort == 21 || v.SPort == 21 {
 					ep.isCtrl = true
 				}
@@ -92,6 +97,9 @@ func CheckFTPDataPortConsistency(s *Scenario) []string {
 			warnings = append(warnings, parseWarns...)
 			for _, n := range negotiations {
 				warnings = append(warnings, matchNegotiation(n, s.Flows, eps, i)...)
+				// 协商地址 ↔ 控制连接角色校验:227/PORT 协商的 IP 必须是控制连接的一方端点,
+				// 否则声明的是与本次会话无关的地址(常见笔误或配置错),产出告警。
+				warnings = append(warnings, checkNegotiationRole(n, eps[i])...)
 			}
 		}
 	}
@@ -152,6 +160,38 @@ func extractFTPNegotiations(flowName string, msgIdx int, m Message) (negotiation
 		}
 	}
 	return
+}
+
+// checkNegotiationRole 校验 227/PORT 协商的 IP 是否为控制连接的一方端点。
+//
+// RFC 959 语义:
+//   - PASV(227):服务器告知"连我 ip:port",故协商 IP 必须是控制连接的服务器侧
+//     (dport=21 一方的 IPv4,即控制流 dst IP)。
+//   - PORT:客户端告知"连我 ip:port",故协商 IP 必须是控制连接的客户端侧
+//     (sport=21 一方的 IPv4,即控制流 src IP)。
+//
+// 协商 IP 与控制连接对应角色不一致时,声明的是与本次会话无关的地址(常见笔误或配置错),
+// 产出告警。畸形用例可能故意构造不一致以测试 NDR,故只告警不阻断。
+// 控制流缺 IPv4 端点信息时跳过(无法判定)。
+func checkNegotiationRole(n ftpNegotiation, ctrl flowEndpoint) []string {
+	if ctrl.srcIP == "" || ctrl.dstIP == "" {
+		return nil
+	}
+	var expected, actual, role string
+	switch n.kind {
+	case "227":
+		expected, actual, role = ctrl.dstIP, n.ip, "服务器(PASV 227)"
+	case "PORT":
+		expected, actual, role = ctrl.srcIP, n.ip, "客户端(PORT)"
+	default:
+		return nil
+	}
+	if actual == expected {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"flow %q 的 %s 协商地址 %s 与控制连接 %s 端 %s 不一致(协商地址与控制连接角色不匹配)",
+		n.flowName, n.kind, actual, role, expected)}
 }
 
 // matchNegotiation 在除控制流外的 flow 中查找 dst IPv4:dport 与协商端点一致的数据流。
