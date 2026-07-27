@@ -106,7 +106,9 @@ type session struct {
 // conn 维护会话状态:src 是 TCP SYN 发起方,dst 是 SYN 接收方。
 type conn struct {
 	src, dst       endpoint
-	ttl            *uint8
+	ttl            *uint8 // IPv4 TTL
+	hopLimit       *uint8 // IPv6 HopLimit
+	ipv6           bool   // 网络层为 IPv6(缺省 false = IPv4)
 	srcSeq, dstSeq uint32
 	mss            *uint16
 	session        session
@@ -143,7 +145,7 @@ type ResolveRef func(refFlow, refMsg string) (time.Time, bool)
 //   - 段间按 segment.interval 间隔(缺省 DefaultStep);对端 ACK 是伴生控制包,用 DefaultStep,
 //     不被数据段节奏传染(保持"只让数据慢"的语义纯净)。
 //
-// 当前 flow.stack 支持 eth/ipv4/tcp/tcp_session;VLAN/GRE 等会话封装后续扩展。
+// 当前 flow.stack 支持 eth/ipv4|ipv6/tcp/tcp_session;VLAN/GRE 等会话封装后续扩展。
 //
 // schedule 是该 flow 各消息的起始时刻表(按 message 声明序,一一对应)。由 plan 算时阶段
 // 预先算好(跨流 start_after 已解析为绝对时刻);Expand 只照表把每条消息铺到时间轴,不再运行期
@@ -277,6 +279,10 @@ func parseFlowStack(stack []scenario.Layer) (*conn, error) {
 		case *scenario.IPv4Fields:
 			c.src.ip, c.dst.ip = f.Src, f.Dst
 			c.ttl = f.TTL
+		case *scenario.IPv6Fields:
+			c.src.ip, c.dst.ip = f.Src, f.Dst
+			c.hopLimit = f.HopLimit
+			c.ipv6 = true
 		case *scenario.TCPFields:
 			c.src.port, c.dst.port = f.SPort, f.DPort
 			c.srcSeq, c.dstSeq = f.ClientISN, f.ServerISN
@@ -288,7 +294,11 @@ func parseFlowStack(stack []scenario.Layer) (*conn, error) {
 		}
 	}
 	if c.src.mac == "" || c.dst.mac == "" || c.src.ip == "" || c.dst.ip == "" || c.src.port == 0 || c.dst.port == 0 {
-		return nil, fmt.Errorf("flow.stack 需要 eth/src-dst、ipv4/src-dst、tcp/sport-dport")
+		netLayer := "ipv4"
+		if c.ipv6 {
+			netLayer = "ipv6"
+		}
+		return nil, fmt.Errorf("flow.stack 需要 eth/src-dst、%s/src-dst、tcp/sport-dport", netLayer)
 	}
 	return c, nil
 }
@@ -334,7 +344,7 @@ func (c *conn) emit(from side, flags []string, chunk []byte, summaryLayers []str
 
 	stack := []scenario.Layer{
 		{Type: "eth", Fields: &scenario.EthFields{Src: src.mac, Dst: dst.mac}},
-		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: src.ip, Dst: dst.ip, TTL: c.ttl}},
+		c.netLayer(src.ip, dst.ip),
 		{Type: "tcp", Fields: tcp},
 	}
 	if len(chunk) > 0 {
@@ -344,6 +354,15 @@ func (c *conn) emit(from side, flags []string, chunk []byte, summaryLayers []str
 		})
 	}
 	return scenario.Packet{Stack: stack, SummaryLayers: summaryLayers}
+}
+
+// netLayer 按解析出的 IP 版本产出对应的网络层(IPv4 或 IPv6)。
+// TTL(IPv4)与 HopLimit(IPv6)语义不同、字段名各异,故按版本分流。
+func (c *conn) netLayer(src, dst string) scenario.Layer {
+	if c.ipv6 {
+		return scenario.Layer{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: src, Dst: dst, HopLimit: c.hopLimit}}
+	}
+	return scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: src, Dst: dst, TTL: c.ttl}}
 }
 
 func messagePayload(m scenario.Message) ([]byte, error) {

@@ -128,10 +128,17 @@ func validateFlow(f FlowSpec) error {
 			}
 		}
 	}
-	for _, required := range []string{"eth", "ipv4", "tcp"} {
+	for _, required := range []string{"eth", "tcp"} {
 		if !seen[required] {
 			return fmt.Errorf("stack 需要 %s 层", required)
 		}
+	}
+	// 网络层:ipv4 与 ipv6 二选一(必须恰好一个),不可同时出现(避免歧义的双栈 flow)。
+	switch {
+	case seen["ipv4"] && seen["ipv6"]:
+		return fmt.Errorf("stack 的网络层 ipv4 与 ipv6 不可同时出现(请二选一)")
+	case !seen["ipv4"] && !seen["ipv6"]:
+		return fmt.Errorf("stack 需要网络层(ipv4 或 ipv6)")
 	}
 	seenMsgID := map[string]bool{}
 	for j, m := range f.Messages {
