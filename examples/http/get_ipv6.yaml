@@ -1,0 +1,40 @@
+# examples/http/get_ipv6.yaml
+#
+# 一次完整的 HTTP/1.1 GET 请求 + 200 响应,跑在真实 TCP 会话之上(flow 场景),
+# 网络层使用 IPv6。补上 IPv6 flow 规范闭环(与 get.yaml 对称的 v6 版)。
+# flow.stack 里的 src 表示 TCP SYN 发起方,dst 表示 SYN 接收方。
+link_type: ethernet
+seed: 42
+
+flows:
+  - name: http-get-200-v6
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::80", hop_limit: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1440 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /index.html
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                User-Agent: pMaker/0.1
+                Accept: "*/*"
+                Connection: keep-alive
+
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              headers:
+                Server: nginx/1.24.0
+                Content-Type: text/html; charset=utf-8
+                Content-Length: auto
+              body: |
+                <html><body>Hello from pMaker over IPv6</body></html>
