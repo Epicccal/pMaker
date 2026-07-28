@@ -56,59 +56,16 @@
 
 ## 适合构造什么
 
-<table>
-<tr>
-<td width="50%">
+pMaker 面向**授权环境下的离线流量验证**——把"造一个特定形状的包/流"这件事变成可读、可审、可回归的配置:
 
-### 封装 / 隧道
+- **封装与隧道**:VLAN、QinQ、GRE 等任意深度层栈,next-proto 自动串接、可逐层覆盖。
+- **Flow 会话维护**:从 YAML 配置展开为握手、seq/ack 推导、分段、挥手的完整包序列。
+- **常见协议覆盖**:L2/L3/L4(ICMP/ICMPv6/TCP/UDP)到应用层(HTTP/DNS/FTP/...)。
+- **异常协议畸形**:`payload_hex` 原始字节注入、错误 checksum/length、解析断链等。
 
-- 单层 VLAN / QinQ
-- GRE 隧道
-- 外层 / 内层 IPv4 / IPv6
-- next-proto / EtherType 自动串接
-- 显式覆盖协议字段制造解析断链
+## 有序层栈嵌套
 
-</td>
-<td width="50%">
-
-### TCP 会话
-
-- 三次握手
-- seq / ack 自动推导
-- MSS 分段
-- HTTP request / response
-- FIN 四次挥手 / RST 关闭
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-### 网络层 / 传输层 / 应用层
-
-- IPv4 / IPv6
-- TCP / UDP
-- ICMPv4 / ICMPv6
-- HTTP / DNS / FTP
-- ...
-
-</td>
-<td width="50%">
-
-### 畸形 / 原始字节
-
-- `payload_hex` 原始字节注入
-- 非标准 next-protocol
-- 错误 checksum / length
-- 为规避、解析异常、边界条件预留 escape hatch
-
-</td>
-</tr>
-</table>
-
-## 协议栈是“有序栈”，不是固定槽位
-
-pMaker 的 packet 模型是从外到内排列的 `stack`：
+pMaker 的 packet 是从外到内排列的 `stack`,同类型层可重复、可递归嵌套。
 
 ```yaml
 packets:
@@ -118,8 +75,6 @@ packets:
       - tcp:  { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }
 ```
 
-因此同一套模型可以自然表达 QinQ、GRE 隧道、隧道内层协议、重复封装：
-
 ```text
 eth / ipv4 / tcp
 eth / vlan / vlan / ipv4 / tcp      # QinQ
@@ -128,11 +83,11 @@ eth / ipv4 / udp / dns
 eth / ipv4 / icmp
 ```
 
-pMaker 会自动推导每层的 next-proto / EtherType / checksum 伪首部；测试“解析断链”或“非标封装”时，可逐层显式覆盖（如 `- vlan: { vid: 100, type: 0xffff }`）。
+next-proto / EtherType / checksum 伪首部默认自动推导;测试"解析断链""非标封装"时可逐层显式覆盖(如 `- vlan: { vid: 100, type: 0xffff }`)。
 
-## Flow：从应用脚本展开为 TCP 包序列
+## Flow 状态维护
 
-除了逐包写 stack，也可以描述一条有状态 TCP flow：
+除了逐包写 stack,也可以描述一条有状态 TCP flow,展开器自动维护握手、seq/ack、MSS 分段、挥手:
 
 ```yaml
 flows:
@@ -150,8 +105,6 @@ flows:
         stack:
           - http_response: { status: 200, body: "Hello from pMaker" }
 ```
-
-展开后自动维护握手、seq/ack、MSS 分段、挥手：
 
 ```text
 client                                              server
@@ -187,16 +140,9 @@ pMaker 使用纯 Go 的 `pcapgo` 写文件，无需 libpcap / CGO。
 
 ## YAML 约定
 
-```yaml
-link_type: ethernet
-seed: 42
-packets: []
-flows: []
-```
-
-- `stack` 从外到内排列，每个元素是单键 map（`- ipv4: {...}`），同类型层可重复（`vlan / vlan`）
-- next-proto 默认自动推导，可逐层显式覆盖；原始字节用 `payload_hex: 0x...`
-- 时间可选：`base_time`（唯一绝对锚，ISO8601 / UTC）、`packet.offset_time`、`flow.offset_time`（相对 `base_time` 的非负时长偏移）；未指定则每包 1ms、按时间稳定排序
+- `stack` 从外到内排列,每个元素是单键 map;同类型层可重复(`vlan / vlan`)、可递归嵌套
+- next-proto 默认自动推导,可逐层显式覆盖;原始字节用 `payload_hex`
+- 时间可选:`base_time`(ISO8601 / UTC 绝对锚)+ 各级非负 `offset_time`,未指定则每包 1ms 按序排列
 - 同一 scenario + seed 生成逐字节相同的 pcap
 
 完整字段以 `internal/scenario` 类型定义与 `examples/` 为准。
@@ -210,4 +156,12 @@ go test ./internal/scenario -run TestExamplesGolden -update   # 重生 golden pc
 
 ## 安全边界
 
-pMaker 是离线 pcap 构造工具：不主动发包、不打开 raw socket、不执行实时注入、默认不触碰网络接口。生成的 `.pcap` 可交给 `tcpreplay` 或分析工具回放。若未来增加实时注入能力，会放在独立且默认关闭的构建标签后并显式提示权限要求。
+pMaker 是离线 pcap 构造工具:不主动发包、不打开 raw socket、不执行实时注入、不触碰网络接口。生成的 `.pcap` 可交给 `tcpreplay` 或分析工具回放。若未来增加实时注入能力,会放在独立且默认关闭的构建标签后并显式提示权限要求。
+
+## CI/CD
+
+通过 GitHub Actions 做质量门禁与发版([.github/workflows/](.github/workflows/)):
+
+- **CI**:推 `main` / PR 时跑 gofmt、`go vet`、golangci-lint、`go test -race` 带覆盖率(上传 [Codecov](https://codecov.io))、`CGO_ENABLED=0` 构建冒烟。
+- **Release**:推 `v*` tag 时用 [GoReleaser](https://goreleaser.com) 交叉编译多平台静态二进制并发布到 GitHub Releases。
+- Lint 配置见 [.golangci.yml](.golangci.yml)(golangci-lint v2)。
