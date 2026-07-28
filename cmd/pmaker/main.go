@@ -1,5 +1,5 @@
 // Command pmaker 从声明式场景文件(YAML)生成 pcap,
-// 用于对 NDR/IDS 等流量监测设备做检测能力测试。设计见仓库根目录 CLAUDE.md。
+// 用声明式场景文件(YAML)构造可复现的离线流量样本,让验证流量像代码一样可读、可审、可回归。设计见仓库根目录 CLAUDE.md。
 package main
 
 import (

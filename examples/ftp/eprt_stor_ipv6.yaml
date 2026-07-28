@@ -26,7 +26,7 @@
 # ISN 命名陷阱:client_isn/server_isn 按**位置**绑定(src=client_isn, dst=server_isn),不是按角色。
 # EPRT 模式 data 流 src=服务器,故其 client_isn 字段填的是**服务器**的数据 ISN(值任意,确定性即可)。
 #
-# NDR/IDS 测试点:IPv6 承载的明文 FTP、EPRT 扩展协商(netproto=2、竖线分隔的 IPv6 地址:端口)、
+# 流量验证关注点:IPv6 承载的明文 FTP、EPRT 扩展协商(netproto=2、竖线分隔的 IPv6 地址:端口)、
 # 数据连接里上传的二进制内容、150/226 响应码序列。
 link_type: ethernet
 seed: 42

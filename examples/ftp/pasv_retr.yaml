@@ -18,7 +18,7 @@
 # 数据流 stack 方向(PASV,与 control 同向):data 流 src=客户端、dst=服务器,
 # sport=49155、dport=50000(227 协商端口),from: dst(服务器发下载内容)。
 #
-# NDR/IDS 测试点:明文凭证(USER/PASS)、PASV 协商的 IP:端口、数据连接里传输的文件内容、
+# 流量验证关注点:明文凭证(USER/PASS)、PASV 协商的 IP:端口、数据连接里传输的文件内容、
 # 227/150/226 响应码序列、多行欢迎横幅(220 续行)。
 #
 # 时序(默认步长 1ms,open=handshake/close=fin):data 在 control.pasv(150)完成后握手,

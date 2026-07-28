@@ -1,7 +1,7 @@
 # examples/dns/srv_root.yaml
 #
 # RFC 2782 根 target SRV:"服务不可用"哨兵。owner 名 _sip._tcp.example.com 的 SRV 记录
-# target 为根("."),表示该域确定不提供 SIP 服务。NDR/IDS 测试点:设备如何处理"服务
+# target 为根("."),表示该域确定不提供 SIP 服务。流量验证关注点:解析端如何处理"服务
 # 显式不可用"声明。
 #
 # 根 target 必须用 payload_hex 构造:gopacket 对根名 RR 的 RDLENGTH 会多算 1 字节

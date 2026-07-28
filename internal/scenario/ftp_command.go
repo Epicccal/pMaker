@@ -32,7 +32,7 @@ var knownFTPCommands = map[string]struct{}{
 	"REST": {}, "RNFR": {}, "RNTO": {}, "ABOR": {}, "DELE": {}, "RMD": {},
 	"MKD": {}, "PWD": {}, "LIST": {}, "NLST": {}, "SITE": {}, "SYST": {},
 	"STAT": {}, "HELP": {}, "NOOP": {},
-	// 常见扩展(RFC 959 之外,被测设备普遍识别)
+	// 常见扩展(RFC 959 之外,解析端普遍识别)
 	"FEAT": {}, "OPTS": {}, "AUTH": {}, "PBSZ": {}, "PROT": {},
 	"MLSD": {}, "MLST": {}, "MDTM": {}, "SIZE": {}, "HOST": {},
 	"CLNT": {}, "MFMT": {}, "CCC": {}, "EPRT": {}, "EPSV": {},

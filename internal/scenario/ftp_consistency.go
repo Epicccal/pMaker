@@ -19,9 +19,9 @@ import (
 //     数据连接地址:端口(与 PORT 语义一致,但支持 IPv6)。
 //
 // 工具不强制两者联动,一旦用户改了一处忘了另一处,产出的 pcap 就是"控制连接声明
-// 50000、实际数据连接去 49999"的不自洽场景——这会让 NDR 报"端口协商不一致"误报,
+// 50000、实际数据连接去 49999"的不自洽场景——这会让下游解析端报"端口协商不一致"误报,
 // 而用户无从分辨是配置错还是有意构造。本检查在校验阶段把这类不一致作为告警产出
-// (warn 而非 error,因为畸形用例可能故意构造不一致以测试 NDR)。
+// (warn 而非 error,因为畸形用例可能故意构造不一致以构造异常场景)。
 //
 // 协商端点语义:各协商 (ip, port) 始终是"被连接方"地址——
 //   - PASV(227)/EPSV(229):服务器告知客户端"连我 ip:port",数据流 src=客户端、dst=服务器;
@@ -73,7 +73,7 @@ type flowEndpoint struct {
 
 // CheckFTPDataPortConsistency 扫描 FTP 控制通道的 PASV 227 / PORT / EPSV 229 / EPRT 协商,
 // 解析出协商的 IP:端口,再与场景中各 flow 的 dst IP : dport 比对。对解析失败、或协商端点
-// 与数据流端点不一致的情况,产出告警(非硬错:畸形用例可能故意构造不一致以测试 NDR)。
+// 与数据流端点不一致的情况,产出告警(非硬错:畸形用例可能故意构造不一致以构造异常场景)。
 // 返回零到多条告警,每条带 flow/message 定位。
 func CheckFTPDataPortConsistency(s *Scenario) []string {
 	if s == nil || len(s.Flows) == 0 {
@@ -247,7 +247,7 @@ func extractFTPNegotiations(flowName string, msgIdx int, m Message) (negotiation
 //   - EPRT:同 PORT,客户端告知"连我 ip:port",协商 IP 必须是控制流 src IP(IPv4/IPv6)。
 //
 // 协商 IP 与控制连接对应角色不一致时,声明的是与本次会话无关的地址(常见笔误或配置错),
-// 产出告警。畸形用例可能故意构造不一致以测试 NDR,故只告警不阻断。
+// 产出告警。畸形用例可能故意构造不一致以构造异常场景,故只告警不阻断。
 // 控制流缺端点信息时跳过(无法判定)。
 func checkNegotiationRole(n ftpNegotiation, ctrl flowEndpoint) []string {
 	if ctrl.srcIP == "" || ctrl.dstIP == "" {

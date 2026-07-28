@@ -5,17 +5,17 @@
 ## 项目概述
 
 **pMaker** —— 一个用 Go 编写的 **Pcap 构造工具**,通过声明式配置批量生成各类协议的数据包,
-产出 `.pcap` 文件(后续可扩展 `.pcapng`),用于对 **NDR / IDS 等流量监测设备**做检测能力测试。
+产出 `.pcap` 文件(后续可扩展 `.pcapng`)。
 
 - **形态**:CLI 工具优先(`pmaker gen -f scenario.yaml -o out.pcap`)。当前不对外暴露库 API,一切实现放在 `internal/`。
-- **场景定义**:声明式 **YAML** 配置文件驱动。非开发者也应能编写/修改测试用例。
+- **场景定义**:声明式 **YAML** 配置文件驱动。非开发者也应能编写/修改场景用例。
 - **底层构包**:以 `gopacket` 序列化规范包为主,保留**原始字节兜底通道**用于构造畸形包/规避流量。
 
 ### 范围与安全边界(重要)
 
 - 本工具**只离线生成 pcap 文件**,**默认不向网络发送任何数据包**。
-- 用途是**授权环境下**对检测设备做能力验证(把生成的 pcap 用 tcpreplay 等回放)。
-- 若将来新增实时注入(raw socket / pcap inject),必须放在**独立的、默认关闭的构建标签**后,并显式提示权限要求 —— 不要顺手把"离线构造器"变成"在线攻击流量发生器"。
+- 用途是**授权环境下**做流量验证(把生成的 pcap 用 tcpreplay 等回放)。
+- 若将来新增实时注入(raw socket / pcap inject),必须放在**独立的、默认关闭的构建标签**后,并显式提示权限要求 —— 不要顺手把"离线构造器"变成"在线发包工具"。
 
 ## 技术栈与关键依赖
 
@@ -127,8 +127,8 @@ out.pcap
    由外到内依次传入,gopacket 内部逐层前置。builder 按层栈顺序喂进去即可。
 
 3. **next-protocol / EtherType 串接是最易错的一环。** 每个封装层必须正确声明"下一层是什么",
-   否则被测设备会在某一层解析断链:
-   - `Ethernet.EthernetType`:后接 VLAN → `0x8100`;QinQ 外层 S-TAG → `0x88a8`(或按被测设备预期设 `0x8100`)
+   否则解析端会在某一层解析断链:
+   - `Ethernet.EthernetType`:后接 VLAN → `0x8100`;QinQ 外层 S-TAG → `0x88a8`(或按解析端预期设 `0x8100`)
    - `Dot1Q.Type`:后接内层 VLAN → `0x8100`;后接 IPv4 → `0x0800`
    - `IPv4/IPv6.Protocol`:后接 GRE → `47`
    - `GRE.Protocol`:内层 IPv4 → `0x0800`;内层 Ethernet(TEB)→ `0x6558`
@@ -137,7 +137,7 @@ out.pcap
    —— 覆盖能力正是测试"设备对畸形/非标封装如何处理"的关键。
 
 4. **QinQ 的 TPID 必须可配置。** 标准 S-TAG 是 `0x88a8`,但很多设备实现用 `0x8100` 做双层。
-   测试点往往就是"设备认不认非标 TPID",所以 `tpid`/`ethertype` 要能逐层显式指定,**不能写死**。
+   验证点往往就是"设备认不认非标 TPID",所以 `tpid`/`ethertype` 要能逐层显式指定,**不能写死**。
 
 5. **多层 IP 时,每个传输层的 checksum 绑定到"就近那层 IP"。** 内层 TCP 的
    `SetNetworkLayerForChecksum` 要指向**内层 IP**,不是外层。builder 按嵌套关系正确配对,
@@ -196,7 +196,7 @@ flows:
 `from` 指方向(`src`/`dst`),消息体也是一个有序 `stack`;当前 flow message 仅支持一个 **payload 生产层**
 (`http_request` / `http_response` / `payload_hex` / `payload`)。反向消息会自动反转 eth/ipv4/tcp 的 src/dst/sport/dport.
 
-### 分段与规避(NDR/IDS 测试重点)
+### 分段与规避
 
 每条消息可挂 `segment:` 策略,把一条应用消息切成多个 TCP 段(seq 按字节偏移铺开):
 
@@ -206,7 +206,7 @@ segment: { mss: 8, interval: "+10ms" }
 ```
 
 `mss` 为切段大小,`interval` 为各数据段间时间间隔。`order`(乱序)/ `overlap`(重叠)/
-`retransmit`(重传)**尚未实现**——写入会在解析阶段被拒(未知字段校验)。检测设备的**重组能力**是主战场。
+`retransmit`(重传)**尚未实现**——写入会在解析阶段被拒(未知字段校验)。流量的**重组验证**是主战场。
 
 ### 时间编排与汇流(已实现)
 
@@ -254,7 +254,7 @@ segment: { mss: 8, interval: "+10ms" }
 
 ## 领域关键约束(最容易踩坑,务必遵守)
 
-1. **畸形包必须能绕过自动修正。** 这是 IDS 测试工具的立身之本。
+1. **畸形包必须能绕过自动修正。** 这是流量验证工具的立身之本。
    - 规范包:`SerializeOptions{FixLengths: true, ComputeChecksums: true}`。
    - 畸形/规避包:允许**逐字段关闭** `FixLengths` / `ComputeChecksums`,并允许写入非法的 length、错误 checksum、重叠分片等。
    - 提供**原始字节注入**(如配置里的 `payload_hex`: `0x...`):当 gopacket 无法表达某种畸形时,直接落原始字节。**绝不能**因为"修正了 checksum/length"而让本应畸形的测试包变成合规包 —— 那等于悄悄废掉了这条用例。
@@ -268,7 +268,7 @@ segment: { mss: 8, interval: "+10ms" }
    - 保证 map 遍历等顺序稳定。
    - 这是 golden-file 测试和"测试用例可归档复现"的前提。
 
-4. **LinkType 要选对。** 含以太头 → `layers.LinkTypeEthernet`;仅 L3 → `LinkTypeRaw`/`LinkTypeIPv4`。写反了监测设备解析会全错。
+4. **LinkType 要选对。** 含以太头 → `layers.LinkTypeEthernet`;仅 L3 → `LinkTypeRaw`/`LinkTypeIPv4`。写反了解析端解析会全错。
 
 5. **网络字节序为大端。** gopacket 自动处理;走原始字节通道时自己保证大端。
 

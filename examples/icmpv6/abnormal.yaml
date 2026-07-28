@@ -7,7 +7,7 @@ link_type: ethernet
 seed: 42
 packets:
   # ① 断链:IPv6 NextHeader 显式指向 udp,但内层实为 ICMPv6。
-  #    被测设备按 UDP 解析载荷会失败 —— 测试其对 next-header 不一致的处理。
+  #    解析端按 UDP 解析载荷会失败 —— 测试其对 next-header 不一致的处理。
   - name: icmpv6-next-header-break
     stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }

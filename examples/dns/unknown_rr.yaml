@@ -1,6 +1,6 @@
 # examples/dns/unknown_rr.yaml
 #
-# 未知/私有 RR type(99)+ 原始 RDATA(payload_hex)。用于模糊测试:测被测设备对
+# 未知/私有 RR type(99)+ 原始 RDATA(payload_hex)。用于模糊测试:测解析端对
 # gopacket 无法表达的未知 type 如何处理。type 用数字写法(十进制 99,等价 0x0063)。
 # RDATA 完全由 payload_hex 给定(此处 4 字节),RDLENGTH 自动 = len(RDATA)。
 link_type: ethernet
