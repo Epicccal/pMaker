@@ -14,9 +14,57 @@
   <img alt="PCAP" src="https://img.shields.io/badge/Output-PCAP-7C3AED?style=for-the-badge">
   <img alt="CGO" src="https://img.shields.io/badge/CGO-disabled-16A34A?style=for-the-badge">
   <img alt="Offline" src="https://img.shields.io/badge/Network-offline_only-111827?style=for-the-badge">
+  <img alt="Coverage" src="https://img.shields.io/badge/Coverage-Codecov-01B4B4?style=for-the-badge&logo=codecov&logoColor=white">
+  <img alt="GoReport" src="https://img.shields.io/badge/Go_Report-A%2B-success?style=for-the-badge&logo=go&logoColor=white">
 </p>
 
 ---
+
+## 目录
+
+- [一句话](#一句话)
+- [快速开始](#快速开始)
+- [核心数据流](#核心数据流)
+- [适合构造什么](#适合构造什么)
+- [有序层栈嵌套](#有序层栈嵌套)
+- [Flow 状态维护](#flow-状态维护)
+- [YAML 约定](#yaml-约定)
+- [测试](#测试)
+- [安全边界](#安全边界)
+- [CI/CD](#cicd)
+
+## 一句话
+
+**pMaker 是一个离线 pcap 构造器：用 YAML 描述协议栈和会话行为，输出确定性 `.pcap` 文件。**
+
+它不抓包、不发包、不打开 raw socket，而是把“临时造流量”变成可以沉淀在仓库里的测试资产。
+
+## 快速开始
+
+### 构建
+
+```bash
+CGO_ENABLED=0 go build -o bin/pmaker ./cmd/pmaker
+```
+
+pMaker 使用纯 Go 的 `pcapgo` 写文件，无需 libpcap / CGO。
+
+### 生成 pcap
+
+```bash
+./bin/pmaker gen -f examples/http/get.yaml -o out.pcap
+```
+
+### 校验 YAML
+
+```bash
+./bin/pmaker validate -f examples/tunnel/qinq_gre.yaml
+```
+
+## 核心数据流
+
+<details>
+<summary>展开查看 pMaker pipeline</summary>
 
 ```text
                  ┌────────────────────────┐
@@ -48,11 +96,7 @@
               └───────────────────────────────┘
 ```
 
-## 一句话
-
-**pMaker 是一个离线 pcap 构造器：用 YAML 描述协议栈和会话行为，输出确定性 `.pcap` 文件。**
-
-它不抓包、不发包、不打开 raw socket，而是把“临时造流量”变成可以沉淀在仓库里的测试资产。
+</details>
 
 ## 适合构造什么
 
@@ -114,28 +158,6 @@ client                                              server
   │ ───────── HTTP request ───────────────────────▶ │
   │ ◀──────── HTTP response ─────────────────────── │
   │ ───────────── FIN/ACK ... ────────────────────▶ │
-```
-
-## 快速开始
-
-### 构建
-
-```bash
-CGO_ENABLED=0 go build -o bin/pmaker ./cmd/pmaker
-```
-
-pMaker 使用纯 Go 的 `pcapgo` 写文件，无需 libpcap / CGO。
-
-### 生成 pcap
-
-```bash
-./bin/pmaker gen -f examples/http/get.yaml -o out.pcap
-```
-
-### 校验 YAML
-
-```bash
-./bin/pmaker validate -f examples/tunnel/qinq_gre.yaml
 ```
 
 ## YAML 约定
