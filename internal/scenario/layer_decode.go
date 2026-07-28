@@ -57,7 +57,7 @@ func yamlFieldNames(out interface{}) map[string]bool {
 	if t == nil {
 		return nil
 	}
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	allowed := map[string]bool{}
