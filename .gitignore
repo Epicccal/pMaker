@@ -37,6 +37,7 @@ go.work.sum
 # Build output
 /bin/
 /pmaker
+/dist/
 
 # Generated pcap (keep golden fixtures under testdata/)
 *.pcap

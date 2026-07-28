@@ -1,0 +1,91 @@
+# golangci-lint v2 配置
+# 文档: https://github.com/golangci/golangci-lint
+#
+# 设计原则:保守启用、行为稳定、不随版本漂移。
+# 关闭与本项目风格冲突的检查:
+#   - ST1005: error strings 不应大写 —— 本项目错误信息面向用户且含中文,A 记录/DNS 等专有名词触发误报。
+#   - QF1001/QF1008: quickfix 风格建议(De Morgan/省略嵌入字段),属个人偏好,不强制。
+
+version: "2"
+
+run:
+  timeout: "5m"
+  # tests 与正常代码同等检查
+  tests: true
+
+linters:
+  # 只启用显式列出的 linter,行为不随 golangci-lint 默认集漂移
+  default: none
+  enable:
+    - errcheck    # 检查返回值是否被忽略
+    - govet       # go vet 报告
+    - staticcheck # 静态分析综合
+    - gosec       # 安全相关
+    - ineffassign # 无效赋值
+    - unused      # 未使用代码
+    - misspell    # 拼写错误
+    - revive      # golint 继承者,风格约定
+    - gocritic    # 通用代码审查建议
+
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - -ST1005
+        - -QF1001
+        - -QF1008
+    gosec:
+      # 本工具离线生成 pcap,默认不发包。
+      # G104: unhandled errors(已由 errcheck 覆盖且更精细)。
+      # G115: integer overflow(int -> uint16/byte 等)—— 构包底层大量刻意窄化
+      #       (DNS 计数、EtherType、TCP MSS 字节拆分、seq 前进量等),属该类代码典型,逐处标注噪声过大。
+      excludes:
+        - G104
+        - G115
+      config:
+        global:
+          audit: false
+    gocritic:
+      disabled-checks:
+        - ifElseChain  # 多分支条件各自带错误返回,switch true 并不更清晰
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-naming
+        - name: error-strings
+        - name: error-return
+        - name: errorf
+        - name: exported
+          arguments:
+            - "disableStutteringCheck"
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: var-declaration
+        - name: var-naming
+
+  exclusions:
+    presets:
+      - common-false-positives  # 误报库(如 errcheck 对 Close 的常见告警等)
+      - std-error-handling      # 标准库错误处理惯用法
+      - comments                # 注释相关(如文档缺少等)
+    paths:
+      - "bin"
+      - "vendor"
+    rules:
+      # 测试里写 golden fixture / 临时文件,0o644/0o755 是常规权限,更严格无收益
+      - path: _test\.go
+        linters: [gosec]
+        text: "G(301|306)"
+
+issues:
+  # 每个 linter 最多展示条目数,CI 失败时便于定位
+  max-issues-per-linter: 50
+  max-same-issues: 0

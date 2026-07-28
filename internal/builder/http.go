@@ -14,7 +14,7 @@ import (
 // 头按 key 排序输出以保证确定性(保留原序留待后续)。
 func serializeHTTPReq(f *scenario.HTTPReqFields) []byte {
 	method := orDefault(f.Method, "GET")
-	url := orDefault(f.Url, "/")
+	url := orDefault(f.URL, "/")
 	ver := orDefault(f.Version, "HTTP/1.1")
 
 	var b strings.Builder
