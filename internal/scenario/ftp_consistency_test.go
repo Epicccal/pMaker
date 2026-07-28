@@ -226,3 +226,253 @@ func TestFTPConsistency_PORTRoleOK(t *testing.T) {
 		}
 	}
 }
+
+// ---- EPSV(229)/EPRT(RFC 2428)一致性检查 ----
+
+// ftpConsistencyStackV6 是一条 IPv6 FTP 控制连接的常用 stack(sport/dport=21)。
+const ftpConsistencyStackV6 = `      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::21", hop_limit: 64 }
+      - tcp:  { sport: 49154, dport: 21, client_isn: 1000, server_isn: 5000 }
+      - tcp_session: { open: handshake, close: fin }
+`
+
+// dataStackV6With 返回一条 IPv6 数据连接 stack,dst IPv6 与 dport 由参数控制。
+func dataStackV6With(dstIP string, dport int) string {
+	return "      - eth:  { src: \"00:11:22:33:44:55\", dst: \"66:77:88:99:aa:bb\" }\n" +
+		"      - ipv6: { src: \"2001:db8::10\", dst: \"" + dstIP + "\", hop_limit: 64 }\n" +
+		"      - tcp:  { sport: 49155, dport: " + itoa(dport) + ", client_isn: 700000, server_isn: 800000 }\n" +
+		"      - tcp_session: { open: handshake, close: fin }\n"
+}
+
+// TestFTPConsistency_EPSVMatched: 229(EPSV)协商端口与 data 流 dport 一致;
+// 地址隐式为控制连接对端(服务器 2001:db8::21)= data 流 dst → 无告警。
+func TestFTPConsistency_EPSVMatched(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: dst\n        stack:\n" +
+		"          - ftp_response: { code: 229, message: \"Entering Extended Passive Mode (|||50000|).\" }\n" +
+		"  - name: data\n    stack:\n" + dataStackV6With("2001:db8::21", 50000) +
+		"    messages:\n      - from: dst\n        stack:\n          - payload: { payload: \"x\" }\n"
+	warnings := loadWarnings(t, "epsv_ok.yaml", body)
+	if len(warnings) != 0 {
+		t.Fatalf("EPSV 一致场景不应告警,实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPSVPortMismatch: 229 协商 50000,data 流 dport 49999 → 端口不一致告警。
+func TestFTPConsistency_EPSVPortMismatch(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: dst\n        stack:\n" +
+		"          - ftp_response: { code: 229, message: \"Entering Extended Passive Mode (|||50000|).\" }\n" +
+		"  - name: data\n    stack:\n" + dataStackV6With("2001:db8::21", 49999) +
+		"    messages:\n      - from: dst\n        stack:\n          - payload: { payload: \"x\" }\n"
+	warnings := loadWarnings(t, "epsv_port.yaml", body)
+	if !containsWarning(warnings, "端口不一致") || !containsWarning(warnings, "2001:db8::21:50000") {
+		t.Fatalf("期望 EPSV 端口不一致告警,实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPSVNoDataFlow: 229 协商端口,但场景中无对应数据流 → 告警未找到数据流。
+func TestFTPConsistency_EPSVNoDataFlow(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: dst\n        stack:\n" +
+		"          - ftp_response: { code: 229, message: \"Entering Extended Passive Mode (|||50000|).\" }\n"
+	warnings := loadWarnings(t, "epsv_nodata.yaml", body)
+	if !containsWarning(warnings, "未找到") || !containsWarning(warnings, "2001:db8::21:50000") {
+		t.Fatalf("期望 EPSV 未找到数据流告警,实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPSVUnparseable: 229 文本非标(无 (|||port|))→ 解析失败告警。
+func TestFTPConsistency_EPSVUnparseable(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: dst\n        stack:\n" +
+		"          - ftp_response: { code: 229, message: \"OK\" }\n"
+	warnings := loadWarnings(t, "epsv_unparseable.yaml", body)
+	if !containsWarning(warnings, "未解析出") {
+		t.Fatalf("期望 EPSV 解析失败告警,实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPSVRoleNoWarn: 229 不含地址,无角色可比对 → 不产出角色告警。
+func TestFTPConsistency_EPSVRoleNoWarn(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: dst\n        stack:\n" +
+		"          - ftp_response: { code: 229, message: \"Entering Extended Passive Mode (|||50000|).\" }\n"
+	warnings := loadWarnings(t, "epsv_role.yaml", body)
+	for _, w := range warnings {
+		if strings.Contains(w, "角色") {
+			t.Fatalf("EPSV(229)不含地址,不应触发角色告警,实际: %v", warnings)
+		}
+	}
+}
+
+// TestFTPConsistency_EPRTMatched: EPRT 协商(IPv6 地址:端口)与 data 流 dst 一致 → 无告警。
+func TestFTPConsistency_EPRTMatched(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: src\n        stack:\n" +
+		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::10|49157|\" }\n" +
+		"  - name: data\n    stack:\n" + dataStackV6With("2001:db8::10", 49157) +
+		"    messages:\n      - from: dst\n        stack:\n          - payload: { payload: \"x\" }\n"
+	warnings := loadWarnings(t, "eprt_ok.yaml", body)
+	if len(warnings) != 0 {
+		t.Fatalf("EPRT 一致场景不应告警,实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPRTPortMismatch: EPRT 协商 49157,data 流 dport 49999 → 端口不一致告警。
+func TestFTPConsistency_EPRTPortMismatch(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: src\n        stack:\n" +
+		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::10|49157|\" }\n" +
+		"  - name: data\n    stack:\n" + dataStackV6With("2001:db8::10", 49999) +
+		"    messages:\n      - from: dst\n        stack:\n          - payload: { payload: \"x\" }\n"
+	warnings := loadWarnings(t, "eprt_port.yaml", body)
+	if !containsWarning(warnings, "端口不一致") || !containsWarning(warnings, "2001:db8::10:49157") {
+		t.Fatalf("期望 EPRT 端口不一致告警,实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPRTRoleMismatch: EPRT 协商 IP=服务器地址,与客户端角色不符 → 角色告警。
+func TestFTPConsistency_EPRTRoleMismatch(t *testing.T) {
+	// EPRT 协商 2001:db8::21(控制连接服务器 dst),而非客户端 src 2001:db8::10。
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: src\n        stack:\n" +
+		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::21|49157|\" }\n"
+	warnings := loadWarnings(t, "eprt_role_mismatch.yaml", body)
+	if !containsWarning(warnings, "角色") || !containsWarning(warnings, "2001:db8::21") || !containsWarning(warnings, "2001:db8::10") {
+		t.Fatalf("期望 EPRT 角色不匹配告警(含 2001:db8::21 与 2001:db8::10),实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPRTRoleOK: EPRT 协商 IP=客户端地址(src),角色一致 → 无角色告警。
+func TestFTPConsistency_EPRTRoleOK(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: src\n        stack:\n" +
+		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::10|49157|\" }\n"
+	warnings := loadWarnings(t, "eprt_role_ok.yaml", body)
+	for _, w := range warnings {
+		if strings.Contains(w, "角色") {
+			t.Fatalf("EPRT 协商 IP=客户端侧不应触发角色告警,实际: %v", warnings)
+		}
+	}
+}
+
+// TestFTPConsistency_EPRTRoleMismatchIPv4: EPRT netproto=1(IPv4)也能正确解析与角色校验。
+func TestFTPConsistency_EPRTRoleMismatchIPv4(t *testing.T) {
+	// IPv4 控制连接 + EPRT netproto=1,协商服务器地址 → 角色告警。
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStack +
+		"    messages:\n      - from: src\n        stack:\n" +
+		"          - ftp_request: { command: EPRT, args: \"|1|10.0.0.21|49157|\" }\n"
+	warnings := loadWarnings(t, "eprt_v4_role_mismatch.yaml", body)
+	if !containsWarning(warnings, "角色") || !containsWarning(warnings, "10.0.0.21") || !containsWarning(warnings, "10.0.0.10") {
+		t.Fatalf("期望 EPRT(IPv4)角色不匹配告警,实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPRTBadNetproto: EPRT netproto 非 1/2 → 解析失败告警。
+func TestFTPConsistency_EPRTBadNetproto(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: src\n        stack:\n" +
+		"          - ftp_request: { command: EPRT, args: \"|3|2001:db8::10|49157|\" }\n"
+	warnings := loadWarnings(t, "eprt_bad_proto.yaml", body)
+	if !containsWarning(warnings, "未解析出") {
+		t.Fatalf("期望 EPRT 非法 netproto 解析失败告警,实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPSVPayloadText: 原始 payload 文本首 token "229" 也能被识别。
+func TestFTPConsistency_EPSVPayloadText(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: dst\n        stack:\n" +
+		"          - payload: { payload: \"229 Entering Extended Passive Mode (|||50000|).\\r\\n\" }\n" +
+		"  - name: data\n    stack:\n" + dataStackV6With("2001:db8::21", 50000) +
+		"    messages:\n      - from: dst\n        stack:\n          - payload: { payload: \"x\" }\n"
+	warnings := loadWarnings(t, "payload229.yaml", body)
+	if len(warnings) != 0 {
+		t.Fatalf("原始 payload 229 与 data 流一致时不应告警,实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPRTPayloadText: 原始 payload 文本首 token "EPRT" 也能被识别。
+// 原始文本含 CRLF 行尾,parseEPRTArgs 须先剥行尾与 "EPRT " 命令前缀再匹配。
+func TestFTPConsistency_EPRTPayloadText(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: src\n        stack:\n" +
+		"          - payload: { payload: \"EPRT |2|2001:db8::10|49157|\\r\\n\" }\n" +
+		"  - name: data\n    stack:\n" + dataStackV6With("2001:db8::10", 49157) +
+		"    messages:\n      - from: dst\n        stack:\n          - payload: { payload: \"x\" }\n"
+	warnings := loadWarnings(t, "payloadeprt.yaml", body)
+	if len(warnings) != 0 {
+		t.Fatalf("原始 payload EPRT 与 data 流一致时不应告警,实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPRTAddrNormalization: EPRT 用非规范 IPv6 文本(完整展开形式)
+// 与 data 流 dst 简写比对时,归一化后一致 → 无告警。验证协商侧地址规范化逻辑。
+func TestFTPConsistency_EPRTAddrNormalization(t *testing.T) {
+	// EPRT 协商 |2|2001:db8:0:0:0:0:0:10|49157|(完整展开),data 流 dst 用简写 2001:db8::10。
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
+		"    messages:\n      - from: src\n        stack:\n" +
+		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8:0:0:0:0:0:10|49157|\" }\n" +
+		"  - name: data\n    stack:\n" + dataStackV6With("2001:db8::10", 49157) +
+		"    messages:\n      - from: dst\n        stack:\n          - payload: { payload: \"x\" }\n"
+	warnings := loadWarnings(t, "eprt_norm.yaml", body)
+	if len(warnings) != 0 {
+		t.Fatalf("EPRT 地址归一化后一致不应告警,实际: %v", warnings)
+	}
+}
+
+// TestFTPConsistency_EPRTAddrNormalizationFlowSide: 控制流 src 用完整展开形式、
+// EPRT 协商用简写时,角色校验(协商 IP vs 控制流 src IP)归一化后一致 → 无角色告警。
+// 验证 flow 端点地址也走了规范化(不仅协商侧归一化)。
+func TestFTPConsistency_EPRTAddrNormalizationFlowSide(t *testing.T) {
+	// 控制流 src=2001:db8:0:0:0:0:0:10(完整展开),EPRT 协商 2001:db8::10(简写)→ 同一地址。
+	stack := "      - eth:  { src: \"00:11:22:33:44:55\", dst: \"66:77:88:99:aa:bb\" }\n" +
+		"      - ipv6: { src: \"2001:db8:0:0:0:0:0:10\", dst: \"2001:db8::21\", hop_limit: 64 }\n" +
+		"      - tcp:  { sport: 49154, dport: 21, client_isn: 1000, server_isn: 5000 }\n" +
+		"      - tcp_session: { open: handshake, close: fin }\n"
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + stack +
+		"    messages:\n      - from: src\n        stack:\n" +
+		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::10|49157|\" }\n"
+	warnings := loadWarnings(t, "eprt_norm_flow.yaml", body)
+	for _, w := range warnings {
+		if strings.Contains(w, "角色") {
+			t.Fatalf("协商地址与控制流 src 是同一 IPv6(不同文本形式),不应触发角色告警,实际: %v", warnings)
+		}
+	}
+}
+
+// TestFTPConsistency_EPSVAddrNormalizationFlowSide: EPSV(229)不含地址,隐式取控制流
+// dst IP;控制流 dst 用完整展开、data 流 dst 用简写时,归一化后一致 → 无告警。
+// 验证 229 隐式地址比对时两侧都走了规范化。
+func TestFTPConsistency_EPSVAddrNormalizationFlowSide(t *testing.T) {
+	ctrlStack := "      - eth:  { src: \"00:11:22:33:44:55\", dst: \"66:77:88:99:aa:bb\" }\n" +
+		"      - ipv6: { src: \"2001:db8::10\", dst: \"2001:db8:0:0:0:0:0:21\", hop_limit: 64 }\n" +
+		"      - tcp:  { sport: 49154, dport: 21, client_isn: 1000, server_isn: 5000 }\n" +
+		"      - tcp_session: { open: handshake, close: fin }\n"
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ctrlStack +
+		"    messages:\n      - from: dst\n        stack:\n" +
+		"          - ftp_response: { code: 229, message: \"Entering Extended Passive Mode (|||50000|).\" }\n" +
+		"  - name: data\n    stack:\n" + dataStackV6With("2001:db8::21", 50000) +
+		"    messages:\n      - from: dst\n        stack:\n          - payload: { payload: \"x\" }\n"
+	warnings := loadWarnings(t, "epsv_norm_flow.yaml", body)
+	if len(warnings) != 0 {
+		t.Fatalf("EPSV 隐式地址与 data 流 dst 是同一 IPv6(不同文本形式),不应告警,实际: %v", warnings)
+	}
+}
