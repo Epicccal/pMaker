@@ -26,10 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 安装 Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           # go.mod 写的是 "go 1.25.0",setup-go 会取 >=1.25 的最新稳定版。
@@ -49,7 +49,7 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           # 显式锁定版本,避免随 action 默认值漂移。
           version: v2.12.2
@@ -64,10 +64,10 @@ jobs:
       contents: read
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 安装 Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -79,7 +79,7 @@ jobs:
           go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: 上传覆盖率到 Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: ./coverage.out
           # 仓库管理员可在 Codecov 端配置 token;开源仓库可改用 OIDC 无 token 上传,
@@ -91,7 +91,7 @@ jobs:
 
       - name: 上传覆盖率产物
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-out
           path: ./coverage.out
@@ -102,10 +102,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 安装 Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -117,7 +117,7 @@ jobs:
           ./bin/pmaker version >/dev/null 2>&1 && echo "build smoke OK"
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pmaker-linux-amd64
           path: bin/pmaker

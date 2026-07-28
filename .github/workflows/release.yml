@@ -31,19 +31,19 @@ jobs:
           fi
 
       - name: 检出代码(指定 tag)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.tag.outputs.name }}
           fetch-depth: 0  # goreleaser 需要 git 历史生成 changelog
 
       - name: 安装 Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
 
       - name: 安装 GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           # 锁定 goreleaser 版本,避免漂移。
           version: v2.11.0
@@ -72,7 +72,7 @@ jobs:
 
       - name: 上传构建产物(归档)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-dist
           path: |
