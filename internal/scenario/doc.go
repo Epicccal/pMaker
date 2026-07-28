@@ -17,6 +17,6 @@
 //   - layer_decode.go: Layer.UnmarshalYAML 与按类型分发解码、未知字段校验。
 //   - scenario.go:     Load / Validate / Warnings 等对外入口与语义校验。
 //   - start_after_graph.go: start_after 依赖图(校验与 plan 算时共用)。
-//   - ftp_consistency.go:  FTP 控制通道 ↔ 数据通道端口一致性告警。
+//   - ftp_consistency.go:  FTP 控制通道 ↔ 数据通道端口一致性告警(227/PORT/229/EPRT)。
 //   - describe.go:     包/PlannedPacket 摘要(供 CLI 输出)。
 package scenario

@@ -1,0 +1,119 @@
+# examples/ftp/epsv_retr_ipv6.yaml
+#
+# 一次完整的 IPv6 FTP 会话(扩展被动模式 EPSV + 下载 RETR),用两条独立 flow + start_after
+# 表达控制通道与数据通道的应用层时序双向交错(方案 B 两段式展开)。
+#
+# EPSV(RFC 2428)是 PASV 的 IPv6/IPv4 通用版,响应码 229,协商文本为 (|||port|)
+# (扩展分隔符默认 '|',三道竖线后是端口,再一道竖线收尾)。与 227 六元组不同,
+# 229 只声明端口、不声明地址——地址隐式为控制连接的对端(服务器侧),这是 EPSV 在
+# 双栈/IPv6 下的优势:不再把 IPv6 地址塞进逗号分隔的六元组里。
+#
+#   control: 220 → USER/331 → PASS/230 → TYPE/200 → EPSV/229 → RETR/150 → 226 → QUIT/221 → 挥手
+#                                            │                        │         ▲
+#   data:                                       │(229 完成后握手)        │         │(整流结束后发 226)
+#                                              SYN/SYN-ACK/ACK → [文件内容] → 挥手
+#
+#   - data flow 级 start_after: control.epsv(=150 报文)→ 数据通道在 150 收完后才开始握手。
+#   - control 的 226 报文 message 级 start_after: data → 226 在数据通道整流结束(挥手后)才发。
+#
+# 五元组(独立于控制连接,端口/ISN 不同):
+#   控制连接  客户端 [2001:db8::10]:49154 <-> 服务器 [2001:db8::21]:21
+#   数据连接  客户端 [2001:db8::10]:49155 <-> 服务器 [2001:db8::21]:50000   (EPSV 协商端口 50000)
+#
+# 数据流 stack 方向(EPSV,与 control 同向):data 流 src=客户端、dst=服务器,
+# sport=49155、dport=50000(229 协商端口),from: dst(服务器发下载内容)。
+#
+# NDR/IDS 测试点:IPv6 承载的明文 FTP、EPSV(229)扩展协商、229 不携带地址(地址隐式为
+# 控制连接对端,检测设备须能从控制连接推断数据连接地址)、数据连接里传输的文件内容、
+# 229/150/226 响应码序列。
+#
+# 时序(默认步长 1ms,open=handshake/close=fin):data 在 control.epsv(150)完成后握手,
+# 226 在 data 挥手后才发,150 < data < 226 自动成立(详见 start_after 机制,无需手算绝对时刻)。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  # 控制通道:完整命令序列。150 报文带 message_id: epsv 供 data flow 级引用;
+  # 226 报文 message 级 start_after: data 等数据通道整流结束。
+  - name: control
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::21", hop_limit: 64 }
+      - tcp:  { sport: 49154, dport: 21, client_isn: 1000, server_isn: 5000, mss: 1440 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器欢迎横幅:多行 220- 续行(RFC 959 §4.1.3)
+      - from: dst
+        stack:
+          - ftp_response:
+              code: 220
+              lines:
+                - "Welcome to pMaker FTP service (IPv6)."
+                - "All transfers are logged."
+                - "Login anonymous accepted."
+
+      - from: src
+        stack:
+          - ftp_request: { command: USER, args: anonymous }
+      - from: dst
+        stack:
+          - ftp_response: { code: 331, message: "Please specify the password." }
+
+      - from: src
+        stack:
+          - ftp_request: { command: PASS, args: guest }
+      - from: dst
+        stack:
+          - ftp_response: { code: 230, message: "Login successful." }
+
+      - from: src
+        stack:
+          - ftp_request: { command: TYPE, args: I }
+      - from: dst
+        stack:
+          - ftp_response: { code: 200, message: "Switching to Binary mode." }
+
+      # EPSV:服务器协商数据连接端口 50000。229 响应格式 (|||50000|),不携带地址。
+      - from: src
+        stack:
+          - ftp_request: { command: EPSV }
+      - from: dst
+        stack:
+          - ftp_response: { code: 229, message: "Entering Extended Passive Mode (|||50000|)." }
+
+      # RETR:客户端请求下载;服务器先回 150(带 message_id 供 data 引用),数据走 data 流,再回 226
+      - from: src
+        stack:
+          - ftp_request: { command: RETR, args: secret.txt }
+      - from: dst
+        message_id: epsv          # ← 被 data flow 级引用(=150 报文整组完成时刻)
+        stack:
+          - ftp_response: { code: 150, message: "Opening BINARY mode data connection for secret.txt." }
+
+      # 226:数据通道整流结束(挥手后)才发
+      - from: dst
+        start_after: "data"        # ← 等数据通道整流结束(挥手后)再发 226
+        stack:
+          - ftp_response: { code: 226, message: "Transfer complete." }
+
+      - from: src
+        stack:
+          - ftp_request: { command: QUIT }
+      - from: dst
+        stack:
+          - ftp_response: { code: 221, message: "Goodbye." }
+
+  # 数据通道:EPSV,客户端(发起方)连服务器 50000;RETR 由服务器(非发起方=dst)发下载内容。
+  # start_after: control.epsv → 在 150 收完后才开始握手。独立五元组(端口/ISN 与控制连接不同)。
+  - name: data
+    start_after: "control.epsv"
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::21", hop_limit: 64 }
+      - tcp:  { sport: 49155, dport: 50000, client_isn: 700000, server_isn: 800000, mss: 1440 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: dst                  # 服务器发下载内容(下载方向)
+        stack:
+          - payload: { payload: "TOP SECRET\r\nusername=admin password=hunter2\r\ntoken=0xdeadbeef\r\n" }
