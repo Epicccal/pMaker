@@ -1,0 +1,79 @@
+# GoReleaser 配置 —— pmaker 离线 pcap 构造工具
+# 文档: https://goreleaser.com
+#
+# 设计要点:
+#   - 纯 Go,CGO_ENABLED=0,静态编译,跨平台开箱即用。
+#   - 目标平台:linux/macOS/windows × amd64/arm64。
+#   - 通过 ldflags 注入版本号(对应 cmd/pmaker/main.go 里的 version 变量)。
+#   - 不发布 Homebrew/Scoop 等(后续按需再加),只产 GitHub Release 归档 + checksums。
+
+version: 2
+
+project_name: pmaker
+
+before:
+  hooks:
+    # 发版前跑一遍测试,带失败即中止。
+    - go test ./...
+
+builds:
+  - id: pmaker
+    main: ./cmd/pmaker
+    binary: pmaker
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # 忽略不常见的组合;若将来需要再放开。
+    ignore:
+      - goos: windows
+        goarch: arm64  # Windows arm64 工具链/用户极少,先不开
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+
+archives:
+  # 格式:linux/macOS 用 tar.gz,windows 用 zip。
+  - formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # 把 LICENSE / README 带进归档。
+    files:
+      - LICENSE
+      - README.md
+      - examples/**/*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev"
+
+changelog:
+  use: git
+  sort: desc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  # 不在此处发布(GitHub Release 创建/上传交给 workflow 里的 gh CLI),
+  # goreleaser 只负责本地构建产物。
+  disable: true

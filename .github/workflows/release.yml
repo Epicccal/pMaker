@@ -1,0 +1,82 @@
+name: Release
+
+# 触发:推送形如 v* 的 git tag(如 v0.1.0)。
+# 这是显式的发版动作,与 CI(推 main / PR)分离。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag(须已存在,如 v0.1.0)"
+        required: true
+
+permissions:
+  contents: write  # 创建 Release、上传资产需要写 repo 权限
+
+jobs:
+  release:
+    name: 交叉编译与发布
+    runs-on: ubuntu-latest
+    steps:
+      - name: 解析目标 tag
+        # workflow_dispatch 模式下用输入的 tag;tag 触发则用 GITHUB_REF。
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 检出代码(指定 tag)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.name }}
+          fetch-depth: 0  # goreleaser 需要 git 历史生成 changelog
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 安装 GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          # 锁定 goreleaser 版本,避免漂移。
+          version: v2.11.0
+          install-only: true
+
+      - name: 构建(本地,不上传)
+        # CI 环境不默认持有发布凭证,统一用 --skip=publish 在本地完成构建;
+        # 上传到 GitHub Release 放到下一步用 gh CLI 完成,凭证链路更清晰。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          goreleaser release --clean --skip=publish
+
+      - name: 上传资产到 GitHub Release
+        # 若 tag 对应的 Release 不存在则创建,存在则上传资产。
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          # 确保 gh CLI 可用(actions runner 自带)。
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --generate-notes --title "$TAG"
+          fi
+          gh release upload "$TAG" dist/*.tar.gz dist/*.zip dist/checksums.txt --clobber
+
+      - name: 上传构建产物(归档)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dist
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          retention-days: 14
