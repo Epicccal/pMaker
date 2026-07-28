@@ -1,0 +1,115 @@
+# examples/ftp/eprt_stor_ipv6.yaml
+#
+# 一次完整的 IPv6 FTP 会话(扩展主动模式 EPRT + 上传 STOR),用两条独立 flow + start_after
+# 表达控制通道与数据通道的应用层时序双向交错(方案 B 两段式展开)。
+#
+# EPRT(RFC 2428)是 PORT 的 IPv6/IPv4 通用版,请求格式 |netproto|addr|port|,
+# netproto=2 表示 IPv6。与 PORT 的逗号六元组不同,EPRT 用竖线分隔,能容纳 IPv6 地址
+# 文本(不含竖线),这是 EPRT 在 IPv6 下的核心价值。
+#
+#   control: 220 → USER/331 → PASS/230 → TYPE/200 → EPRT/200 → STOR/150 → 226 → QUIT/221 → 挥手
+#                                                │                 │         ▲
+#   data:                                         │(150 完成后握手)  │         │(整流结束后发 226)
+#                                              SYN/SYN-ACK/ACK → [文件内容] → 挥手
+#
+#   - data flow 级 start_after: control.stor(=150 报文)→ 数据通道在 150 收完后才开始握手。
+#   - control 的 226 报文 message 级 start_after: data → 226 在数据通道整流结束(挥手后)才发。
+#
+# 五元组(独立于控制连接,端口/ISN 不同):
+#   控制连接  客户端 [2001:db8::10]:49156 <-> 服务器 [2001:db8::21]:21
+#   数据连接  服务器 [2001:db8::21]:20 -> 客户端 [2001:db8::10]:49157   (EPRT 协商端口 49157,服务器主动连)
+#
+# 数据流 stack 方向(EPRT,与 control **反向** —— 整条 stack 反转 + 端口角色互换):
+#   data 流 src=服务器、dst=客户端(主动模式由服务器发起 SYN),sport=20、dport=49157(EPRT 协商端口),
+#   from: dst(客户端=非发起方发上传内容)。
+#
+# ISN 命名陷阱:client_isn/server_isn 按**位置**绑定(src=client_isn, dst=server_isn),不是按角色。
+# EPRT 模式 data 流 src=服务器,故其 client_isn 字段填的是**服务器**的数据 ISN(值任意,确定性即可)。
+#
+# NDR/IDS 测试点:IPv6 承载的明文 FTP、EPRT 扩展协商(netproto=2、竖线分隔的 IPv6 地址:端口)、
+# 数据连接里上传的二进制内容、150/226 响应码序列。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  # 控制通道:完整命令序列。150 报文带 message_id: stor 供 data flow 级引用;
+  # 226 报文 message 级 start_after: data 等数据通道整流结束。
+  - name: control
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::21", hop_limit: 64 }
+      - tcp:  { sport: 49156, dport: 21, client_isn: 2000, server_isn: 6000, mss: 1440 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: dst
+        stack:
+          - ftp_response: { code: 220, message: "Welcome to pMaker FTP (IPv6)." }
+
+      - from: src
+        stack:
+          - ftp_request: { command: USER, args: admin }
+      - from: dst
+        stack:
+          - ftp_response: { code: 331, message: "Please specify the password." }
+
+      - from: src
+        stack:
+          - ftp_request: { command: PASS, args: s3cret }
+      - from: dst
+        stack:
+          - ftp_response: { code: 230, message: "Login successful." }
+
+      - from: src
+        stack:
+          - ftp_request: { command: TYPE, args: I }
+      - from: dst
+        stack:
+          - ftp_response: { code: 200, message: "Switching to Binary mode." }
+
+      # EPRT:客户端告知监听地址:端口。netproto=2(IPv6),addr=客户端 IPv6,port=49157。
+      - from: src
+        stack:
+          - ftp_request: { command: EPRT, args: "|2|2001:db8::10|49157|" }
+      - from: dst
+        stack:
+          - ftp_response: { code: 200, message: "EPRT command successful." }
+
+      # STOR:客户端上传;服务器先回 150(带 message_id 供 data 引用),数据走 data 流,再回 226
+      - from: src
+        stack:
+          - ftp_request: { command: STOR, args: upload.bin }
+      - from: dst
+        message_id: stor           # ← 被 data flow 级引用(=150 报文整组完成时刻)
+        stack:
+          - ftp_response: { code: 150, message: "Ok to send data." }
+
+      # 226:数据通道整流结束(挥手后)才发
+      - from: dst
+        start_after: "data"        # ← 等数据通道整流结束(挥手后)再发 226
+        stack:
+          - ftp_response: { code: 226, message: "Transfer complete." }
+
+      - from: src
+        stack:
+          - ftp_request: { command: QUIT }
+      - from: dst
+        stack:
+          - ftp_response: { code: 221, message: "Goodbye." }
+
+  # 数据通道:EPRT 主动模式,服务器(SYN 发起方=src)从 20 端口连客户端 49157;
+  # STOR 由客户端(非发起方=dst)发上传内容。
+  # start_after: control.stor → 在 150 收完后才开始握手。独立五元组(端口/ISN 与控制连接不同)。
+  - name: data
+    start_after: "control.stor"
+    stack:
+      # 整条 stack 反转:src=服务器、dst=客户端(主动模式由服务器发起 SYN)。
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv6: { src: "2001:db8::21", dst: "2001:db8::10", hop_limit: 64 }
+      # client_isn 按位置绑定 src(=服务器):填服务器的数据 ISN;server_isn 绑定 dst(=客户端)。
+      - tcp:  { sport: 20, dport: 49157, client_isn: 900000, server_isn: 950000, mss: 1440 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: dst                  # 客户端发上传内容(上传方向)
+        stack:
+          - payload_hex: 0x434c4f55442044415441   # "CLOUD DATA"
