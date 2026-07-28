@@ -4,9 +4,10 @@ import (
 	"testing"
 )
 
-// 本文件针对 ftp_consistency.go 里几条协商文本解析正则/函数,验证提取有效性:
+// 本文件针对 ftp_consistency.go 里四条协商文本解析正则/函数,验证提取有效性:
 // 每条正则各配 2 个用例(正例命中 + 反例不命中)。
-//   - ftpPortTupleRegex(已存在,但这里补单元测试):带括号六元组
+//   - ftpPortTupleRegex(已存在,但这里补单元测试):带括号六元组(227 响应)
+//   - portArgsRegex:裸六元组(无括号、整串,ftp_request PORT 的 args 字段)
 //   - epsvTupleRegex:229 响应 (|||port|)
 //   - eprtArgsRegex:EPRT 请求 |netproto|addr|port|
 //
