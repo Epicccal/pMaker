@@ -1,0 +1,89 @@
+# examples/ftp/port_stor_file.yaml
+#
+# port_stor 的变体:STOR 上传的二进制内容来自外部文件 assets/upload.bin(@file 占位符),
+# 而非内联的 payload_hex。演示把文件作为数据通道载荷拼进报文——文件里含裸 @(libfoo@2.1),
+# 占位符解析保留裸 @ 不误伤。控制通道时序与 port_stor 完全一致(主动模式 PORT + STOR)。
+#
+#   control: 220 → USER/331 → PASS/230 → TYPE/200 → PORT/200 → STOR/150 → 226 → QUIT/221 → 挥手
+#   data:    (150 后握手)→ [文件内容] → 挥手;226 在 data 整流结束后才发。
+#
+# @file 路径相对本场景文件所在目录(examples/ftp/)解析,故写成 @file(assets/upload.bin)。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: control
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.21", ttl: 64 }
+      - tcp:  { sport: 49158, dport: 21, client_isn: 2200, server_isn: 6200, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: dst
+        stack:
+          - ftp_response: { code: 220, message: "Welcome to pMaker FTP." }
+
+      - from: src
+        stack:
+          - ftp_request: { command: USER, args: admin }
+      - from: dst
+        stack:
+          - ftp_response: { code: 331, message: "Please specify the password." }
+
+      - from: src
+        stack:
+          - ftp_request: { command: PASS, args: s3cret }
+      - from: dst
+        stack:
+          - ftp_response: { code: 230, message: "Login successful." }
+
+      - from: src
+        stack:
+          - ftp_request: { command: TYPE, args: I }
+      - from: dst
+        stack:
+          - ftp_response: { code: 200, message: "Switching to Binary mode." }
+
+      # PORT:客户端告知监听端口 49159 = 192*256+7
+      - from: src
+        stack:
+          - ftp_request: { command: PORT, args: "10,0,0,10,192,7" }
+      - from: dst
+        stack:
+          - ftp_response: { code: 200, message: "PORT command successful." }
+
+      # STOR:上传文件;服务器先回 150(带 message_id 供 data 引用),数据走 data 流,再回 226
+      - from: src
+        stack:
+          - ftp_request: { command: STOR, args: upload.bin }
+      - from: dst
+        message_id: stor
+        stack:
+          - ftp_response: { code: 150, message: "Ok to send data." }
+
+      - from: dst
+        start_after: "data"
+        stack:
+          - ftp_response: { code: 226, message: "Transfer complete." }
+
+      - from: src
+        stack:
+          - ftp_request: { command: QUIT }
+      - from: dst
+        stack:
+          - ftp_response: { code: 221, message: "Goodbye." }
+
+  # 数据通道:PORT 主动模式,服务器(SYN 发起方=src)从 20 端口连客户端 49159;
+  # STOR 由客户端(非发起方=dst)发上传内容。payload 来自外部文件 @file(assets/upload.bin)。
+  - name: data
+    start_after: "control.stor"
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.21", dst: "10.0.0.10", ttl: 64 }
+      - tcp:  { sport: 20, dport: 49159, client_isn: 920000, server_isn: 970000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: dst                  # 客户端发上传内容(上传方向),内容来自文件
+        stack:
+          - payload: { payload: "@file(assets/upload.bin)" }
