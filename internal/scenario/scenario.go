@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -29,6 +30,12 @@ func Load(path string) (*Scenario, error) {
 	}
 	if s.LinkType == "" {
 		s.LinkType = "ethernet"
+	}
+	// @file(<path>) 占位符替换:YAML decode 之后扫描所有 string 字段,把文件内容拼进去。
+	// 路径相对 scenario 文件所在目录(filepath.Dir(path));占位符可在任意内容字段(body/
+	// payload/header 值/ftp args …)里出现,文件可只占字段的一部分。详见 file_placeholder.go。
+	if err := ExpandFilePlaceholders(&s, filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("解析 %s: %w", path, err)
 	}
 	return &s, nil
 }
