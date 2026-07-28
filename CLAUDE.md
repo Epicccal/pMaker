@@ -53,41 +53,62 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 
 最小出包链路已打通:`pmaker gen -f <yaml> -o <pcap>` 可真正出包。
 
-- **已实现 stack 模型**:层 eth / vlan(Dot1Q)/ ipv4 / gre / tcp / udp / icmp / dns / payload / payload_hex / http_request / http_response / ftp_request / ftp_response;
-  next-proto 自动串接、TCP/UDP checksum 伪首部、ICMP echo request/reply、DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV、FTP 控制连接命令/响应(RFC 959 多行续行)、确定性时间戳、golden + gopacket 回读测试。FTP 控制通道 ↔ 数据通道用**两条独立 flow + `start_after`** 表达(message 级双向交错:数据 `start_after control.<150>`、226 `start_after data`),不引入 `data_connection` 等关联字段。**FTP 命令/响应码校验对齐 DNS 模式**:`ftp_request.command` 校验已知命令表(RFC 959 核心 + 常见扩展,大小写不敏感),`ftp_response.code` 校验三位 100-599(首位 1-5);未列入的命令、越界响应码报错,引导改用 `payload` / `payload_hex` 原始字节通道构造非标 / 畸形值(与全项目「非标值走原始字节兜底」约定一致)。**FTP 端口协商一致性告警覆盖 RFC 959 + RFC 2428**:`PASV`(227 六元组)/`PORT`(六元组)/`EPSV`(229,`(|||port|)`,地址隐式为控制连接对端)/`EPRT`(`|netproto|addr|port|`,netproto=1 IPv4 / 2 IPv6);解析失败、协商端点与数据流 dst IP:port 不一致、协商地址与控制连接角色不匹配时产出告警(非硬错,畸形用例可故意不一致),EPRT 地址按地址族归一化后再比对(避免同地址的不同文本表示误判为不一致)。
-- **已实现 flow 基础版**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
-  HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
-- **已实现 flow 逐消息定时**:`message.offset_time`(相对上一条消息末尾的偏移,锚定单条消息整组)、
-  `segment.interval`(同消息各数据段间隔,模拟慢速分段/RTT);`flow.Expand` 自管时间轴,
-  plan 退回汇流 + 稳定排序。**时间语义为「相对上一包 + 跨流独立」**:流内链式——每条消息
-  = 上一条末尾 + offset(`start=msgCursor+offset`,第一条相对握手完成后);offset>=0 天然单调、
-  无需夹紧,慢响应拖慢下一条请求(正常非流水线 HTTP);挥手接在最后一条消息之后(传完才关)。
-- **已实现 PlannedPacket 时间编排**:`internal/plan.Plan` 把 standalone packets 与 flows 展开包汇流成
-  `PlannedPacket{ Stack; Time }` 列表,按显式时间戳稳定排序后再交 `builder.BuildPlanned` 序列化。
-  时间锚为 `base_time`(AbsTime,唯一绝对锚,仅 ISO8601);`Offset` 类型在解析阶段结构性保证取值合法
-  (非负时长),不依赖运行期校验。**各 offset_time 的参照点因字段而异**:`packet.offset_time` 相对
-  **上一包**(第一包相对 base);`flow.offset_time` 相对 **base_time**(跨流独立、可并行,flow 不消费/推进
-  packet 游标);`message.offset_time` 相对 **上一条消息**(第一条相对握手完成后)。
-- **已实现消息粒度两段式展开(方案 B)**:支持 FTP 控制通道 ↔ 数据通道这种**消息级双向交错**的
-  `start_after` 场景(数据通道 `start_after: control.150` + 控制通道 226 报文 `start_after: data`)。
-  `plan.Plan` 改为**两段式**——阶段一(`scheduler`)按事件粒度递归+记忆化**只算时刻不发包**:
-  每个 flowStart / 每条 message 的 start 与 msgCursor / flowEnd 都是独立事件,各自只依赖其引用的事件,
-  被引事件先算出、引用方后算,FTP 式 `control.150 → data → control.226` 在事件粒度有向无环故能算通
-  (整流粒度会把它压成"互等对方整流先完成"的死锁);阶段二各 flow 拿着已算好的 per-message 起始
-  时刻表独立 `flow.Expand`(seq/ack 状态单次展开内连续维护)。事件依赖图(`scenario.StartAfterGraph`)
-  由 `validateStartAfter` 与 plan 的算时阶段共用(`BuildStartAfterGraph`),避免两包重复实现图逻辑;
-  真环(跨流消息级互引)仍由校验阶段三色 DFS 拦截。`flow.Expand` 的 `schedule` 参数注入 per-message
-  起始时刻;无跨流依赖时退化为 `resolve` 回调路径,行为与历史逐字节等价。
-- **未实现 / 简化**:flow 的 overlap / 重传 / IP 分片未做(乱序与段间 RTT 已由 `message.offset_time` /
-  `segment.interval` 覆盖);
-  畸形开关 `fix_lengths` / `checksum` **解析但忽略**(build 时 `slog.Warn`),真正的畸形 / 原始字节兜底待做;
-  HTTP 头按 key 排序输出(未保留原序)。
+**已实现层(stack 模型)**:
 
-> **源码组织**:builder 与 scenario 包已按职责拆分。`builder/dns.go` 留构包逻辑(buildDNS/buildDNSRR*/
-> dnsName*/dnsRawLayer),`builder/dns_enum.go` 收纯字符串↔枚举映射(dnsType/dnsClass/dnsOpCode/dnsRCode/
-> dnsQR/parseDNSRRNumber/validateDNSName)。scenario 包拆为 types.go(顶层结构体与 Hex/PayloadHex)、
-> time.go(AbsTime/Offset)、layer_fields.go(各层 *Fields)、layer_decode.go(Layer 解码分发)、
-> scenario.go(Load/Validate/Warnings)、start_after_graph.go、ftp_consistency.go、describe.go(见 doc.go)。
+- L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层)
+- L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)
+- L4:`tcp`、`udp`
+- 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`
+- 兜底:`payload`、`payload_hex`(原始字节)
+
+**已实现特性**:
+
+- next-proto / EtherType 按层栈自动串接,可逐层显式覆盖(制造断链)。
+- TCP/UDP checksum 伪首部绑定就近 IP 层(多层 IP 时绑内层)。
+- ICMP echo request/reply 及错误报文(`quote` / `quote_from`)。
+- DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV。
+- FTP 控制连接命令/响应(RFC 959 多行续行)。
+- 确定性时间戳(`base_time` + offset,不用 `time.Now()`)。
+- golden pcap 逐字节比对 + gopacket 回读测试。
+
+**FTP 专项**:
+
+- 控制通道 ↔ 数据通道:用**两条独立 flow + `start_after`** 表达消息级双向交错
+  (数据 `start_after: control.<150>`、226 `start_after: data`),不引入 `data_connection` 等关联字段。
+  语义与实现见下文「时间编排与汇流 → 跨流 start_after 的实现」。
+- 命令/响应码校验对齐 DNS 模式:`ftp_request.command` 校验已知命令表
+  (RFC 959 核心 + 常见扩展,大小写不敏感);`ftp_response.code` 校验三位 100-599(首位 1-5)。
+  未列入的命令、越界响应码报错,引导改用 `payload` / `payload_hex`(与全项目「非标值走原始字节兜底」一致)。
+- 端口协商一致性告警覆盖 RFC 959 + RFC 2428:
+  `PASV`(227 六元组)/`PORT`(六元组)/`EPSV`(229,`(|||port|)`,地址隐式为控制连接对端)/
+  `EPRT`(`|netproto|addr|port|`,netproto=1 IPv4 / 2 IPv6)。
+  解析失败、协商端点与数据流 dst IP:port 不一致、协商地址与控制连接角色不匹配时产出告警
+  (非硬错,畸形用例可故意不一致);EPRT 地址按地址族归一化后再比对。
+
+**已实现 flow**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
+HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
+
+**已实现时间编排**:逐消息定时(`message.offset_time` / `segment.interval`)、
+跨流 `start_after`(flow 级与 message 级)、两段式事件粒度算时。详见下文「时间编排与汇流」。
+
+**未实现 / 简化**:
+
+- flow 的 overlap / 重传 / IP 分片未做(乱序与段间 RTT 已由 `message.offset_time` / `segment.interval` 覆盖)。
+- 畸形开关 `fix_lengths` / `checksum` **解析但忽略**(build 时 `slog.Warn`),真正的畸形 / 原始字节兜底待做。
+- HTTP 头按 key 排序输出(未保留原序)。
+
+> **源码组织**:builder 与 scenario 包已按职责拆分。
+>
+> builder 包:
+> - `builder.go`:层栈序列化入口 `BuildPlanned` + `serializeStack` 分派。
+> - `dns.go`(构包)/ `dns_enum.go`(枚举映射)/ `dns_raw.go`(原始层)。
+> - `http.go` / `ftp.go` / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
+>
+> scenario 包(详见 `doc.go`):
+> - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields)、
+>   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Load/Validate/Warnings)、`start_after_graph.go`、
+>   `ftp_command.go`、`ftp_consistency.go`、`describe.go`(包/PlannedPacket 摘要)。
+>
 > 测试按「一一对应 + 公共辅助集中」组织,详见下文「测试文件命名规约」。
 
 ## 核心数据流
@@ -221,26 +242,63 @@ segment: { mss: 8, interval: "+10ms" }
   给递增 offset。flow 内部也不再推导跨流接续。
 - **相对上一包(packet)**:`packet.offset_time` 相对**上一包**(第一包相对 `base`);无 offset 则接续默认游标
   (+1ms)。即每包 = 上一包 + offset(或 +1ms),SYN 扫描等"按间隔发包"场景由此表达。
-- **相对上一条消息(message)**:flow 内单游标 `msgCursor`(= 上一条消息末尾),每条消息 `start = msgCursor +
-  offset`(无 offset 则紧接 `msgCursor`);第一条消息的"上一条"= 握手完成后(`msgAnchor`)。offset>=0 天然
-  单调、无需夹紧,慢响应自然拖慢下一条请求(正常非流水线 HTTP)。挥手接在 `msgCursor` 之后(传完才关)。
+- **相对上一条消息(message)**:flow 内单游标 `msgCursor`(= 上一条消息末尾),每条消息
+  `start = msgCursor + offset`(无 offset 则紧接 `msgCursor`);第一条消息的"上一条"= 握手完成后
+  (`msgAnchor`)。offset>=0 天然单调、无需夹紧,慢响应自然拖慢下一条请求(正常非流水线 HTTP)。
+  挥手接在 `msgCursor` 之后(传完才关)。
 - 段间按 `segment.interval` 间隔(缺省 `flow.DefaultStep`=1ms);对端 ACK 是伴生控制包,用 `DefaultStep`,
   不被数据段节奏传染。未显式定时时每包 `flow.DefaultStep`(1ms)。
 
 时间表达(由 `AbsTime` / `Offset` 两个类型分别解析,结构性保证取值合法):
 
-- `base_time`:场景里唯一的绝对锚(`AbsTime`,仅 ISO8601,UTC);缺省=确定性 2020 基准。它是各时间链的起点(flow 锚、第一包/第一条消息的"上一项")。写 `+1s` 这类偏移在解析阶段即失败。
-- 所有 `Offset` 字段(`packet/flow/message.offset_time`、`segment.interval`)**只接受非负时长**;负值在解析阶段即失败——负偏移通常意味着 `base_time` 选错了起点(应把 `base_time` 提前,而非用负 offset 够到零点之前)。
-- `packet.offset_time`:该包相对**上一包**的时长偏移(`Offset`,如 `+1.5s`/`+500ms`/`0s`);该包时刻 = `上一包时刻 + offset`(第一包 = `base + offset`)。缺省则接续默认游标(+1ms)。
-- `flow.offset_time`:流起始相对流锚基准的时长偏移,即 `anchor = 流锚基准 + flow.offset_time`。**流锚基准语境相关**:无 `start_after` 时为 `base_time`(缺省则 `anchor=base`,跨流独立、并发,不接续别的 flow / 不读 packet 游标);置 `start_after` 时为被引消息的整组完成时刻(msgCursor)。缺省 `offset_time`=0(紧接 `base` 或被引 msgCursor)。
-- `flow.start_after`:可选,形如 `"flow名"`(该 flow 整流结束,挥手后)或 `"flow名.message_id"`(该消息整组完成,msgCursor),置则本 flow 锚基准 = 被引时刻,`anchor = 被引时刻 + flow.offset_time`(缺省 0 紧接)。用于"一个 flow 在另一个 flow / 另一个 flow 某消息完成后开始"(如 FTP 控制通道触发数据通道)。这是**显式跨流依赖**(opt-in),默认独立性不变;plan 多遍拓扑展开(被引 flow 先展开登记时刻,引用方多遍解析),循环依赖在校验阶段(`validateStartAfter` 三色 DFS)拦截。被引 message 须在该 flow 内有唯一 `message_id`;被引 flow 须具名且唯一。被引 flow 可声明在后(拓扑序,非声明序)。
-- `message.start_after`:可选,同形 `"flow名"` 或 `"flow名.message_id"`,置则该消息起点 = 被引时刻 + `message.offset_time`(缺省 0 紧接),取代默认的"上一条消息末尾 + offset"。用于"某条消息在另一个 flow / 另一个 flow 某消息完成后才开始"(比 flow 级更细:不必把整条 flow 的握手都推迟,只让某一条消息等跨流事件)。**禁止同流自引**(流内顺序由 message 链式游标保证);被引 flow 须具名且唯一、被引 message 须有唯一 `message_id`,可声明在后(拓扑序)。循环检测仍是 flow 粒度:同 flow 内多条 message 各自 start_after 不同被引 flow,该 flow 整体视作依赖这些被引 flow(建边 = `f.Name → refFlow`)。
-- `message.offset_time`:单条消息起始相对**上一条消息末尾**的时长偏移(第一条相对握手完成后 = 流锚 `anchor`);把该消息整组(各数据段 + 对端 ACK)锚定到 `上一条末尾 + offset`。链式 delta、天然单调,用于多轮请求间隔(慢响应拖慢下一条)。握手固定 `DefaultStep` 不参与定时,故第一条消息的 offset 从握手结束算起,避免小 offset 与握手包撞时间。
-- `segment.interval`:同一消息各数据段之间的时间间隔(`Offset`,如 `+10ms`);缺省 1ms,显式给出模拟慢速分段 / RTT。只作用于数据段;对端 ACK 用 `DefaultStep`(伴生控制包,不被数据段节奏传染)。
+- `base_time`:场景里唯一的绝对锚(`AbsTime`,仅 ISO8601,UTC);缺省=确定性 2020 基准。
+  它是各时间链的起点(flow 锚、第一包/第一条消息的"上一项")。写 `+1s` 这类偏移在解析阶段即失败。
+- 所有 `Offset` 字段(`packet/flow/message.offset_time`、`segment.interval`)
+  **只接受非负时长**;负值在解析阶段即失败——负偏移通常意味着 `base_time` 选错了起点
+  (应把 `base_time` 提前,而非用负 offset 够到零点之前)。
+- `packet.offset_time`:该包相对**上一包**的时长偏移(`Offset`,如 `+1.5s`/`+500ms`/`0s`);
+  该包时刻 = `上一包时刻 + offset`(第一包 = `base + offset`)。缺省则接续默认游标(+1ms)。
+- `flow.offset_time`:流起始相对**流锚基准**的时长偏移,即 `anchor = 流锚基准 + flow.offset_time`。
+  **流锚基准语境相关**:无 `start_after` 时为 `base_time`(缺省则 `anchor=base`,跨流独立、并发,
+  不接续别的 flow / 不读 packet 游标);置 `start_after` 时为被引消息的整组完成时刻(msgCursor)。
+  缺省 `offset_time`=0(紧接 `base` 或被引 msgCursor)。
+- `flow.start_after`:可选,形如 `"flow名"`(该 flow 整流结束,挥手后)或 `"flow名.message_id"`
+  (该消息整组完成,msgCursor),置则本 flow 锚基准 = 被引时刻,`anchor = 被引时刻 + flow.offset_time`
+  (缺省 0 紧接)。用于"一个 flow 在另一个 flow / 另一个 flow 某消息完成后开始"(如 FTP 控制通道触发
+  数据通道)。这是**显式跨流依赖**(opt-in),默认独立性不变;plan 多遍拓扑展开(被引 flow 先展开登记
+  时刻,引用方多遍解析),循环依赖在校验阶段(`validateStartAfter` 三色 DFS)拦截。被引 message 须在该
+  flow 内有唯一 `message_id`;被引 flow 须具名且唯一。被引 flow 可声明在后(拓扑序,非声明序)。
+- `message.start_after`:可选,同形 `"flow名"` 或 `"flow名.message_id"`,置则该消息起点 =
+  被引时刻 + `message.offset_time`(缺省 0 紧接),取代默认的"上一条消息末尾 + offset"。用于"某条
+  消息在另一个 flow / 另一个 flow 某消息完成后才开始"(比 flow 级更细:不必把整条 flow 的握手都推迟,
+  只让某一条消息等跨流事件)。**禁止同流自引**(流内顺序由 message 链式游标保证);被引 flow 须具名且
+  唯一、被引 message 须有唯一 `message_id`,可声明在后(拓扑序)。循环检测仍是 flow 粒度:同 flow 内
+  多条 message 各自 start_after 不同被引 flow,该 flow 整体视作依赖这些被引 flow(建边 = `f.Name → refFlow`)。
+- `message.offset_time`:单条消息起始相对**上一条消息末尾**的时长偏移(第一条相对握手完成后 = 流锚
+  `anchor`);把该消息整组(各数据段 + 对端 ACK)锚定到 `上一条末尾 + offset`。链式 delta、天然单调,
+  用于多轮请求间隔(慢响应拖慢下一条)。握手固定 `DefaultStep` 不参与定时,故第一条消息的 offset 从
+  握手结束算起,避免小 offset 与握手包撞时间。
+- `segment.interval`:同一消息各数据段之间的时间间隔(`Offset`,如 `+10ms`);缺省 1ms,显式给出
+  模拟慢速分段 / RTT。只作用于数据段;对端 ACK 用 `DefaultStep`(伴生控制包,不被数据段节奏传染)。
 
 **默认时间策略**:未显式定时的 standalone packet 从 `base_time` 起每 1ms 一个(第一包落 `base`,后续 +1ms);
 未显式定时的 flow 在 `base` 起步(并发);未显式定时的 message 紧接上一条末尾。同 `Time` 的包保持声明/合并
 顺序(稳定排序),全程不用 `time.Now()`。
+
+#### 跨流 start_after 的实现(两段式)
+
+`plan.Plan` 采用**两段式**处理跨流 `start_after`(典型:FTP 控制通道 ↔ 数据通道的消息级双向交错,
+数据 `start_after: control.150` + 控制 226 `start_after: data`):
+
+- **阶段一(`scheduler`)按事件粒度递归 + 记忆化,只算时刻不发包**:每个 flowStart、每条 message 的
+  start 与 msgCursor、每个 flowEnd 都是独立事件,各自只依赖其引用的事件;被引事件先算出、引用方后算。
+  FTP 式 `control.150 → data → control.226` 在事件粒度是有向无环的(整流粒度会压成"互等对方整流先完成"
+  的死锁)。
+- **阶段二各 flow 拿已算好的 per-message 起始时刻表独立 `flow.Expand`**(seq/ack 状态单次展开内连续
+  维护)。`flow.Expand` 的 `schedule` 参数注入 per-message 起始时刻;无跨流依赖时退化为 `resolve` 回调
+  路径,行为与历史逐字节等价。
+- **事件依赖图共用**:`scenario.StartAfterGraph`(`BuildStartAfterGraph`)由 `validateStartAfter` 与
+  plan 算时阶段共用,避免两处重复实现图逻辑。真环(跨流消息级互引)由校验阶段三色 DFS 拦截。
 
 > 后续若要更通用的封装 stack 反转或外层/内层分片,可在 `PlannedPacket` 之上再加
 > `PlannedPacket{ Stack []Layer; Time time.Time }` 之外的中间态;当前已支持多流按显式时间戳交织。
@@ -316,12 +374,9 @@ golangci-lint run # 若已安装
 - 封装层的 next-protocol / ethertype **默认自动推导**,可逐层用 `type` / `tpid` / `ethertype` 显式覆盖(制造断链等畸形)。
 - 缺省字段走合理默认(自动 seq、自动 checksum、自动串接)。
 - **时间编排**:`base_time`(唯一绝对锚,`AbsTime`,仅 ISO8601 如 `2024-01-01T00:00:00Z`,缺省=确定性 2020 基准)、
-  `packet.offset_time`、`flow.offset_time`(`Offset`,非负时长,如 `+1.5s`/`+500ms`)可选。
-  flow 内部还支持 `message.offset_time`(相对上一条消息,锚定单条消息整组)、
-  `segment.interval`(同消息各数据段间隔,缺省 1ms;只作用于数据段,对端 ACK 用默认步长)。
-  时间语义为「相对上一包 + 跨流独立」:`packet.offset_time` 相对**上一包**(第一包相对 base,无 offset 则 +1ms);
-  `flow.offset_time` 相对 **base**(各 flow 独立、无 offset 则 `base` 并发);
-  `message.offset_time` 相对**上一条消息**(第一条相对握手完成后),链式 delta、天然单调无需夹紧。
+  `packet.offset_time`、`flow.offset_time`、`message.offset_time`、`segment.interval`(均为 `Offset` 非负时长,
+  如 `+1.5s`/`+500ms`)可选;跨流依赖用 `flow.start_after` / `message.start_after`。
+  **完整时间语义(各 offset 参照点、start_after 规则)见上文「时间编排与汇流」,此处不重复**。
   按 `Time` 稳定排序后写盘;`base_time` 只能是绝对时刻(由 `AbsTime` 类型保证)。
 - 畸形用例通过**显式开关**表达意图:`fix_lengths: false` / `checksum: 0xdead` / 覆盖 `type` 断链 / `payload_hex: "0x…"`.
 
