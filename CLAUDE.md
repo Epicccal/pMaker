@@ -70,6 +70,9 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - FTP 控制连接命令/响应(RFC 959 多行续行)。
 - 确定性时间戳(`base_time` + offset,不用 `time.Now()`)。
 - golden pcap 逐字节比对 + gopacket 回读测试。
+- **文件占位符 `@file(<path>)`**:在 `scenario.Load` 阶段扫描全部 string 字段,把 `@file(...)`
+  替换为对应文件的原始字节(支持二进制;可只占字段值的一部分,可多个拼接;`@@` 转义为字面 `@`,
+  裸 `@` 原样保留)。绝对路径原样用,相对路径相对 scenario 文件所在目录。详见下文「文件占位符 @file」。
 
 **FTP 专项**:
 
@@ -107,7 +110,8 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 > scenario 包(详见 `doc.go`):
 > - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields)、
 >   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Load/Validate/Warnings)、`start_after_graph.go`、
->   `ftp_command.go`、`ftp_consistency.go`、`describe.go`(包/PlannedPacket 摘要)。
+>   `ftp_command.go`、`ftp_consistency.go`、`describe.go`(包/PlannedPacket 摘要)、
+>   `file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
 >
 > 测试按「一一对应 + 公共辅助集中」组织,详见下文「测试文件命名规约」。
 
@@ -373,6 +377,9 @@ golangci-lint run # 若已安装
   **允许同类型重复**(QinQ 两层 VLAN)和递归嵌套(GRE 内层再放报文)。
 - 封装层的 next-protocol / ethertype **默认自动推导**,可逐层用 `type` / `tpid` / `ethertype` 显式覆盖(制造断链等畸形)。
 - 缺省字段走合理默认(自动 seq、自动 checksum、自动串接)。
+- **文件占位符 `@file(<path>)`**:任意 string 字段里可写 `@file(path)`,`Load` 时替换为文件原始字节
+  (支持二进制,可只占字段值一部分,可多个拼接;`@@`→`@`;绝对路径原样用,相对路径相对 scenario 目录)。
+  被引文件需随场景归档(同 golden pcap),否则换机器不可复现。详见下文「文件占位符 @file」。
 - **时间编排**:`base_time`(唯一绝对锚,`AbsTime`,仅 ISO8601 如 `2024-01-01T00:00:00Z`,缺省=确定性 2020 基准)、
   `packet.offset_time`、`flow.offset_time`、`message.offset_time`、`segment.interval`(均为 `Offset` 非负时长,
   如 `+1.5s`/`+500ms`)可选;跨流依赖用 `flow.start_after` / `message.start_after`。
@@ -410,6 +417,24 @@ packets:
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", checksum: 0xdead, fix_lengths: false }
       - payload_hex: 0xdeadbeef                # gopacket 无法表达时直接落原始字节
 ```
+
+## 文件占位符 @file
+
+任意 string 字段值里都可写 `@file(<path>)`,`scenario.Load` 会在 YAML 解析后扫描全部 string 字段,
+把占位符替换为对应文件的**原始字节**(支持二进制)。设计动机:HTTP multipart、FTP 数据通道、
+未来 SMTP/POP3 等场景常需把外部文件内容拼进报文;占位符让"文件位置随意"——可只占字段值的一部分,
+也可多个拼接,不必整段 body 都是文件。
+
+- **语法**:`@file(path)`,以第一个 `)` 闭合(路径不可含 `)`)。`@@` 转义为字面 `@`;
+  裸 `@`(如 `user@host.com`)原样保留,不误伤。
+- **生效范围**:全部 string 字段(body、payload、header 值、ftp args、ICMP payload 等)。
+  结构字段(layer.type、MAC/IP)写 `@file` 会被同样替换进而破坏生成,由用户自负。
+- **路径**:绝对路径原样用;相对路径相对 **scenario 文件所在目录**。
+- **实现**:见 `internal/scenario/file_placeholder.go`。反射遍历 `Scenario`,跳过 `yaml.Node`
+  (ICMP type/code 等结构化字段),对 `map[string]string`(HTTP headers)替换值不替换键。
+- **确定性**:文件内容固定 → 同 scenario 同输入 → 逐字节相同 pcap。被引文件需随场景一起归档
+  (与 golden pcap 就近放 testdata 同理),否则换机器不可复现。
+- **注意**:`payload_hex` 是 hex 编码字段,`@file` 注入原始字节会破坏 hex 语义;二进制内容请用 `payload`。
 
 ## 测试策略
 

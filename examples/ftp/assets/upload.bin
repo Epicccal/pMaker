@@ -1,0 +1,3 @@
+project-alpha-build-2024
+artifact-id=0xABCD
+dependencies=[libfoo@2.1, libbar@3.0]

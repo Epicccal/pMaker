@@ -1,0 +1,43 @@
+# examples/http/put_file.yaml
+#
+# 一次完整的 HTTP/1.1 PUT 请求(上传文件内容作为请求体)+ 200 响应,跑在 TCP 会话之上。
+# 演示 @file(...) 文件占位符:请求 body 直接来自外部文件 put_body.json,无需把大段内容内联进 YAML。
+# @file 路径相对本场景文件所在目录(examples/http/)解析,故写成 @file(assets/put_body.json)。
+# Content-Length: auto 仍按 body 实际长度自动计算,与内联 body 行为一致。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: http-put-200
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49156, dport: 80, client_isn: 9000, server_isn: 9100, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: PUT
+              url: /api/upload
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                User-Agent: pMaker/0.1
+                Content-Type: application/json
+                Content-Length: auto
+              body: "@file(assets/put_body.json)"
+
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              headers:
+                Server: nginx/1.24.0
+                Content-Type: application/json
+                Content-Length: auto
+                Connection: keep-alive
+              body: '{"ok":true}'

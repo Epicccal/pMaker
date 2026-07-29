@@ -74,6 +74,22 @@ func TestExamplesGolden(t *testing.T) {
 	}
 }
 
+// TestHTTPPutFileContent 验证 @file(...) 占位符:put_file 示例的 PUT body 来自外部文件
+// assets/put_body.json,文件内容应原样出现在 pcap 里(Content-Length: auto 也按文件长度算对)。
+func TestHTTPPutFileContent(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/http/put_file.yaml")
+	for _, want := range [][]byte{
+		[]byte("PUT /api/upload HTTP/1.1"),
+		// 文件内容(assets/put_body.json 的 JSON 体)注入到请求 body
+		[]byte(`{"user":"alice","file":"upload.bin","size":1024}`),
+		[]byte("HTTP/1.1 200 OK"),
+	} {
+		if !bytes.Contains(pcap, want) {
+			t.Errorf("pcap 不含 %q", want)
+		}
+	}
+}
+
 func TestHTTPKeepaliveLFIContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/http/keepalive_lfi.yaml")
 	for _, want := range [][]byte{
@@ -591,6 +607,26 @@ func TestFTPPortStorContent(t *testing.T) {
 
 // TestFTPMalformedInjection 回读 malformed_injection,断言单段内塞入两条命令(CRLF 注入):
 // "retr foo\r\ndele /etc/passwd\r\n",验证 command 原样输出(小写)与 CRLF smuggling 能力。
+// TestFTPPortStorFileContent 回读 port_stor_file:STOR 上传的数据通道载荷来自外部文件
+// assets/upload.bin(@file 占位符),文件内容(含裸 @ 如 libfoo@2.1)应原样出现在 pcap 里。
+func TestFTPPortStorFileContent(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/ftp/port_stor_file.yaml")
+	for _, want := range [][]byte{
+		[]byte("STOR upload.bin\r\n"),
+		[]byte("150 Ok to send data.\r\n"),
+		[]byte("226 Transfer complete.\r\n"),
+		// 文件内容注入数据通道(payload 来自 @file(assets/upload.bin))
+		[]byte("project-alpha-build-2024\r\n"),
+		[]byte("artifact-id=0xABCD\r\n"),
+		// 文件里的裸 @ 不被占位符误伤(libfoo@2.1 原样)
+		[]byte("dependencies=[libfoo@2.1, libbar@3.0]\r\n"),
+	} {
+		if !bytes.Contains(pcap, want) {
+			t.Errorf("pcap 不含 %q", want)
+		}
+	}
+}
+
 func TestFTPMalformedInjection(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/ftp/malformed_injection.yaml")
 	want := []byte("retr foo\r\ndele /etc/passwd\r\n")
