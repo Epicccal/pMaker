@@ -58,7 +58,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层)
 - L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)
 - L4:`tcp`、`udp`
-- 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`
+- 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`
 - 兜底:`payload`、`payload_hex`(原始字节)
 
 **已实现特性**:
@@ -88,6 +88,26 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   解析失败、协商端点与数据流 dst IP:port 不一致、协商地址与控制连接角色不匹配时产出告警
   (非硬错,畸形用例可故意不一致);EPRT 地址按地址族归一化后再比对。
 
+**TELNET 专项**:
+
+- 一个 `telnet` 层 = 一个 TELNET 事件(IAC 命令 / subnegotiation / NVT 文本),序列化为 TCP
+  payload 字节。字段对齐 `ftp_request` 的 `{command, args}` 扁平风格:`command`(WILL/WONT/DO/
+  DONT/SB/GA/BRK/IP/AO/AYT/EC/EL/NOP/DM/EOR,空=纯 NVT 文本)、`option`(ECHO/SGA/TTYPE/NAWS/
+  …名或数字)、`args`(文本,自动 IAC 转义 0xFF)、`args_hex`(二进制 subneg 原始字节,不转义)。
+- 多事件序列靠两种既有机制(无新关键字):同一段 TCP payload 内多个 `telnet` 层(层栈重复,
+  `SerializeLayers` 顺序拼接);跨 TCP 段的会话时序用 flow 的 `messages`(每条一个 telnet 层,
+  与 FTP 每条 message 一个 ftp_request/response 同构)。
+- IAC(0xFF)转义是 TELNET 正确性的核心(RFC 854 §2):`args` 文本中的 0xFF 自动转义为 `IAC IAC`;
+  `args_hex` 不转义(刻意构造畸形/非转义流量、NAWS 二进制)。
+- 命令/option 校验对齐 DNS/FTP 模式:`command` 在已知命令表内(大小写不敏感),`option` 在已知
+  option 表内或十进制/0x 数字回退(私有码);未列入报错并引导 `payload` / `payload_hex`。
+  二字节控制命令禁带 option/args;WILL/WONT/DO/DONT/SB 必带 option。
+- TTYPE subnegotiation(RFC 1091):`args` 视作终端名,builder 自动前缀 `IS` 限定符字节
+  (常见:服务器请求,客户端回 IS+名);TTYPE SEND 需用 `args_hex: "0x01"` 显式表达(无终端名)。
+  NAWS(RFC 1073)写 `args_hex: "0x00500018"`(80=0x0050、24=0x0018,大端)。
+- gopacket 无 TELNET layer,自己序列化为 `gopacket.Payload`(同 HTTP/FTP);不引入 gopacket
+  layer、不碰 IP 层 next-proto 串接、无独立 checksum(由 TCP 构造器处理)。
+
 **已实现 flow**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
 HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
 
@@ -105,12 +125,12 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 > builder 包:
 > - `builder.go`:层栈序列化入口 `BuildPlanned` + `serializeStack` 分派。
 > - `dns.go`(构包)/ `dns_enum.go`(枚举映射)/ `dns_raw.go`(原始层)。
-> - `http.go` / `ftp.go` / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
+> - `http.go` / `ftp.go` / `telnet.go` / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
 >
 > scenario 包(详见 `doc.go`):
 > - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields)、
 >   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Load/Validate/Warnings)、`start_after_graph.go`、
->   `ftp_command.go`、`ftp_consistency.go`、`describe.go`(包/PlannedPacket 摘要)、
+>   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`describe.go`(包/PlannedPacket 摘要)、
 >   `file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
 >
 > 测试按「一一对应 + 公共辅助集中」组织,详见下文「测试文件命名规约」。

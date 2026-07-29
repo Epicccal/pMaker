@@ -18,6 +18,8 @@ func PayloadBytes(l scenario.Layer) ([]byte, error) {
 		return serializeFTPReq(f), nil
 	case *scenario.FTPResponseFields:
 		return serializeFTPResp(f), nil
+	case *scenario.TelnetFields:
+		return serializeTelnet(f)
 	case *scenario.PayloadFields:
 		return payloadBytes(f)
 	case scenario.PayloadHex:

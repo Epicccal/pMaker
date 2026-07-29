@@ -131,6 +131,9 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 	case "ftp_response":
 		var f FTPResponseFields
 		return &f, decodeKnownFields(val, typ, &f)
+	case "telnet":
+		var f TelnetFields
+		return &f, decodeKnownFields(val, typ, &f)
 	default:
 		return nil, fmt.Errorf("未知层类型 %q", typ)
 	}

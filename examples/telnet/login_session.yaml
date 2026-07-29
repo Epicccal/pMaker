@@ -1,0 +1,83 @@
+# examples/telnet/login_session.yaml
+#
+# 完整 TELNET 登录会话(flow 场景,tcp_session 包裹):
+#   每条 message 挂一个 telnet 层(与 FTP 每条 message 一个 ftp_request/response 同构)。
+#
+#   时序:
+#     服务器 WILL ECHO / WILL SGA          (协商,服务器主动)
+#     客户端 DO SGA / DO ECHO               (协商响应)
+#     服务器 "login: "                       (NVT 文本提示)
+#     客户端 "root\r\n"                       (用户输入)
+#     服务器 "Password: "                     (NVT 文本提示)
+#     客户端 "secret\r\n"                      (用户输入密码)
+#     服务器 SB TTYPE SEND(用 args_hex: 0x01)  (请求终端类型)
+#     客户端 SB TTYPE IS xterm-256color        (回终端类型)
+#     服务器 "Welcome to pMaker.\r\n"           (欢迎横幅)
+#     挥手(close: fin)
+#
+#   协商命令在同一 message 内用多个 telnet 层拼接(同段多事件);跨段对话用 messages 列表。
+#   flow 中 src=客户端(发起方)、dst=服务器(接收方),from: dst 的消息会自动反转地址。
+#   验证 flow 接入、多轮消息状态机(seq/ack 持续累加)、协商+文本+subneg 混合。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: telnet-login
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.21", ttl: 64 }
+      - tcp:  { sport: 49160, dport: 23, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器主动协商:WILL ECHO、WILL SGA(flow message 当前需恰好一个生产层,
+      # 故分两条 message;standalone packet 可用多 telnet 层同段拼接,见 negotiation.yaml)
+      - from: dst
+        stack:
+          - telnet: { command: WILL, option: ECHO }
+      - from: dst
+        stack:
+          - telnet: { command: WILL, option: SGA }
+
+      # 客户端协商响应:DO SGA、DO ECHO
+      - from: src
+        stack:
+          - telnet: { command: DO, option: SGA }
+      - from: src
+        stack:
+          - telnet: { command: DO, option: ECHO }
+
+      # 服务器登录提示
+      - from: dst
+        stack:
+          - telnet: { args: "login: " }
+
+      # 客户端输入用户名
+      - from: src
+        stack:
+          - telnet: { args: "root\r\n" }
+
+      # 服务器密码提示
+      - from: dst
+        stack:
+          - telnet: { args: "Password: " }
+
+      # 客户端输入密码
+      - from: src
+        stack:
+          - telnet: { args: "secret\r\n" }
+
+      # 服务器请求终端类型:SB TTYPE SEND(args_hex=0x01,因 SEND 无终端名,args 文本无法承载)
+      - from: dst
+        stack:
+          - telnet: { command: SB, option: TTYPE, args_hex: "0x01" }
+
+      # 客户端回终端类型:SB TTYPE IS xterm-256color(builder 自动前缀 IS 限定符)
+      - from: src
+        stack:
+          - telnet: { command: SB, option: TTYPE, args: "xterm-256color" }
+
+      # 服务器欢迎横幅
+      - from: dst
+        stack:
+          - telnet: { args: "Welcome to pMaker.\r\n" }

@@ -1,0 +1,24 @@
+# examples/telnet/control_signals.yaml
+#
+# 二字节控制命令(stack 模型,层栈重复多个 telnet 层拼接):
+#   GA / BRK / IP / AO / AYT / EC / EL / NOP / DM / EOR
+#   每个 telnet 层序列化为 2 字节(IAC + cmd),拼接成 20 字节连续控制流。
+#   验证二字节控制命令编码(无 option)。注意 DM 的 urgent 指针( SYNCH)不在本层处理。
+link_type: ethernet
+seed: 42
+packets:
+  - name: telnet-control
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.21", ttl: 64 }
+      - tcp:  { sport: 49160, dport: 23, flags: [PSH, ACK], seq: 1001, ack: 5001 }
+      - telnet: { command: GA }
+      - telnet: { command: BRK }
+      - telnet: { command: IP }
+      - telnet: { command: AO }
+      - telnet: { command: AYT }
+      - telnet: { command: EC }
+      - telnet: { command: EL }
+      - telnet: { command: NOP }
+      - telnet: { command: DM }
+      - telnet: { command: EOR }

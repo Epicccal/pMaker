@@ -147,4 +147,21 @@ type (
 		Message string   `yaml:"message"`
 		Lines   []string `yaml:"lines"`
 	}
+
+	// TelnetFields 是一个 TELNET 事件(IAC 命令 / subnegotiation / NVT 文本),
+	// 序列化为 TCP payload 字节。多个事件在同一 TCP 段内靠层栈重复多个 telnet 层拼接
+	// (SerializeLayers 顺序追加 Payload);跨段会话靠 flow 的 messages 列表。
+	// 对齐 ftp_request 的 {command, args} 扁平风格。
+	//
+	//   - command:IAC 动词 WILL/WONT/DO/DONT/SB/GA/BRK/IP/AO/AYT/EC/EL/NOP/DM/EOR;
+	//     留空表示纯 NVT 可见文本(此时须有 args)。
+	//   - option:option 码(已知名 ECHO/SGA/TTYPE/… 或十进制/0x 数字);仅协商/SB 用。
+	//   - args:文本内容(SB subneg 内容或 NVT 文本),其中字面 0xFF 自动转义为 IAC IAC。
+	//   - args_hex:二进制内容(SB 原始字节,如 NAWS),不转义。与 args 互斥。
+	TelnetFields struct {
+		Command string `yaml:"command"`
+		Option  string `yaml:"option"`
+		Args    string `yaml:"args"`
+		ArgsHex string `yaml:"args_hex"`
+	}
 )

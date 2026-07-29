@@ -1,0 +1,25 @@
+# examples/telnet/ttype_naws.yaml
+#
+# Subnegotiation 演示(stack 模型):
+#   ① 客户端回 TTYPE IS:command=SB, option=TTYPE, args="xterm-256color"
+#      builder 在 args 前自动加 IS 限定符字节(0x00),输出
+#      IAC SB 24 00 'x' 't' 'e' 'r' 'm' '-' '2' '5' '6' 'c' 'o' 'l' 'o' 'r' IAC SE
+#   ② 客户端回 NAWS 80x24:command=SB, option=NAWS, args_hex="0x00500018"
+#      80=0x0050、24=0x0018,大端 4 字节(RFC 1073)。args_hex 原始字节不转义。
+#      输出 IAC SB 31 00 50 00 18 IAC SE
+link_type: ethernet
+seed: 42
+packets:
+  - name: telnet-ttype-is
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.21", ttl: 64 }
+      - tcp:  { sport: 49160, dport: 23, flags: [PSH, ACK], seq: 1001, ack: 5001 }
+      - telnet: { command: SB, option: TTYPE, args: "xterm-256color" }
+
+  - name: telnet-naws
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.21", ttl: 64 }
+      - tcp:  { sport: 49160, dport: 23, flags: [PSH, ACK], seq: 1018, ack: 5001 }
+      - telnet: { command: SB, option: NAWS, args_hex: "0x00500018" }
