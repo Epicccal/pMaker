@@ -1,0 +1,15 @@
+# examples/telnet/nvt_text.yaml
+#
+# 纯 NVT 文本登录提示(stack 模型,演示 telnet 层承载可见文本):
+#   服务器在 TCP payload 中发送 "login: " 提示符。command 留空,args 为文本,
+#   builder 自动对其中的 0xFF 做 IAC 转义(本例文本无 0xFF)。
+#   端口 23 为 TELNET 标准端口。
+link_type: ethernet
+seed: 42
+packets:
+  - name: telnet-prompt
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.21", dst: "10.0.0.10", ttl: 64 }
+      - tcp:  { sport: 23, dport: 49160, flags: [PSH, ACK], seq: 5001, ack: 1001 }
+      - telnet: { args: "login: " }
