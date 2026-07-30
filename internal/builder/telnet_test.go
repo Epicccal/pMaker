@@ -122,6 +122,59 @@ func TestTelnetTextArgsHex(t *testing.T) {
 	}
 }
 
+// TestTelnetTextCRNormalization 验证 RFC 854 §2 的 CR 归一:
+//   - 裸 CR(后非 LF)→ CR NUL(0x0d 0x00),表示"回车不换行",避免与行结束歧义;
+//   - CR LF 行结束序列原样保留;
+//   - 末尾裸 CR 也归一为 CR NUL。
+//
+// 仅作用于 NVT 文本(command 留空的 args);SB 内容不套此规则。
+func TestTelnetTextCRNormalization(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		text string
+		want []byte
+	}{
+		{"行结束保留", "abc\r\n", []byte("abc\r\n")},
+		{"裸 CR 归一 CR NUL", "ab\rcd", []byte("ab\r\x00cd")},
+		{"末尾裸 CR 归一 CR NUL", "abc\r", []byte("abc\r\x00")},
+		{"多个行结束", "a\r\nb\r\n", []byte("a\r\nb\r\n")},
+		{"CR+IAC 混合", "\r\xff", []byte("\r\x00\xff\xff")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pkts := readPackets(t, mustBuildPcapWithTelnetText(t, c.text))
+			app := pkts[0].ApplicationLayer()
+			if app == nil || !bytes.Equal(app.Payload(), c.want) {
+				t.Errorf("输出=%v,期望 %v", app, c.want)
+			}
+		})
+	}
+}
+
+// TestTelnetSBContentNoCRNormalization 验证 SB subnegotiation 内容只做 IAC 转义,
+// 不套 NVT 的 CR NUL 归一(SB 内容是 option 专有二进制,非 NVT 文本流)。
+// 用非 TTYPE option + args 含裸 CR,断言 CR 原样保留(不补 NUL)。
+func TestTelnetSBContentNoCRNormalization(t *testing.T) {
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Packets: []scenario.Packet{{
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1234, DPort: 23}},
+				// NEW_ENVIRON(option 39)SB,内容含裸 CR:应原样保留(不归一为 CR NUL)。
+				{Type: "telnet", Fields: &scenario.TelnetFields{Command: "SB", Option: "NEW_ENVIRON", Args: "a\rb"}},
+			},
+		}},
+	}
+	pkts := readPackets(t, buildScenarioPcap(t, s))
+	app := pkts[0].ApplicationLayer()
+	// IAC SB 39 'a' CR 'b' IAC SE —— CR 不补 NUL。
+	want := []byte{iac, sb, 39, 'a', '\r', 'b', iac, se}
+	if app == nil || !bytes.Equal(app.Payload(), want) {
+		t.Errorf("SB 内容输出=%v,期望 %v(裸 CR 不归一)", app, want)
+	}
+}
+
 // mustBuildPcapWithTelnetText 构造一个 standalone packet(eth/ipv4/tcp/telnet),
 // telnet 层为纯 NVT 文本(args=text),跑完整链路返回 pcap 字节。用于测试 IAC 转义。
 func mustBuildPcapWithTelnetText(t *testing.T, text string) []byte {
