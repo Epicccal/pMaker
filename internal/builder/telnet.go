@@ -18,8 +18,16 @@ import (
 // args 文本(可见 NVT 文本 / TTYPE 名)自动转义其中的 0xFF;args_hex 原始字节不转义
 // (用于刻意构造畸形/非转义流量、NAWS 二进制)。
 func serializeTelnet(f *scenario.TelnetFields) ([]byte, error) {
-	// 纯 NVT 文本:command 留空,args 字节,其中 0xFF 自动转义为 IAC IAC。
+	// 纯 NVT 文本:command 留空,args(文本,0xFF 自动转义)或 args_hex(原始字节,不转义)。
+	// 二者在校验阶段已保证互斥且至少其一(args_hex 用于注入含二进制/0xFF 的 NVT 文本)。
 	if f.Command == "" {
+		if f.ArgsHex != "" {
+			b, err := scenario.ParsePayloadHex(f.ArgsHex)
+			if err != nil {
+				return nil, fmt.Errorf("args_hex: %w", err)
+			}
+			return b, nil
+		}
 		return telnetEscape([]byte(f.Args)), nil
 	}
 

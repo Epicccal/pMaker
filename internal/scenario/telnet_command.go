@@ -179,7 +179,7 @@ func parseTelnetOption(s string) (byte, error) {
 //     禁止带 option / args / args_hex。
 //   - option:已知名或合法数字。
 //   - args 与 args_hex 互斥(至多其一);args_hex 用 ParsePayloadHex 校验。
-//   - 纯文本(command 空)须有 args(空文本无意义);SB 须有 args 或 args_hex 之一作 subneg 内容。
+//   - 纯文本(command 空)须有 args 或 args_hex(至少其一,空文本无意义);SB 须有 args 或 args_hex 之一作 subneg 内容。
 func validateTelnetFields(f *TelnetFields) error {
 	// args 与 args_hex 互斥。
 	if f.Args != "" && f.ArgsHex != "" {
