@@ -98,6 +98,30 @@ func TestTelnetTextEscape(t *testing.T) {
 	}
 }
 
+// TestTelnetTextArgsHex 验证纯 NVT 文本(command 空)走 args_hex 时,原始字节原样落盘、不转义。
+// 回归用例:此前 serializeTelnet 的纯文本分支只读 args、静默丢弃 args_hex(校验却放行),
+// 导致 payload 为空。修复后 args_hex 内容应完整出现(含字面 0xFF,刻意不转义以构造畸形流量)。
+func TestTelnetTextArgsHex(t *testing.T) {
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Packets: []scenario.Packet{{
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1234, DPort: 23}},
+				// 0x414243 = "ABC";0xff 字面字节不转义(畸形/非转义 NVT 文本)。
+				{Type: "telnet", Fields: &scenario.TelnetFields{ArgsHex: "0x414243ff"}},
+			},
+		}},
+	}
+	pkts := readPackets(t, buildScenarioPcap(t, s))
+	app := pkts[0].ApplicationLayer()
+	want := []byte{0x41, 0x42, 0x43, 0xff}
+	if app == nil || !bytes.Equal(app.Payload(), want) {
+		t.Errorf("args_hex 纯文本输出=%v,期望 %v", app, want)
+	}
+}
+
 // mustBuildPcapWithTelnetText 构造一个 standalone packet(eth/ipv4/tcp/telnet),
 // telnet 层为纯 NVT 文本(args=text),跑完整链路返回 pcap 字节。用于测试 IAC 转义。
 func mustBuildPcapWithTelnetText(t *testing.T, text string) []byte {

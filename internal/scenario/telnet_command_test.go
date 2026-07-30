@@ -123,7 +123,7 @@ func TestValidateTelnet_ArgsMutex(t *testing.T) {
 	}
 }
 
-// TestValidateTelnet_TextRequiresArgs: 纯文本(command 空)须有 args。
+// TestValidateTelnet_TextRequiresArgs: 纯文本(command 空)须有 args 或 args_hex。
 func TestValidateTelnet_TextRequiresArgs(t *testing.T) {
 	err := telnetValidate(t, telnetLayer("", "", "", ""))
 	if err == nil {
@@ -132,6 +132,10 @@ func TestValidateTelnet_TextRequiresArgs(t *testing.T) {
 	// 纯文本带 option 应报错。
 	if err := telnetValidate(t, telnetLayer("", "ECHO", "x", "")); err == nil {
 		t.Errorf("纯文本带 option 应报错")
+	}
+	// 纯文本 + args_hex 应通过(原始字节 NVT 文本,不转义)。
+	if err := telnetValidate(t, telnetLayer("", "", "", "0x4142")); err != nil {
+		t.Errorf("纯文本 + args_hex 应通过,得到: %v", err)
 	}
 }
 
