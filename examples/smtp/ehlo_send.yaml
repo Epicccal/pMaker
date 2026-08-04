@@ -1,0 +1,99 @@
+# examples/smtp/ehlo_send.yaml
+#
+# 一次完整的 SMTP 信封会话(envelope 全流程),单 flow 表达:
+#   220 问候 → EHLO/250 多行 → MAIL(结构化+params)/250 → RCPT(结构化+params)/250
+#   → DATA/354 → 邮件正文(payload 兜底)/250 → QUIT/221
+#
+# 覆盖点:
+#   - 多行 EHLO 响应(RFC 5321 §4.2 每行带 code- 前缀);
+#   - 结构化 MAIL/RCPT 路径(from/to + params,builder 自动包 <> 与 FROM:/TO: 关键字);
+#   - DATA 正文走 payload(envelope-first:正文不在本阶段结构化,可 @file 注入 EML)。
+#
+# 流量验证关注点:EHLO 广告的扩展(PIPELINING/SIZE/STARTTLS/AUTH/8BITMIME)、
+# MAIL FROM:<>/RCPT TO:<> 信封路径、params 排序输出、DATA 后正文以 <CRLF>.CRLF 终止。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: smtp-send
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 25, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器 220 问候
+      - from: dst
+        stack:
+          - smtp_response: { code: 220, message: "mail.example ESMTP" }
+
+      # 客户端 EHLO
+      - from: src
+        stack:
+          - smtp_request: { verb: EHLO, args: "client.example" }
+
+      # 服务器多行 EHLO 响应(RFC 5321 每行带 250- 前缀,末行 250 SP text)
+      - from: dst
+        stack:
+          - smtp_response:
+              code: 250
+              lines:
+                - "mail.example"
+                - "PIPELINING"
+                - "SIZE 10485760"
+                - "STARTTLS"
+                - "AUTH PLAIN LOGIN"
+                - "8BITMIME"
+
+      # 结构化 MAIL:from + params(SIZE/BODY 按 key 字典序输出)
+      - from: src
+        stack:
+          - smtp_request:
+              verb: MAIL
+              from: "alice@example.com"
+              params: { SIZE: "1234", BODY: "8BITMIME" }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "OK" }
+
+      # 结构化 RCPT:to + params(NOTIFY)
+      - from: src
+        stack:
+          - smtp_request:
+              verb: RCPT
+              to: "bob@example.net"
+              params: { NOTIFY: "SUCCESS,FAILURE" }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "OK" }
+
+      # DATA
+      - from: src
+        stack:
+          - smtp_request: { verb: DATA }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 354, message: "Start mail input; end with <CRLF>.<CRLF>" }
+
+      # 邮件正文走 payload(envelope-first:正文后续以独立层结构化,当前兜底)
+      - from: src
+        stack:
+          - payload:
+              payload: "From: alice@example.com\r\nTo: bob@example.net\r\nSubject: hi\r\n\r\nbody\r\n.\r\n"
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "queued as ABC123" }
+
+      # QUIT
+      - from: src
+        stack:
+          - smtp_request: { verb: QUIT }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 221, message: "bye" }

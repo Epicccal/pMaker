@@ -1,0 +1,71 @@
+# examples/smtp/auth_plain.yaml
+#
+# SMTP AUTH PLAIN 流程(RFC 4954):客户端在 EHLO 后发起 AUTH PLAIN,携带 base64 编码
+# 的凭证(\\0user\\0pass),服务器挑战成功回 235。本示例覆盖扩展认证 verb 与凭证构造。
+#
+# AUTH PLAIN 的初始响应是 base64(authorize-id\\0auth-id\\0password),这里用明文 user/test
+# 的 base64 编码 dGVzdAB0ZXN0AHRlc3Q= 仅作示意(实际场景请按需构造)。
+#
+# 流量验证关注点:AUTH 机制(PLAIN)、base64 凭证、235 认证成功响应、认证后再 MAIL/RCPT。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: smtp-auth
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 49153, dport: 25, client_isn: 2000, server_isn: 6000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: dst
+        stack:
+          - smtp_response: { code: 220, message: "mail.example ESMTP" }
+
+      - from: src
+        stack:
+          - smtp_request: { verb: EHLO, args: "client.example" }
+
+      - from: dst
+        stack:
+          - smtp_response:
+              code: 250
+              lines:
+                - "mail.example"
+                - "AUTH PLAIN LOGIN"
+                - "SIZE 10485760"
+
+      # AUTH PLAIN 带初始响应(base64 凭证,作示意)
+      - from: src
+        stack:
+          - smtp_request: { verb: AUTH, args: "PLAIN dGVzdAB0ZXN0AHRlc3Q=" }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 235, message: "Authentication successful" }
+
+      # 认证成功后发信
+      - from: src
+        stack:
+          - smtp_request: { verb: MAIL, from: "alice@example.com" }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "OK" }
+
+      - from: src
+        stack:
+          - smtp_request: { verb: RCPT, to: "bob@example.net" }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "OK" }
+
+      - from: src
+        stack:
+          - smtp_request: { verb: QUIT }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 221, message: "bye" }
