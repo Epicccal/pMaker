@@ -58,7 +58,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层)
 - L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)
 - L4:`tcp`、`udp`
-- 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`
+- 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`
 - 兜底:`payload`、`payload_hex`(原始字节)
 
 **已实现特性**:
@@ -68,6 +68,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - ICMP echo request/reply 及错误报文(`quote` / `quote_from`)。
 - DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV。
 - FTP 控制连接命令/响应(RFC 959 多行续行)。
+- SMTP 信封命令/响应(RFC 5321,MAIL/RCPT 结构化信封路径)。
 - 确定性时间戳(`base_time` + offset,不用 `time.Now()`)。
 - golden pcap 逐字节比对 + gopacket 回读测试。
 - **文件占位符 `@file(<path>)`**:在 `scenario.Load` 阶段扫描全部 string 字段,把 `@file(...)`
@@ -108,6 +109,31 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - gopacket 无 TELNET layer,自己序列化为 `gopacket.Payload`(同 HTTP/FTP);不引入 gopacket
   layer、不碰 IP 层 next-proto 串接、无独立 checksum(由 TCP 构造器处理)。
 
+**SMTP 专项(envelope-first)**:
+
+- 一个 `smtp_request` 层 = 一条 SMTP 信封命令,一个 `smtp_response` 层 = 一条 SMTP 响应,
+  均序列化为 TCP payload 字节。**信封(envelope)优先**:MAIL/RCPT 作为信封一等概念走结构化路径
+  (`from`/`to` + `params`),builder 自动包 `<>`、规范 `FROM:`/`TO:` 关键字(带冒号);
+  不复刻 FTP 的 `{command, args}` 扁平形态。
+- 字段:命令 `verb`(EHLO/HELO/MAIL/RCPT/DATA/QUIT/RSET/NOOP/VRFY/EXPN/HELP/AUTH/STARTTLS/BDAT/
+  ETRN/ATRN,空报错)、MAIL 的 `from`(`*string` 三态:nil 报错 / `""`→`<>` 退信 / `"addr"`→`<addr>`)、
+  RCPT 的 `to`(裸 string,须非空)、`params`(MAIL/RCPT 扩展参数,按 key 字典序输出;空值→裸键如
+  `SMTPUTF8`,非空→`KEY=VALUE`)、`args`(非 MAIL/RCPT verb 的普通参数,如 EHLO 域名 / AUTH 机制+凭证);
+  响应 `code`(200-559,SMTP 无 1xx)、`message`(单行)/`lines`(多行,互斥)。
+- **分派按 verb 身份**(MAIL/RCPT 结构化 vs 其余 args 普通参数),`args` **不承担兜底职责**:
+  私有/非标 verb、MAIL/RCPT 的结构性畸形(缺 `<>`、非标空格、FROM/TO 关键字大小写非标、缺冒号)
+  统一走 `payload`/`payload_hex` 原始字节(校验拦截未列入 verb 并引导);地址内容畸形(如 CRLF
+  注入)走结构化路径即可(`from`/`to` 裸透传不转义,`<>` 框照常包裹)。verb 原样输出(不强制大写)。
+- verb 参数要求按文法分级(只判有/无):EHLO/HELO/VRFY/EXPN/AUTH/BDAT/ETRN/SEND/SOML/SAML 必带 args;
+  DATA/RSET/QUIT/STARTTLS/TURN 禁带;NOOP/HELP/ATRN 可选。`params` 仅 MAIL/RCPT 有效(给其他 verb 报错)。
+- 响应多行续行遵循 RFC 5321 §4.2 的 `Reply-line`(每条续行带 `code-` 前缀,末行 `code[ SP textstring]`),
+  复用已落地的公共函数 `serializeTextReply`(其逐行带 `code-` 的实现恰好匹配 RFC 5321 文法);
+  空文本行如实输出(续行空文本 RFC 5321 合规)。
+- **envelope-first**:DATA 正文显式排除在当前阶段之外(走 `payload`,可 `@file` 注入 EML,用户自行
+  dot-stuff + 终止符);EHLO 一致性告警、MAIL/RCPT 参数语义级校验、正文结构化留后续扩展。
+- gopacket 无 SMTP layer,自己序列化为 `gopacket.Payload`(同 HTTP/FTP/TELNET);不引入 gopacket
+  layer、不碰 IP 层 next-proto 串接、无独立 checksum(由 TCP 构造器处理)。
+
 **已实现 flow**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
 HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
 
@@ -125,13 +151,13 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 > builder 包:
 > - `builder.go`:层栈序列化入口 `BuildPlanned` + `serializeStack` 分派。
 > - `dns.go`(构包)/ `dns_enum.go`(枚举映射)/ `dns_raw.go`(原始层)。
-> - `http.go` / `ftp.go` / `telnet.go` / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
+> - `http.go` / `ftp.go` / `telnet.go` / `smtp.go` / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
 >
 > scenario 包(详见 `doc.go`):
 > - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields)、
 >   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Load/Validate/Warnings)、`start_after_graph.go`、
->   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`describe.go`(包/PlannedPacket 摘要)、
->   `file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
+>   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_request.go`(SMTP verb/响应码校验)、
+>   `describe.go`(包/PlannedPacket 摘要)、`file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
 >
 > 测试按「一一对应 + 公共辅助集中」组织,详见下文「测试文件命名规约」。
 

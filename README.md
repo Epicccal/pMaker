@@ -104,7 +104,7 @@ pMaker 面向**授权环境下的离线流量验证**——把"造一个特定�
 
 - **封装与隧道**:VLAN、QinQ、GRE 等任意深度层栈,next-proto 自动串接、可逐层覆盖。
 - **Flow 会话维护**:从 YAML 配置展开为握手、seq/ack 推导、分段、挥手的完整包序列。
-- **常见协议覆盖**:L2/L3/L4(ICMP/ICMPv6/TCP/UDP)到应用层(HTTP/DNS/FTP/...)。
+- **常见协议覆盖**:L2/L3/L4(ICMP/ICMPv6/TCP/UDP)到应用层(HTTP/DNS/FTP/SMTP/...)。
 - **异常协议畸形**:`payload_hex` 原始字节注入、错误 checksum/length、解析断链等。
 
 ## 有序层栈嵌套
