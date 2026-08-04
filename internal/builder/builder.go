@@ -165,6 +165,10 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 				return nil, fmt.Errorf("telnet: %w", err)
 			}
 			serLayers = append(serLayers, gopacket.Payload(b))
+		case *scenario.SMTPRequestFields:
+			serLayers = append(serLayers, gopacket.Payload(serializeSMTPReq(f)))
+		case *scenario.SMTPResponseFields:
+			serLayers = append(serLayers, gopacket.Payload(serializeSMTPResp(f)))
 		default:
 			return nil, fmt.Errorf("不支持的层类型 %q", l.Type)
 		}

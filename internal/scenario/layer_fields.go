@@ -165,4 +165,30 @@ type (
 		Args    string `yaml:"args"`
 		ArgsHex string `yaml:"args_hex"`
 	}
+
+	// SMTPRequestFields 是一条 SMTP 信封命令。MAIL/RCPT 走结构化信封路径(from/to + params);
+	// 其余 verb(EHLO/AUTH/BDAT/…)用 args 携带普通参数(verb 仍走 knownSMTPVerbs 校验)。
+	// 私有/非标 verb、MAIL/RCPT 的结构性畸形(缺 <>、非标空格、FROM/TO 大小写非标、缺冒号)不走 args,
+	// 而是走 payload/payload_hex 原始字节兜底(与全项目「非标走原始字节」一致,与 FTP/TELNET/DNS 同口径)。
+	//
+	// from 用 *string(指针)而非裸 string,以区分「未给出」与「显式空串」:
+	//   - 省略 from(nil)→ 校验报错(引导用 from: "" 表达 null reverse path),避免静默退信;
+	//   - from: ""(非 nil 空串)→ <>(null reverse path,退信/bounce),opt-in 显式表达;
+	//   - from: "addr" → <addr>。
+	// to 保持裸 string:RCPT 必须有前向路径(RFC 5321 §4.1.2 无 null 路径语义),须非空,无歧义。
+	SMTPRequestFields struct {
+		Verb   string            `yaml:"verb"`   // EHLO/HELO/MAIL/RCPT/DATA/QUIT/RSET/NOOP/VRFY/EXPN/HELP/AUTH/STARTTLS/BDAT/ETRN/ATRN;非标/私有 verb 走 payload/payload_hex
+		From   *string           `yaml:"from"`   // 仅 MAIL(结构化):反向路径;指针区分未给出(nil,报错)与显式空串(<>,退信)
+		To     string            `yaml:"to"`     // 仅 RCPT(结构化):前向路径;须非空(RCPT 不可用 null 路径)
+		Params map[string]string `yaml:"params"` // MAIL/RCPT 扩展参数:键=参数名(SIZE/BODY/AUTH/NOTIFY/SMTPUTF8/ORCPT/RET/ENVID…),值=参数值(空值=无值 flag,如 SMTPUTF8)
+		Args   string            `yaml:"args"`   // 非 MAIL/RCPT verb 的普通参数(如 EHLO 的域名、AUTH 的机制+凭证、BDAT 的 chunk-size);MAIL/RCPT 禁用 args
+	}
+
+	// SMTPResponseFields 是一条 SMTP 响应。单行/多行遵循 RFC 5321 §4.2 的 Reply-line 文法
+	// (每条续行带 code- 前缀,末行 code[ SP textstring])。
+	SMTPResponseFields struct {
+		Code    int      `yaml:"code"`    // RFC 5321 §4.2 Reply-code = %x32-35 %x30-35 %x30-39(200-559,首位 2-5);非标响应码请用 payload / payload_hex
+		Message string   `yaml:"message"` // 单行: "code message\r\n"
+		Lines   []string `yaml:"lines"`   // 多行续行: code-text / code final(RFC 5321 每行带 code- 前缀)
+	}
 )
