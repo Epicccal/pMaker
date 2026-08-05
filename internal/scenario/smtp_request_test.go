@@ -108,10 +108,8 @@ func TestValidateSMTPRequest_VerbArgsRule(t *testing.T) {
 				if !strings.Contains(err.Error(), c.substr) {
 					t.Errorf("错误应含 %q,得到: %v", c.substr, err)
 				}
-			} else {
-				if err != nil {
-					t.Errorf("期望通过,得到: %v", err)
-				}
+			} else if err != nil {
+				t.Errorf("期望通过,得到: %v", err)
 			}
 		})
 	}
@@ -137,10 +135,8 @@ func TestValidateSMTPRequest_MailFromThreeStates(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), c.substr) {
 					t.Fatalf("期望报错含 %q,得到: %v", c.substr, err)
 				}
-			} else {
-				if err != nil {
-					t.Errorf("期望通过,得到: %v", err)
-				}
+			} else if err != nil {
+				t.Errorf("期望通过,得到: %v", err)
 			}
 		})
 	}
