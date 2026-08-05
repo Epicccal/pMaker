@@ -141,6 +141,13 @@ func TestSerializeSMTPResp(t *testing.T) {
 			},
 			want: "250-mail.example\r\n250-\r\n250 SIZE 10485760\r\n",
 		},
+		{
+			name: "lines 末元素空文本(无尾随空格)",
+			// RFC 5321 §4.2 末行 "code[ SP text]":SP 与 text 一起可选,
+			// 末行无文本 → 纯 code(无尾随空格),严格 RFC 5321。
+			f:    scenario.SMTPResponseFields{Code: 250, Lines: []string{"mail.example", ""}},
+			want: "250-mail.example\r\n250\r\n",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

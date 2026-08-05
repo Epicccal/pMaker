@@ -483,9 +483,9 @@ func TestFTPBidirectionalInterleave(t *testing.T) {
 func TestFTPPasvRetrContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/ftp/pasv_retr.yaml")
 	for _, want := range [][]byte{
-		// 多行 220 续行(RFC 959 §4.1.3:code-line \r\n … code lastline \r\n)
+		// 多行 220 续行(RFC 959 §4.2:首行 code-text、中间行裸文本、末行 code SP text)
 		[]byte("220-Welcome to pMaker FTP service.\r\n"),
-		[]byte("220-All transfers are logged.\r\n"),
+		[]byte("All transfers are logged.\r\n"),
 		[]byte("220 Login anonymous accepted.\r\n"),
 		// 控制连接命令
 		[]byte("USER anonymous\r\n"),

@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -65,9 +66,34 @@ func serializeSMTPReq(f *scenario.SMTPRequestFields) []byte {
 	return []byte(b.String())
 }
 
-// serializeSMTPResp 把 SMTP 响应序列化为 TCP payload 字节,委托给共用的 serializeTextReply。
-// 多行续行格式遵循 RFC 5321 §4.2 的 Reply-line(每条续行带 code- 前缀,末行 code[ SP textstring]),
-// 该公共函数逐行带 code- 的实现恰好匹配 RFC 5321 文法(复用依据是 SMTP 自身文法,非"与 FTP 相同")。
+// serializeSMTPResp 把 SMTP 响应序列化为 TCP payload 字节,遵循 RFC 5321 §4.2 的 Reply-line 文法:
+//   - 续行(非末行)"code-[text]\r\n" —— 每条续行都带 code- 前缀(textstring 可选,故续行空文本 "code-\r\n" 合法);
+//   - 末行 "code[ SP text]\r\n" —— SP 与 textstring 一起可选:末行无文本时纯 "code\r\n"(无尾随空格)才严格合规。
+//
+// message 与 lines 互斥:lines 非空走多行;否则走单行(message 为空则裸 "code\r\n")。
+// 空文本行如实输出不丢弃(续行空文本 RFC 5321 合规)。
 func serializeSMTPResp(f *scenario.SMTPResponseFields) []byte {
-	return serializeTextReply(f.Code, f.Message, f.Lines)
+	var b strings.Builder
+	if len(f.Lines) > 0 {
+		for i, line := range f.Lines {
+			if i == len(f.Lines)-1 {
+				// 末行:code[ SP text]。空文本 → 纯 code(无尾随空格),严格 RFC 5321。
+				if line == "" {
+					fmt.Fprintf(&b, "%d\r\n", f.Code)
+				} else {
+					fmt.Fprintf(&b, "%d %s\r\n", f.Code, line)
+				}
+			} else {
+				// 续行:code-[text](textstring 可选)。
+				fmt.Fprintf(&b, "%d-%s\r\n", f.Code, line)
+			}
+		}
+		return []byte(b.String())
+	}
+	if f.Message == "" {
+		fmt.Fprintf(&b, "%d\r\n", f.Code)
+	} else {
+		fmt.Fprintf(&b, "%d %s\r\n", f.Code, f.Message)
+	}
+	return []byte(b.String())
 }
