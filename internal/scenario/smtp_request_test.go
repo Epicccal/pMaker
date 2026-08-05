@@ -221,16 +221,17 @@ func TestValidateSMTPResponseCode_ValidAccepts(t *testing.T) {
 	}
 }
 
-// TestValidateSMTPResponseCode_OutOfRangeRejects: 99 / 199 / 560 / 负数等非法位数报错。
+// TestValidateSMTPResponseCode_OutOfRangeRejects: 99 / 199 / 560 / 负数等非法位数报错,
+// 以及 260-299/360-399/460-499/590-599 等十位越界(虽落在 200-559 区间内但 RFC 5321 文法非法)报错。
 func TestValidateSMTPResponseCode_OutOfRangeRejects(t *testing.T) {
-	for _, code := range []int{0, 99, 199, 560, 600, 1000, -1} {
+	for _, code := range []int{0, 99, 199, 560, 590, 599, 600, 1000, -1, 260, 299, 360, 399, 460, 499} {
 		s := &scenario.Scenario{Packets: []scenario.Packet{{Stack: smtpBaseStack(smtpRespLayer(code, "msg"))}}}
 		err := scenario.Validate(s)
 		if err == nil {
 			t.Fatalf("非法响应码 %d 应被拒,实际通过", code)
 		}
-		if !strings.Contains(err.Error(), "200-559") {
-			t.Errorf("错误应提示范围 200-559,得到: %v", err)
+		if !strings.Contains(err.Error(), "百位 2-5") {
+			t.Errorf("错误应提示逐位范围,得到: %v", err)
 		}
 	}
 }

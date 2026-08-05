@@ -82,11 +82,14 @@ func validateSMTPVerb(v string) (string, error) {
 }
 
 // validateSMTPResponseCode 校验 smtp_response.code:RFC 5321 §4.2 Reply-code =
-// %x32-35 %x30-35 %x30-39 即 200-559(首位 2-5;SMTP 无 1xx)。不强制必须是 RFC 已定义码
-// (保留扩展),但拦截非法位数与负数;非标响应码请用 payload / payload_hex。
+// %x32-35 %x30-35 %x30-39,即三位十进制:百位 ∈ {2,3,4,5}、十位 ∈ {0..5}、
+// 个位 ∈ {0..9}(SMTP 无 1xx)。注意不能只判 200-559 区间:260-299/360-399/460-499
+// 的十位为 6-9,虽落在 200-559 区间内但按文法非法,需逐位校验。
+// 不强制必须是 RFC 已定义码(保留扩展),但拦截非法位数与十位越界;非标响应码请用 payload / payload_hex。
 func validateSMTPResponseCode(code int) error {
-	if code < 200 || code > 559 {
-		return fmt.Errorf("code %d 非法,SMTP 响应码须为三位 200-559(首位 2-5;SMTP 无 1xx);非标响应码请用 payload / payload_hex", code)
+	d1, d2 := code/100, (code/10)%10
+	if code < 0 || d1 < 2 || d1 > 5 || d2 > 5 {
+		return fmt.Errorf("code %d 非法,SMTP 响应码须为三位且百位 2-5、十位 0-5、个位 0-9(RFC 5321 §4.2;SMTP 无 1xx);非标响应码请用 payload / payload_hex", code)
 	}
 	return nil
 }
