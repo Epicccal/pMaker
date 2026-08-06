@@ -66,7 +66,7 @@ type (
 		Pointer *uint8  `yaml:"pointer"` // 仅 parameter_problem(type 12):出错字节偏移(byte 4)
 		MTU     *uint16 `yaml:"mtu"`     // 仅 dest_unreachable(type 3) code 4:下一跳 MTU(bytes 6-7,RFC 1191)
 	}
-	// ICMPv6Fields 镜像 ICMPFields;校验和依赖 IPv6 伪首部(见 builder)。
+	// ICMPv6Fields;校验和依赖 IPv6 伪首部(由 builder 绑定,见 buildICMPv6)。
 	ICMPv6Fields struct {
 		Type       yaml.Node `yaml:"type"`
 		Code       yaml.Node `yaml:"code"`
@@ -115,7 +115,7 @@ type (
 		Class      string    `yaml:"class"`
 		TTL        uint32    `yaml:"ttl"`
 		Data       yaml.Node `yaml:"data"`
-		PayloadHex string    `yaml:"payload_hex"` // 预留:畸形/未知 RDATA 后续实现
+		PayloadHex string    `yaml:"payload_hex"` // 原始 RDATA 字节,用于畸形/未知 type(走手写编码路径)
 	}
 
 	HTTPReqFields struct {
@@ -151,7 +151,6 @@ type (
 	// TelnetFields 是一个 TELNET 事件(IAC 命令 / subnegotiation / NVT 文本),
 	// 序列化为 TCP payload 字节。多个事件在同一 TCP 段内靠层栈重复多个 telnet 层拼接
 	// (SerializeLayers 顺序追加 Payload);跨段会话靠 flow 的 messages 列表。
-	// 对齐 ftp_request 的 {command, args} 扁平风格。
 	//
 	//   - command:IAC 动词 WILL/WONT/DO/DONT/SB/GA/BRK/IP/AO/AYT/EC/EL/NOP/DM/EOR;
 	//     留空表示纯 NVT 文本(此时须有 args 或 args_hex)。
@@ -169,7 +168,7 @@ type (
 	// SMTPRequestFields 是一条 SMTP 信封命令。MAIL/RCPT 走结构化信封路径(from/to + params);
 	// 其余 verb(EHLO/AUTH/BDAT/…)用 args 携带普通参数(verb 仍走 knownSMTPVerbs 校验)。
 	// 私有/非标 verb、MAIL/RCPT 的结构性畸形(缺 <>、非标空格、FROM/TO 大小写非标、缺冒号)不走 args,
-	// 而是走 payload/payload_hex 原始字节兜底(与全项目「非标走原始字节」一致,与 FTP/TELNET/DNS 同口径)。
+	// 而是走 payload/payload_hex 原始字节兜底。
 	//
 	// from 用 *string(指针)而非裸 string,以区分「未给出」与「显式空串」:
 	//   - 省略 from(nil)→ 校验报错(引导用 from: "" 表达 null reverse path),避免静默退信;
