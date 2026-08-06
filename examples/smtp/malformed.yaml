@@ -1,0 +1,59 @@
+# examples/smtp/malformed.yaml
+#
+# SMTP 畸形 envelope 示例,演示四类畸形与对应通道:
+#
+#   ① 结构性畸形(缺 <>、非标空格、FROM/TO 大小写非标、缺冒号):结构化路径强制 <>+FROM:/TO:
+#      无法表达,改用 payload_hex 原样落字节(非标值走原始字节,与全项目一致)。
+#   ② 地址内容 CRLF 注入:结构化路径即可(from/to 内容裸透传不转义,<> 框照常包裹)。
+#   ③ 非标/私有 verb:verb 校验表内没有,走 payload_hex 自行构造整行。
+#   ④ 小写 verb:合规(verb 原样输出不强制大写),仍走结构化路径。
+#   ⑤ 越界响应码:不能用 smtp_response(被 validateSMTPResponseCode 拦截),改用 payload_hex。
+#
+# 流量验证关注点:协议解析器对畸形 envelope 的容忍/拒绝边界、CRLF 注入检测、
+# 私有 verb 处理、非标响应码行为。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+packets:
+  # ① 结构性畸形:缺尖括号的 MAIL FROM(非标空格、无 <>)。
+  # "MAIL FROM:alice@example.com  SIZE=10\r\n"
+  - name: malformed-mail-no-angle
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 50000, dport: 25, flags: [PSH, ACK], seq: 1001, ack: 5001 }
+      - payload_hex: "0x4d41494c2046524f4d3a616c696365406578616d706c652e636f6d202053495a453d31300d0a"
+
+  # ② 地址内容 CRLF 注入:结构化路径,from 含 \r\nRSET\r\n,<> 框照常包裹。
+  # → "MAIL FROM:<alice@example.com\r\nRSET\r\n>\r\n"
+  - name: mail-crlf-injection
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 50001, dport: 25, flags: [PSH, ACK], seq: 2001, ack: 5001 }
+      - smtp_request: { verb: MAIL, from: "alice@example.com\r\nRSET\r\n" }
+
+  # ③ 非标/私有 verb "XMSG stuff\r\n"
+  - name: private-verb
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 50002, dport: 25, flags: [PSH, ACK], seq: 3001, ack: 5001 }
+      - payload_hex: "0x584d53472073747566660d0a"
+
+  # ④ 小写 verb:合规,结构化路径输出 "rcpt TO:<bob@example.net>\r\n"
+  - name: lowercase-verb
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 50003, dport: 25, flags: [PSH, ACK], seq: 4001, ack: 5001 }
+      - smtp_request: { verb: rcpt, to: "bob@example.net" }
+
+  # ⑤ 越界响应码 "99 oops\r\n"(SMTP 响应码须 200-559,99 越界,走 payload_hex)
+  - name: out-of-range-code
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.25", dst: "10.0.0.10", ttl: 64 }
+      - tcp:  { sport: 25, dport: 50003, flags: [PSH, ACK], seq: 5001, ack: 4020 }
+      - payload_hex: "0x3939206f6f70730d0a"

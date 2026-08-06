@@ -224,6 +224,8 @@ func summaryLayerName(layerType string) (string, bool) {
 		return "http", true
 	case "ftp_request", "ftp_response":
 		return "ftp", true
+	case "smtp_request", "smtp_response":
+		return "smtp", true
 	case "payload", "payload_hex", "tcp_session":
 		return "", false
 	default:

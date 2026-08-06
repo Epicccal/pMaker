@@ -10,9 +10,12 @@ import (
 
 // 本文件覆盖 FTP 应用层序列化:回读 ftp/control,断言命令与响应符合 RFC 959。
 
-// TestSerializeFTPRespEmptyLines 断言 FTP 多行响应中 lines 的空元素被如实输出、不再静默丢弃
-// (serializeTextReply 公共函数修正后行为,RFC 959 续行空文本行协议合法)。
-// 走 builder.PayloadBytes 与 serializeStack 同一序列化路径,确保行为一致。
+// TestSerializeFTPRespEmptyLines 断言 FTP 多行响应中 lines 的空元素被如实输出、不静默丢弃
+// (RFC 959 §4.2 续行空文本行协议合法)。走 builder.PayloadBytes 与 serializeStack 同一序列化路径。
+// FTP 续行格式(RFC 959 §4.2):
+//   - 首行 "code-text\r\n"(code 后紧跟连字符);
+//   - 中间行裸文本(无 code 前缀),空元素 → 裸空行 "\r\n";
+//   - 末行 "code[ SP text]\r\n",末行空文本 → "code \r\n"(code + 空格)。
 func TestSerializeFTPRespEmptyLines(t *testing.T) {
 	cases := []struct {
 		name string
@@ -20,15 +23,16 @@ func TestSerializeFTPRespEmptyLines(t *testing.T) {
 		want string
 	}{
 		{
-			name: "lines含空元素",
+			name: "三行含中间空元素(中间行裸文本)",
 			f: scenario.FTPResponseFields{
 				Code:  220,
 				Lines: []string{"Welcome to pMaker FTP service.", "", "All transfers are logged."},
 			},
-			want: "220-Welcome to pMaker FTP service.\r\n220-\r\n220 All transfers are logged.\r\n",
+			// 首行 220-、中间空元素→裸空行、末行 220 SP
+			want: "220-Welcome to pMaker FTP service.\r\n\r\n220 All transfers are logged.\r\n",
 		},
 		{
-			name: "lines末行空元素",
+			name: "两行末行空元素(FTP 末行恒带空格)",
 			f:    scenario.FTPResponseFields{Code: 220, Lines: []string{"Welcome", ""}},
 			want: "220-Welcome\r\n220 \r\n",
 		},

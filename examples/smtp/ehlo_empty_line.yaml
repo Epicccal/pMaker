@@ -1,0 +1,48 @@
+# examples/smtp/ehlo_empty_line.yaml
+#
+# 多行 EHLO 响应 lines 含空文本行,验证 serializeSMTPResp 不再静默丢弃空元素
+# (续行空文本行 RFC 5321 合法:Reply-code "-" [ textstring ],textstring 可选)。
+#
+# 输出应为 4 行(空元素如实成行):
+#   250-mail.example\r\n
+#   250-\r\n
+#   250-SIZE 10485760\r\n
+#   250 PIPELINING\r\n
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: smtp-ehlo-empty
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 49154, dport: 25, client_isn: 3000, server_isn: 7000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: dst
+        stack:
+          - smtp_response: { code: 220, message: "mail.example ESMTP" }
+
+      - from: src
+        stack:
+          - smtp_request: { verb: EHLO, args: "client.example" }
+
+      # 多行响应含空文本行(第二元素为空字符串)
+      - from: dst
+        stack:
+          - smtp_response:
+              code: 250
+              lines:
+                - "mail.example"
+                - ""
+                - "SIZE 10485760"
+                - "PIPELINING"
+
+      - from: src
+        stack:
+          - smtp_request: { verb: QUIT }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 221, message: "bye" }
