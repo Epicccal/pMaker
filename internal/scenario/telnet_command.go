@@ -6,19 +6,17 @@ import (
 	"strings"
 )
 
-// 本文件实现 TELNET 命令码 / option 码的「合法基线」校验与名字↔字节翻译,对齐 DNS 枚举与
-// FTP 命令的校验风格:已知名字接受(大小写不敏感),未知名字尝试十进制/0x 数字回退
-// (私有/未列入码),既非已知名又非法数字则报错并引导改用 payload / payload_hex 原始字节通道。
+// 本文件实现 TELNET 命令码 / option 码的「合法基线」校验与名字↔字节翻译:已知名字接受
+// (大小写不敏感),未知名字尝试十进制/0x 数字回退(私有/未列入码),既非已知名又非法数字
+// 则报错并引导改用 payload / payload_hex 原始字节通道。
 //
-// 与 ftp_command.go 同理:校验只判合法性,不改变序列化行为(序列化在 builder/telnet.go,
-// 通过 TelnetCommandByte / TelnetOptionByte 取字节码)。真正无法用结构化字段表达的畸形
-// (非法 IAC 序列、未转义 0xFF 等)走 payload / payload_hex,与全项目「非标值走原始字节兜底」
-// 的约定一致。
+// 校验只判合法性,不改变序列化行为(序列化在 builder/telnet.go,通过 TelnetCommandByte /
+// TelnetOptionByte 取字节码)。真正无法用结构化字段表达的畸形(非法 IAC 序列、未转义 0xFF 等)
+// 走 payload / payload_hex 原始字节兜底。
 //
 // TELNET 字节常量见 RFC 854(IAC/命令)与各 option RFC;此处按数值集中登记。
 
-// TELNET 协议字节常量(RFC 854 / RFC 1091),导出供 builder 构包时直接拼字节,
-// 与 HTTP/FTP 在 builder 内构包的模式一致:scenario 定义单一常量来源,builder 引用。
+// TELNET 协议字节常量(RFC 854 / RFC 1091),导出供 builder 构包时直接拼字节。
 const (
 	TelnetIAC  = 0xFF // Interpret As Command(RFC 854)
 	telnetDONT = 0xFE
@@ -131,7 +129,7 @@ func TelnetOptionByte(s string) (byte, bool) {
 }
 
 // parseTelnetByte 把字符串当单字节解析:十进制或 0x 十六进制。用于命令/option 的数字写法
-// (私有/未列入码模糊测试)。对齐 builder.parseDNSRRNumber 风格,但限单字节(0..255)。
+// (私有/未列入码模糊测试),限单字节(0..255)。
 func parseTelnetByte(s string) (byte, error) {
 	t := strings.TrimSpace(s)
 	base := 10
