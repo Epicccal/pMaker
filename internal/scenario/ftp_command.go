@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// 本文件实现 FTP 控制连接命令名 / 响应码的「合法基线」校验,对齐 DNS 枚举的校验风格:
-// 已知名字接受(大小写不敏感),未知名字报错并引导改用 payload / payload_hex 原始字节通道。
+// 本文件实现 FTP 控制连接命令名 / 响应码的「合法基线」校验:已知命令名接受
+// (大小写不敏感),未知命令名报错并引导改用 payload / payload_hex 原始字节通道。
 //
 // 背景:此前 ftp_request.command 接受任意字符串(含空格、空),ftp_response.code 接受任意
 // int(如 code: 22 会序列化成 "22\r\n",非法但无提示)。合法用例的拼写错误(如 RETER)会
@@ -19,7 +19,7 @@ import (
 //
 // command 仍原样输出(不强制大写),以便构造小写 / 非标命令等畸形用例 —— 校验只判合法性,
 // 不改变序列化行为。真正无法用结构化字段表达的畸形(自定义动词、CRLF 注入等)走
-// payload / payload_hex,与全项目「非标值走原始字节兜底」的约定一致。
+// payload / payload_hex 原始字节兜底。
 
 // knownFTPCommands 是 FTP 控制连接已知命令表(RFC 959 核心 + 常见扩展),统一大写存储,
 // 匹配时大小写不敏感。扩展命令收录业界普遍实现(FEAT/OPTS/AUTH TLS/PBSZ/PROT/MLSD/MLST/

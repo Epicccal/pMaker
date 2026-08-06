@@ -8,8 +8,8 @@ import (
 )
 
 // serializeTelnet 把一个 TELNET 事件(IAC 命令 / subnegotiation / NVT 文本)序列化为
-// TCP payload 字节。gopacket 无 TELNET layer(见 telnet-implementation.md 关键技术约束),
-// 故同 HTTP/FTP:自己序列化为原始字节,由 serializeStack 包裹成 gopacket.Payload。
+// TCP payload 字节。gopacket 无 TELNET layer,故自己序列化为原始字节,
+// 由 serializeStack 包裹成 gopacket.Payload。
 //
 // 一个 telnet 层 = 一个事件;层栈里重复多个 telnet 层由 SerializeLayers 顺序拼接,
 // 自然得到 `IAC WILL ECHO IAC WILL SGA …` 连续字节(多事件同段)。

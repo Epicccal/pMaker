@@ -5,13 +5,12 @@ import (
 	"strings"
 )
 
-// 本文件实现 SMTP 信封命令 verb / 响应码的「合法基线」校验,对齐 DNS 枚举与 FTP 命令的校验风格:
-// 已知 verb 接受(大小写不敏感),未知 verb 报错并引导改用 payload / payload_hex 原始字节通道。
+// 本文件实现 SMTP 信封命令 verb / 响应码的「合法基线」校验:已知 verb 接受
+// (大小写不敏感),未知 verb 报错并引导改用 payload / payload_hex 原始字节通道。
 //
-// 与 ftp_command.go 同理:校验只判合法性,绝不改变序列化行为(序列化在 builder/smtp.go)。
-// 真正无法用结构化字段表达的畸形(私有 verb、MAIL/RCPT 结构性畸形如缺 <>、非标空格、
-// FROM/TO 大小写非标、缺冒号)走 payload / payload_hex,与全项目「非标值走原始字节兜底」
-// 的约定一致。
+// 校验只判合法性,绝不改变序列化行为(序列化在 builder/smtp.go)。真正无法用结构化字段
+// 表达的畸形(私有 verb、MAIL/RCPT 结构性畸形如缺 <>、非标空格、FROM/TO 大小写非标、
+// 缺冒号)走 payload / payload_hex 原始字节兜底。
 //
 // SMTP verb 原样输出(不强制大写),保留 helo/MAIL/Mail 等大小写构造能力
 // (RFC 5321 §2.4 命令大小写不敏感,是合规测试点);结构化路径只规范 FROM/TO 关键字与 <> 包裹。
@@ -172,8 +171,7 @@ func validateSMTPRequestFields(f *SMTPRequestFields) error {
 }
 
 // validateSMTPResponseFields 校验 smtp_response 字段组合的合法性(code + message/lines 约束)。
-// 与 validateSMTPRequestFields 对称:把响应侧的字段约束收敛进一处(不再像 FTP 那样
-// 把 message/lines 互斥检查留在 validateLayer、空检查另写)。
+// 把响应侧的字段约束收敛进一处。
 //
 //   - code 经 validateSMTPResponseCode 校验(200-559);
 //   - message 与 lines 互斥(至多其一),且至少一个非空(响应须有正文,裸 code 请走 payload/payload_hex)。
