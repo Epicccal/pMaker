@@ -11,8 +11,7 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-// buildICMPv6 构造 ICMPv6 层。
-// 与 ICMPv4 不同:校验和依赖 IPv6 伪首部,调用方须在返回后
+// buildICMPv6 构造 ICMPv6 层。校验和依赖 IPv6 伪首部,调用方须在返回后
 // icmp.SetNetworkLayerForChecksum(ipv6Layer)(就近内层 IPv6)。
 // echo(128/129) 多一层独立的 ICMPv6Echo,序列化时跟在 ICMPv6 之后。
 // 错误类(typ<128)按 RFC 4443 §3 在 Checksum 与 quote 之间插入 4 字节类型相关
@@ -93,8 +92,7 @@ func icmpv6Payload(ctx buildContext, f *scenario.ICMPv6Fields) ([]byte, error) {
 // icmpv6QuoteFrom 按 RFC 4443 §2.4(c) 从触发包提取 quote:错误消息须尽量包含
 // 整个触发包,仅受"整个错误包不超过最小 IPv6 MTU(1280 字节)"限制。外层 IPv6
 // 头(40)+ ICMPv6 头(4)+ 类型相关 4 字节字段共 48 字节开销,故 quote 上限 1232
-// 字节。当前 IPv6 层不带扩展头,从 IPv6 固定头起整段截取。(区别于 ICMPv4 RFC 792
-// 的"头+8 字节"。)
+// 字节。当前 IPv6 层不带扩展头,从 IPv6 固定头起整段截取。
 func icmpv6QuoteFrom(ctx buildContext, name string) ([]byte, error) {
 	p, ok := ctx.packetsByName[name]
 	if !ok {
@@ -137,7 +135,7 @@ func icmpv6Type(node yaml.Node) (uint8, error) {
 		"parameter_problem":       4,
 		"echo_request":            128,
 		"echo_reply":              129,
-	}, 128, "type") // 默认 echo_request(对齐 ICMPv4 默认 8)
+	}, 128, "type") // 默认 echo_request
 }
 
 func icmpv6Code(node yaml.Node) (uint8, error) {
@@ -147,7 +145,7 @@ func icmpv6Code(node yaml.Node) (uint8, error) {
 		"admin_prohibited":    1,
 		"beyond_scope":        2,
 		"address_unreachable": 3,
-		"port_unreachable":    4, // 注意:ICMPv6 中为 4(ICMPv4 为 3)
+		"port_unreachable":    4, // 注意:ICMPv6 中 port_unreachable 为 4
 		"src_policy_failed":   5,
 		"reject_route":        6,
 		// time_exceeded (type 3)
