@@ -14,8 +14,8 @@ import (
 // verb 原样输出(不强制大写),保留大小写构造能力(RFC 5321 §2.4 命令大小写不敏感)。
 //
 // 结构性畸形(缺 <>、非标空格、FROM/TO 关键字大小写非标、缺冒号)与私有/非标 verb
-// 不经过本层(由校验拦截并引导 payload/payload_hex),与全项目「非标走原始字节兜底」一致。
-// 地址内容畸形(含 CRLF 注入)走结构化路径即可:from/to 裸透传不转义,<> 框照常包裹。
+// 不经过本层(由校验拦截并引导 payload/payload_hex)。地址内容畸形(含 CRLF 注入)走结构化
+// 路径即可:from/to 裸透传不转义,<> 框照常包裹。
 func serializeSMTPReq(f *scenario.SMTPRequestFields) []byte {
 	verb := strings.ToUpper(f.Verb)
 	var b strings.Builder
@@ -36,7 +36,7 @@ func serializeSMTPReq(f *scenario.SMTPRequestFields) []byte {
 		}
 		// esmtp-param(RFC 5321 §4.1.2: esmtp-keyword ["=" esmtp-value])按 key 字典序升序输出,
 		// 空格分隔,接在路径后。空值 → 裸键(无值 flag,如 SMTPUTF8);非空 → KEY=VALUE。
-		// 排序保证确定性输出(复用项目 HTTP 头按 key 排序先例);nil map 排序循环安全。
+		// 排序保证确定性输出;nil map 排序循环安全。
 		if len(f.Params) > 0 {
 			keys := make([]string, 0, len(f.Params))
 			for k := range f.Params {
@@ -55,7 +55,7 @@ func serializeSMTPReq(f *scenario.SMTPRequestFields) []byte {
 		b.WriteString("\r\n")
 	default:
 		// args 普通参数路径:VERB args\r\n(args 空则裸 VERB\r\n,如 DATA/QUIT/STARTTLS)。
-		// 与 serializeFTPReq 同构:args 为空不追加空格,非空前缀单空格。行尾统一 CRLF。
+		// args 为空不追加空格,非空前缀单空格。行尾统一 CRLF。
 		b.WriteString(f.Verb)
 		if f.Args != "" {
 			b.WriteByte(' ')
