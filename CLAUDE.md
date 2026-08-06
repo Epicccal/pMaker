@@ -127,7 +127,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - verb 参数要求按文法分级(只判有/无):EHLO/HELO/VRFY/EXPN/AUTH/BDAT/ETRN/SEND/SOML/SAML 必带 args;
   DATA/RSET/QUIT/STARTTLS/TURN 禁带;NOOP/HELP/ATRN 可选。`params` 仅 MAIL/RCPT 有效(给其他 verb 报错)。
 - 响应多行续行遵循 RFC 5321 §4.2 的 `Reply-line`(每条续行带 `code-` 前缀,末行 `code[ SP textstring]`),
-  复用已落地的公共函数 `serializeTextReply`(其逐行带 `code-` 的实现恰好匹配 RFC 5321 文法);
+  由 `builder.serializeSMTPResp` 实现(逐行带 `code-` 恰好匹配 RFC 5321 文法);
   空文本行如实输出(续行空文本 RFC 5321 合规)。
 - **envelope-first**:DATA 正文显式排除在当前阶段之外(走 `payload`,可 `@file` 注入 EML,用户自行
   dot-stuff + 终止符);EHLO 一致性告警、MAIL/RCPT 参数语义级校验、正文结构化留后续扩展。

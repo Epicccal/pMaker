@@ -672,7 +672,7 @@ func TestSMTPEhloSendContent(t *testing.T) {
 }
 
 // TestSMTPEhloEmptyLineContent 回读 ehlo_empty_line,断言多行响应中的空文本行如实输出
-// (serializeTextReply 不静默丢弃空元素):第二行应为 "250-\r\n"。
+// (serializeSMTPResp 不静默丢弃空元素):第二行应为 "250-\r\n"。
 func TestSMTPEhloEmptyLineContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/smtp/ehlo_empty_line.yaml")
 	want := []byte("250-mail.example\r\n250-\r\n250-SIZE 10485760\r\n250 PIPELINING\r\n")

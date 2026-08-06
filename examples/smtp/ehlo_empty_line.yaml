@@ -1,6 +1,6 @@
 # examples/smtp/ehlo_empty_line.yaml
 #
-# 多行 EHLO 响应 lines 含空文本行,验证公共函数 serializeTextReply 不再静默丢弃空元素
+# 多行 EHLO 响应 lines 含空文本行,验证 serializeSMTPResp 不再静默丢弃空元素
 # (续行空文本行 RFC 5321 合法:Reply-code "-" [ textstring ],textstring 可选)。
 #
 # 输出应为 4 行(空元素如实成行):
