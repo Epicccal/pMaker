@@ -86,10 +86,21 @@ func validateSMTPVerb(v string) (string, error) {
 // 个位 ∈ {0..9}(SMTP 无 1xx)。注意不能只判 200-559 区间:260-299/360-399/460-499
 // 的十位为 6-9,虽落在 200-559 区间内但按文法非法,需逐位校验。
 // 不强制必须是 RFC 已定义码(保留扩展),但拦截非法位数与十位越界;非标响应码请用 payload / payload_hex。
+//
+// 错误信息按越界种类分支给出对症提示,而非对任何非法码都笼统说"须为三位":
+//   - 非三位(负数 / 1-2 位 / 四位以上):明示"必须是三位";
+//   - 百位越界(1xx / 6xx-9xx):明示"百位须 2-5"(SMTP 无 1xx);
+//   - 十位越界(260-299 / 360-399 / 460-499):明示"十位须 0-5"(这是区间内逐位才拦得到的那类)。
 func validateSMTPResponseCode(code int) error {
+	if code < 100 || code > 999 {
+		return fmt.Errorf("code %d 非法,SMTP 响应码必须是三位(RFC 5321 §4.2);非标响应码请用 payload / payload_hex", code)
+	}
 	d1, d2 := code/100, (code/10)%10
-	if code < 0 || d1 < 2 || d1 > 5 || d2 > 5 {
-		return fmt.Errorf("code %d 非法,SMTP 响应码须为三位且百位 2-5、十位 0-5、个位 0-9(RFC 5321 §4.2;SMTP 无 1xx);非标响应码请用 payload / payload_hex", code)
+	switch {
+	case d1 < 2 || d1 > 5:
+		return fmt.Errorf("code %d 非法,SMTP 响应码百位须 2-5(SMTP 无 1xx;RFC 5321 §4.2);非标响应码请用 payload / payload_hex", code)
+	case d2 > 5:
+		return fmt.Errorf("code %d 非法,SMTP 响应码十位须 0-5(RFC 5321 §4.2 逐位文法;260-299/360-399 等虽落在 200-559 区间但十位越界);非标响应码请用 payload / payload_hex", code)
 	}
 	return nil
 }
@@ -113,32 +124,32 @@ func validateSMTPRequestFields(f *SMTPRequestFields) error {
 	case "MAIL", "RCPT":
 		// 结构化信封路径:禁 args。
 		if f.Args != "" {
-			return fmt.Errorf("%s 不支持 args(MAIL/RCPT 走 from/to + params 结构化路径;结构性畸形请用 payload / payload_hex)", uv)
+			return fmt.Errorf("%s 不支持 args(MAIL/RCPT 走 from/to + params 结构化路径;结构性畸形请用 payload / payload_hex)", f.Verb)
 		}
 		// params 仅对 MAIL/RCPT 有效,此处允许。
 		if uv == "MAIL" {
 			if f.From == nil {
-				return fmt.Errorf("MAIL 需要 from(退信 null reverse path 请显式写 from: \"\")")
+				return fmt.Errorf("%s 需要 from(退信 null reverse path 请显式写 from: \"\")", f.Verb)
 			}
 			if f.To != "" {
-				return fmt.Errorf("MAIL 不支持 to")
+				return fmt.Errorf("%s 不支持 to", f.Verb)
 			}
 		} else { // RCPT
 			if f.To == "" {
-				return fmt.Errorf("RCPT 需要 to(前向路径不可为空;空路径畸形请用 payload / payload_hex)")
+				return fmt.Errorf("%s 需要 to(前向路径不可为空;空路径畸形请用 payload / payload_hex)", f.Verb)
 			}
 			if f.From != nil {
-				return fmt.Errorf("RCPT 不支持 from")
+				return fmt.Errorf("%s 不支持 from", f.Verb)
 			}
 		}
 		return nil
 	default:
 		// args 普通参数路径:禁 from/to/params。
 		if f.From != nil {
-			return fmt.Errorf("verb %s 不支持 from(from 仅对 MAIL 有效)", uv)
+			return fmt.Errorf("verb %s 不支持 from(from 仅对 MAIL 有效)", f.Verb)
 		}
 		if f.To != "" {
-			return fmt.Errorf("verb %s 不支持 to(to 仅对 RCPT 有效)", uv)
+			return fmt.Errorf("verb %s 不支持 to(to 仅对 RCPT 有效)", f.Verb)
 		}
 		if len(f.Params) > 0 {
 			return fmt.Errorf("params 仅对 MAIL/RCPT 有效")
@@ -147,11 +158,11 @@ func validateSMTPRequestFields(f *SMTPRequestFields) error {
 		switch smtpArgsRule[uv] {
 		case smtpArgsRequired:
 			if f.Args == "" {
-				return fmt.Errorf("%s 需要 args(如 EHLO 需要域名)", uv)
+				return fmt.Errorf("%s 需要 args(如 EHLO 需要域名)", f.Verb)
 			}
 		case smtpArgsForbidden:
 			if f.Args != "" {
-				return fmt.Errorf("%s 不接受参数(畸形请用 payload / payload_hex)", uv)
+				return fmt.Errorf("%s 不接受参数(畸形请用 payload / payload_hex)", f.Verb)
 			}
 		case smtpArgsOptional:
 			// 有/无均合规(NOOP/HELP/ATRN)。
