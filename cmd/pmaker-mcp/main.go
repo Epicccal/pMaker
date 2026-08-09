@@ -62,7 +62,7 @@ func main() {
 	yamlDir := filepath.Join(absWorkdir, "yaml")
 	pcapDir := filepath.Join(absWorkdir, "pcap")
 	for _, d := range []string{yamlDir, pcapDir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o750); err != nil {
 			fmt.Fprintf(os.Stderr, "pmaker-mcp: 创建目录 %s: %v\n", d, err)
 			os.Exit(1)
 		}
@@ -185,7 +185,7 @@ func (c config) handleGenerateYAML(ctx context.Context, req mcp.CallToolRequest)
 
 	// 校验通过才落盘到 workdir/yaml/(原样写入入参 YAML,不做规范化改写)。
 	outPath := filepath.Join(c.yamlDir, in.OutputName)
-	if err := os.WriteFile(outPath, []byte(in.YAML), 0o644); err != nil {
+	if err := os.WriteFile(outPath, []byte(in.YAML), 0o600); err != nil {
 		// 校验已过,写盘属执行层故障:Valid 保持 true,走结构化 isError=true,
 		// 与 generate_pcap 执行层故障(时间编排/构包/写盘)语义一致。
 		out.Errors = []string{fmt.Sprintf("写盘: %v", err)}
@@ -275,7 +275,7 @@ func (c config) handleGeneratePcap(ctx context.Context, req mcp.CallToolRequest)
 	}
 	yamlName := strings.TrimSuffix(in.OutputName, filepath.Ext(in.OutputName)) + ".yaml"
 	yamlPath := filepath.Join(c.yamlDir, yamlName)
-	if err := os.WriteFile(yamlPath, []byte(in.YAML), 0o644); err != nil {
+	if err := os.WriteFile(yamlPath, []byte(in.YAML), 0o600); err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("归档 YAML 失败: %v", err))
 	} else {
 		out.YAMLPath = yamlPath
