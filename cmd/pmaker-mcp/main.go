@@ -41,30 +41,42 @@ var schemaFS embed.FS
 const schemaMIME = "text/markdown"
 
 func main() {
-	workdir := flag.String("workdir", envOr("PMAKER_WORKDIR", ""), "场景工作目录(@file 相对路径相对它解析;其下自动建 yaml/ pcap/ 子目录存放生成产物)")
-	flag.Parse()
+	if err := run(os.Args[1:], os.Getenv, func(srv *server.MCPServer) error {
+		return server.ServeStdio(srv)
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "pmaker-mcp:", err)
+		os.Exit(1)
+	}
+}
+
+// run 是 main 的可测核心:解析 flag、建子目录、注册 tool/resource、起 server。
+// 把 flag 集、env 读取、serve 拆成入参,使 workdir 解析与 MkdirAll 等分支可在不触
+// os.Exit、不真正起 stdio 的前提下被测试覆盖;main 仅做错误打印 + 退出码。
+func run(args []string, getenv func(string) string, serve func(*server.MCPServer) error) error {
+	fs := flag.NewFlagSet("pmaker-mcp", flag.ContinueOnError)
+	workdir := fs.String("workdir", envOr("PMAKER_WORKDIR", "", getenv), "场景工作目录(@file 相对路径相对它解析;其下自动建 yaml/ pcap/ 子目录存放生成产物)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	if *workdir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "pmaker-mcp: 获取工作目录:", err)
-			os.Exit(1)
+			return fmt.Errorf("获取工作目录: %w", err)
 		}
 		*workdir = wd
 	}
 	// 解析为绝对路径(输出路径校验、摘要里都好引用)。
 	absWorkdir, err := filepath.Abs(*workdir)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "pmaker-mcp: 解析 workdir:", err)
-		os.Exit(1)
+		return fmt.Errorf("解析 workdir: %w", err)
 	}
 	// 在 workdir 下自动建 yaml/、pcap/ 两个子目录,分别存放 generate_yaml / generate_pcap 的产物。
 	yamlDir := filepath.Join(absWorkdir, "yaml")
 	pcapDir := filepath.Join(absWorkdir, "pcap")
 	for _, d := range []string{yamlDir, pcapDir} {
 		if err := os.MkdirAll(d, 0o750); err != nil {
-			fmt.Fprintf(os.Stderr, "pmaker-mcp: 创建目录 %s: %v\n", d, err)
-			os.Exit(1)
+			return fmt.Errorf("创建目录 %s: %w", d, err)
 		}
 	}
 
@@ -80,15 +92,12 @@ func main() {
 	srv.AddTool(generatePcapTool(), cfg.handleGeneratePcap)
 	cfg.registerResources(srv)
 
-	if err := server.ServeStdio(srv); err != nil {
-		fmt.Fprintln(os.Stderr, "pmaker-mcp:", err)
-		os.Exit(1)
-	}
+	return serve(srv)
 }
 
-// envOr 返回环境变量值,空则返回 fallback。
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
+// envOr 返回环境变量值,空则返回 fallback。getenv 注入便于测试(默认传 os.Getenv)。
+func envOr(key, fallback string, getenv func(string) string) string {
+	if v := getenv(key); v != "" {
 		return v
 	}
 	return fallback
