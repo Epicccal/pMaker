@@ -1,0 +1,23 @@
+# tcp —— TCP 层(L4)
+
+standalone packet 与 flow 均用。flow 中由 `tcp_session` + `messages` 驱动握手/挥手/seq-ack。
+
+```yaml
+- tcp: { sport: 49152, dport: 80, flags: [SYN], seq: 1000, ack: 0, client_isn: 1000, server_isn: 5000, mss: 1460 }
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `sport` | uint16 | 是 | 源端口 |
+| `dport` | uint16 | 是 | 目的端口 |
+| `flags` | []string | 否 | 标志位,如 `[SYN]`/`[SYN,ACK]`/`[FIN,ACK]`/`[RST]` |
+| `seq` | uint32 | 否 | 显式序列号(flow 自动推导时无需写) |
+| `ack` | uint32 | 否 | 显式确认号(flow 自动推导时无需写) |
+| `client_isn` | uint32 | 否 | flow 用:客户端初始 seq |
+| `server_isn` | uint32 | 否 | flow 用:服务端初始 seq |
+| `mss` | uint16 | 否 | SYN 通告的 MSS option(flow 展开器仅在 SYN 上设) |
+| `checksum` | `Hex` | 否 | 畸形开关(解析但忽略) |
+
+## checksum 伪首部
+
+TCP checksum 自动绑定**就近 IP 层**(多层 IP 时绑内层)。除非故意要错 checksum,无需手算。
