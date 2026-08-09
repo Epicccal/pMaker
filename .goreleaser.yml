@@ -4,7 +4,8 @@
 # 设计要点:
 #   - 纯 Go,CGO_ENABLED=0,静态编译,跨平台开箱即用。
 #   - 目标平台:linux/macOS/windows × amd64/arm64。
-#   - 通过 ldflags 注入版本号(对应 cmd/pmaker/main.go 里的 version 变量)。
+#   - 通过 ldflags 注入版本号(对应 cmd/*/main.go 里的 version 变量)。
+#   - 产两个二进制:pmaker(CLI)与 pmaker-mcp(MCP server),同源、同 ldflags、同目标平台。
 #   - 不发布 Homebrew/Scoop 等(后续按需再加),只产 GitHub Release 归档 + checksums。
 
 version: 2
@@ -40,8 +41,32 @@ builds:
       - -s -w
       - -X main.version={{.Version}}
 
+  - id: pmaker-mcp
+    main: ./cmd/pmaker-mcp
+    binary: pmaker-mcp
+    # 与 pmaker 同构:同静态编译、同目标平台、同 ldflags 注入 version。
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+
 archives:
   # 格式:linux/macOS 用 tar.gz,windows 用 zip。
+  # 单归档同时含 pmaker 与 pmaker-mcp 两个二进制(goreleaser 按 id 默认收录全部 builds)。
   - formats:
       - tar.gz
     name_template: >-
