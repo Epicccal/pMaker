@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// 文件占位符:@file(<path>) 在 Load 阶段被替换为对应文件的原始字节。
+// 文件占位符:@file(<path>) 在 Parse 阶段被替换为对应文件的原始字节。
 //
 // 设计要点(见 CLAUDE.md「文件占位符 @file」):
 //
@@ -21,7 +21,7 @@ import (
 //     header 值、ftp args、ICMP payload 等任意内容字段里,文件可只占字段值的一部分(前后可带其它
 //     文本,可多个 @file 拼接)。结构字段(layer.type、from、MAC/IP)写 @file 会被同样替换,
 //     进而破坏生成——这是用户自找,机制保持纯净不拦截。
-//   - 路径解析:绝对路径原样用;相对路径相对 scenario 文件所在目录(filepath.Dir)。
+//   - 路径解析:绝对路径原样用;相对路径相对 baseDir(CLI 传 scenario 文件所在目录,MCP 传 workdir)。
 //   - 转义:@@ → 字面 @;其余裸 @ 原样保留(不报错,兼容 email 等 @ 语义)。
 //   - payload_hex 是 hex 编码字段,@file 注入原始字节会破坏 hex 语义——二进制内容请用 payload。
 //   - 确定性:文件内容固定 → 同 scenario 同输入 → 逐字节相同 pcap。被引文件需随场景一起归档
