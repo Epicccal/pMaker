@@ -54,8 +54,14 @@ func main() {
 // os.Exit、不真正起 stdio 的前提下被测试覆盖;main 仅做错误打印 + 退出码。
 func run(args []string, getenv func(string) string, serve func(*server.MCPServer) error) error {
 	fs := flag.NewFlagSet("pmaker-mcp", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
 	workdir := fs.String("workdir", envOr("PMAKER_WORKDIR", "", getenv), "场景工作目录(@file 相对路径相对它解析;其下自动建 yaml/ pcap/ 子目录存放生成产物)")
 	if err := fs.Parse(args); err != nil {
+		// -h/-help:flag 打印 usage 后返回 ErrHelp,视为正常退出(与默认 flag 集的
+		// ExitOnError 语义中 help 退出码 0 对齐),供冒烟测试 ./bin/pmaker-mcp -h 通过。
+		if err == flag.ErrHelp {
+			return nil
+		}
 		return err
 	}
 
