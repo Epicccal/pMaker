@@ -32,7 +32,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          # go.mod 写的是 "go 1.25.0",setup-go 会取 >=1.25 的最新稳定版。
+          # go-version-file 解析 go.mod 的 go 指令(setup-go 取 >=该版本的最新稳定版)。
           cache: true
 
       - name: gofmt 检查
@@ -113,12 +113,16 @@ jobs:
       - name: 静态构建(CGO_ENABLED=0)
         run: |
           CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o bin/pmaker ./cmd/pmaker
-          # 冒烟:确认二进制能跑起来(version 子命令正常退出即可)
-          ./bin/pmaker version >/dev/null 2>&1 && echo "build smoke OK"
+          CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o bin/pmaker-mcp ./cmd/pmaker-mcp
+          # 冒烟:确认二进制能跑起来(version 子命令 / -h 正常退出即可)
+          ./bin/pmaker version >/dev/null 2>&1 && echo "pmaker smoke OK"
+          ./bin/pmaker-mcp -h >/dev/null 2>&1 && echo "pmaker-mcp smoke OK"
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v7
         with:
           name: pmaker-linux-amd64
-          path: bin/pmaker
+          path: |
+            bin/pmaker
+            bin/pmaker-mcp
           retention-days: 7

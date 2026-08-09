@@ -16,6 +16,18 @@ func Load(path string) (*Scenario, error) {
 	if err != nil {
 		return nil, err
 	}
+	s, err := Parse(data, filepath.Dir(path))
+	if err != nil {
+		// 报错带上文件名,便于定位(与历史行为一致)。
+		return nil, fmt.Errorf("解析 %s: %w", path, err)
+	}
+	return s, nil
+}
+
+// Parse 从 YAML 字节解析 Scenario,并为缺省 link_type 设置 ethernet。
+// baseDir 用于 @file 占位符的相对路径解析(CLI 传 scenario 文件所在目录,
+// MCP server 传配置的工作目录)。Load 即「读文件 → 调 Parse」。
+func Parse(data []byte, baseDir string) (*Scenario, error) {
 	var s Scenario
 	// 未知字段一律报错而非静默忽略(带行号+字段名)。两层保障:
 	//   - 顶层 decoder 开 KnownFields(true):覆盖 Scenario 直系字段树(packets/flows/
@@ -26,16 +38,16 @@ func Load(path string) (*Scenario, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&s); err != nil {
-		return nil, fmt.Errorf("解析 %s: %w", path, err)
+		return nil, err
 	}
 	if s.LinkType == "" {
 		s.LinkType = "ethernet"
 	}
 	// @file(<path>) 占位符替换:YAML decode 之后扫描所有 string 字段,把文件内容拼进去。
-	// 路径相对 scenario 文件所在目录(filepath.Dir(path));占位符可在任意内容字段(body/
-	// payload/header 值/ftp args …)里出现,文件可只占字段的一部分。详见 file_placeholder.go。
-	if err := ExpandFilePlaceholders(&s, filepath.Dir(path)); err != nil {
-		return nil, fmt.Errorf("解析 %s: %w", path, err)
+	// 路径相对 baseDir;占位符可在任意内容字段(body/payload/header 值/ftp args …)里出现,
+	// 文件可只占字段的一部分。详见 file_placeholder.go。
+	if err := ExpandFilePlaceholders(&s, baseDir); err != nil {
+		return nil, err
 	}
 	return &s, nil
 }

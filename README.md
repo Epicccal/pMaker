@@ -29,6 +29,7 @@
 - [有序层栈嵌套](#有序层栈嵌套)
 - [Flow 状态维护](#flow-状态维护)
 - [YAML 约定](#yaml-约定)
+- [MCP Server](#mcp-server)
 - [测试](#测试)
 - [安全边界](#安全边界)
 - [CI/CD](#cicd)
@@ -168,6 +169,69 @@ client                                              server
 - 同一 scenario + seed 生成逐字节相同的 pcap
 
 完整字段以 `internal/scenario` 类型定义与 `examples/` 为准。
+
+## MCP Server
+
+除 CLI 外,pMaker 还提供一个 **MCP server**,把"校验场景 / 生成 pcap"暴露成 [Model Context Protocol](https://modelcontextprotocol.io) 工具,供支持 MCP 的客户端(各类大模型 IDE / agent)调用。这让 LLM 能自己写场景 YAML → 校验 → 生成 pcap → 拿回结构化反馈自我修正,形成闭环。
+
+### 构建
+
+```bash
+CGO_ENABLED=0 go build -o bin/pmaker-mcp ./cmd/pmaker-mcp
+```
+
+### 启动
+
+```bash
+./bin/pmaker-mcp -workdir <场景工作目录>
+# 或环境变量 PMAKER_WORKDIR(缺省 = 当前工作目录)
+```
+
+`workdir` 是 `@file(...)` 占位符相对路径的基准目录;启动时在其下自动创建 `yaml/`、`pcap/` 两个子目录,
+分别存放 `generate_yaml` 与 `generate_pcap` 的产物。走 **stdio** transport,客户端以子进程方式启动。
+
+### 对外 Tools
+
+| 工具 | 作用 |
+|------|------|
+| `generate_yaml` | 校验模型自写的场景 YAML,通过则落盘到 `workdir/yaml/`(归档/复现);失败返回 `valid=false` + `errors`,不落盘 |
+| `generate_pcap` | 校验同一份 YAML 并生成 pcap 到 `workdir/pcap/`,同时在 `workdir/yaml/` 同步归档同名场景 YAML(仅扩展名不同,便于对照复现);`output_name` 仅文件名,防路径穿越。返回 pcap 路径、YAML 路径、包数、每包摘要 |
+
+两个工具共用同一套校验逻辑(`scenario.Parse` + `Validate` + `Warnings`):`generate_yaml` 负责写场景 + 归档,
+`generate_pcap` 负责出包。校验是两者的内建步骤,不再单独暴露 `validate` 工具。两个工具各有两个正交字段:
+
+- `valid`:输入 YAML 是否通过校验(输入质量)。校验通过即 `true`,无论后续执行是否成功。
+- `isError`:本次调用是否成功产出产物(文件落盘)。`false`=成功;`true`=未产出。
+
+组合语义:校验失败 → `valid=false, isError=true`;校验通过但执行层(时间编排/构包/写盘)失败 →
+`valid=true, isError=true`;全程成功 → `valid=true, isError=false`。校验失败/执行层故障都返回带字段路径的
+`errors` 清单,便于调用方据以修正 YAML 或重试。
+
+### 对外 Resources
+
+除工具外,server 还暴露**只读 Resources**,把 pMaker 的 YAML 语法与示例带内喂给模型。
+
+| Resource | 作用 |
+|------|------|
+| `pmaker://schema` | 语法总览(顶层结构、时间字段、层名清单) |
+| `pmaker://schema/{layer}` | 单层字段速查,如 `pmaker://schema/tcp`(每协议一份 embed markdown) |
+| `pmaker://examples` | 示例清单(动态扫描 workdir/examples) |
+| `pmaker://examples/{protocol}/{name}` | 单个示例 YAML 原文 |
+
+加协议只需新增 `cmd/pmaker-mcp/resources/schema/<proto>.md` 或 `examples/<proto>/*.yaml`,**Go 代码零改动**(schema 目录整体 embed,examples 动态扫描)。
+
+### 客户端配置示例(Claude Code)
+
+```jsonc
+{
+  "mcpServers": {
+    "pmaker": {
+      "command": "/path/to/bin/pmaker-mcp",
+      "args": ["-workdir", "/path/to/scenarios"]
+    }
+  }
+}
+```
 
 ## 测试
 

@@ -37,8 +37,13 @@ go.work.sum
 # Build output
 /bin/
 /pmaker
+/pmaker-mcp
 /dist/
 
 # Generated pcap (keep golden fixtures under testdata/)
 *.pcap
 !**/testdata/**/*.pcap
+
+# MCP server runtime output (archived scenarios & pcaps under workdir)
+/yaml/
+/pcap/
