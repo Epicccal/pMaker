@@ -35,6 +35,7 @@
 
 ```
 cmd/pmaker/          # main 包:CLI 入口、flag 解析、子命令分发,尽量薄
+cmd/pmaker-mcp/      # MCP server:把生成场景 YAML / 生成 pcap 能力暴露给其他大模型(mcp-go, stdio transport)
 internal/
   scenario/          # YAML schema 定义、解析、校验(带字段/行号级错误信息);AbsTime / Offset / PlannedPacket 类型
   builder/           # scenario 模型 -> gopacket layers -> 字节;BuildPlanned 消费已排序的 PlannedPacket
@@ -71,9 +72,18 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - SMTP 信封命令/响应(RFC 5321,MAIL/RCPT 结构化信封路径)。
 - 确定性时间戳(`base_time` + offset,不用 `time.Now()`)。
 - golden pcap 逐字节比对 + gopacket 回读测试。
-- **文件占位符 `@file(<path>)`**:在 `scenario.Load` 阶段扫描全部 string 字段,把 `@file(...)`
+- **MCP server**(`cmd/pmaker-mcp`):暴露两个 MCP 工具供其他大模型调用(stdio transport,`mcp-go`):
+  `generate_yaml`(校验模型自写的场景 YAML,通过则落盘到 workdir/yaml/ 归档/复现,返回带字段路径的结构化错误)、
+  `generate_pcap`(校验同一份 YAML 并出包到 workdir/pcap/,同时在 workdir/yaml/ 同步归档同名场景 YAML,文件名一致仅扩展名不同)。两工具共用同一套校验逻辑(`scenario.Parse` + `Validate` +
+  `Warnings`,从 YAML 文本解析,无文件路径依赖);`validate` 不再单独成工具——校验是前两个工具的内建步骤。
+  另暴露 **Resources**(`pmaker://schema`、`pmaker://schema/{layer}`、`pmaker://examples`、
+  `pmaker://examples/{protocol}/{name}`)把语法与示例带内喂给模型:schema 每协议一份 markdown
+  (`cmd/pmaker-mcp/resources/schema/<proto>.md`,整体 embed),examples 动态扫 workdir;
+  加协议只加文件、Go 代码零改动。
+- **文件占位符 `@file(<path>)`**:在 `scenario.Parse` 阶段扫描全部 string 字段,把 `@file(...)`
   替换为对应文件的原始字节(支持二进制;可只占字段值的一部分,可多个拼接;`@@` 转义为字面 `@`,
-  裸 `@` 原样保留)。绝对路径原样用,相对路径相对 scenario 文件所在目录。详见下文「文件占位符 @file」。
+  裸 `@` 原样保留)。绝对路径原样用;相对路径相对 `baseDir`(CLI 传 scenario 文件所在目录,
+  MCP server 传配置的 `workdir`)。详见下文「文件占位符 @file」。
 
 **FTP 专项**:
 
@@ -155,7 +165,7 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 >
 > scenario 包(详见 `doc.go`):
 > - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields)、
->   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Load/Validate/Warnings)、`start_after_graph.go`、
+>   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Parse/Load/Validate/Warnings)、`start_after_graph.go`、
 >   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_request.go`(SMTP verb/响应码校验)、
 >   `describe.go`(包/PlannedPacket 摘要)、`file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
 >
@@ -385,12 +395,16 @@ segment: { mss: 8, interval: "+10ms" }
 ```bash
 # 构建(静态、无 CGO)
 CGO_ENABLED=0 go build -o bin/pmaker ./cmd/pmaker
+CGO_ENABLED=0 go build -o bin/pmaker-mcp ./cmd/pmaker-mcp
 
 # 运行:从场景生成 pcap
 ./bin/pmaker gen -f examples/http/get.yaml -o out.pcap
 
 # 校验场景文件(不出包,只查 schema)
 ./bin/pmaker validate -f examples/http/get.yaml
+
+# 启动 MCP server(供其他大模型调用)
+./bin/pmaker-mcp -workdir .
 
 # 测试 / 覆盖率
 go test ./...
@@ -466,16 +480,17 @@ packets:
 
 ## 文件占位符 @file
 
-任意 string 字段值里都可写 `@file(<path>)`,`scenario.Load` 会在 YAML 解析后扫描全部 string 字段,
+任意 string 字段值里都可写 `@file(<path>)`,`scenario.Parse` 会在 YAML 解析后扫描全部 string 字段,
 把占位符替换为对应文件的**原始字节**(支持二进制)。设计动机:HTTP multipart、FTP 数据通道、
 未来 SMTP/POP3 等场景常需把外部文件内容拼进报文;占位符让"文件位置随意"——可只占字段值的一部分,
-也可多个拼接,不必整段 body 都是文件。
+也可多个拼接,不必整段 body 都是文件。`scenario.Load` 即「读文件 → 调 `scenario.Parse`」,
+`baseDir` 传 scenario 文件所在目录;MCP server 直接调 `scenario.Parse`,`baseDir` 传配置的 `workdir`。
 
 - **语法**:`@file(path)`,以第一个 `)` 闭合(路径不可含 `)`)。`@@` 转义为字面 `@`;
   裸 `@`(如 `user@host.com`)原样保留,不误伤。
 - **生效范围**:全部 string 字段(body、payload、header 值、ftp args、ICMP payload 等)。
   结构字段(layer.type、MAC/IP)写 `@file` 会被同样替换进而破坏生成,由用户自负。
-- **路径**:绝对路径原样用;相对路径相对 **scenario 文件所在目录**。
+- **路径**:绝对路径原样用;相对路径相对 **`baseDir`**(CLI = scenario 文件所在目录,MCP = `workdir`)。
 - **实现**:见 `internal/scenario/file_placeholder.go`。反射遍历 `Scenario`,跳过 `yaml.Node`
   (ICMP type/code 等结构化字段),对 `map[string]string`(HTTP headers)替换值不替换键。
 - **确定性**:文件内容固定 → 同 scenario 同输入 → 逐字节相同 pcap。被引文件需随场景一起归档
@@ -506,5 +521,10 @@ packets:
 3. `internal/builder/` 接线:scenario 字段 → layer;暴露畸形开关(关闭 fix/checksum、raw 注入)。
    **若是封装层**,还须实现 next-proto/ethertype 的自动推导,并允许逐层显式覆盖。
 4. `examples/<协议>/` 加一个规范用例 + 一个畸形用例(单职责、小而聚焦);**封装/隧道层再加一个嵌套用例(如 QinQ / GRE 套接)**。
-5. 加 golden 测试并生成基准;`go test -race ./...` 通过。
-6. README/示例文档同步。
+5. **同步 MCP resources**:`cmd/pmaker-mcp/resources/schema/<proto>.md` 加该协议的字段速查(schema 目录整体 embed,加文件即生效,Go 代码零改动);`examples/<协议>/` 下的示例由 `pmaker://examples` 动态扫描 workdir 自动收录,无需额外登记。
+6. 加 golden 测试并生成基准;`go test -race ./...` 通过。
+7. README/示例文档同步。
+
+> **硬约束**:新增协议、为已有协议加字段、或改动 schema 语义时,**必须同步更新对应的 MCP schema resource**
+> (`cmd/pmaker-mcp/resources/schema/<proto>.md`)。MCP 客户端(其他大模型)靠这些 resource 带内学语法,
+> schema 与实现脱节会让模型写出过时/无效的 YAML。该约束同样适用于新增/改动 MCP 工具与 resource 本身。
