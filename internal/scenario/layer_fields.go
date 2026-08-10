@@ -190,4 +190,33 @@ type (
 		Message string   `yaml:"message"` // 单行: "code message\r\n"
 		Lines   []string `yaml:"lines"`   // 多行续行: code-text / code final(RFC 5321 每行带 code- 前缀)
 	}
+
+	// EMLDataFields 是一封 RFC 5322 邮件内容(headers + body)，协议无关。
+	// 一个 eml_data 层 = 一封完整邮件内容，序列化为 TCP payload 字节。
+	//
+	// 协议复用：RFC 5322 内容是 SMTP/POP3/IMAP 的共同核心。SMTP DATA（RFC 5321）
+	// 与 POP3 RETR（RFC 1939）使用行框架（dot-stuffing + <CRLF>.<CRLF> 终止符），
+	// IMAP FETCH（RFC 9051）使用长度前缀字面量（{n}\r\n + bytes，无 dot-stuffing/终止符）。
+	// eml_data 通过 dot_stuff / dot_terminate 开关适配三种协议：SMTP/POP3 用 auto（默认 on），
+	// IMAP 由 imap_response builder 自动覆写为 off（IMAP 的 {n} 长度前缀由 builder 负责包装）。
+	//
+	// 两种模式（互斥，由校验保证）：
+	//   - 结构化模式：headers + body，builder 自动拼装头体、dot-stuffing、终止符；
+	//   - 原始模式：raw 字段直接透传整个正文字节（含/不含终止符由 dot_terminate 控制），
+	//     用于构造无法用结构化字段表达的畸形正文（如非法头、缺空行、非标换行）。
+	//
+	// headers 按 key 字典序输出（与 HTTP writeHeaders 一致，保证确定性）。
+	// headers 为 map[string]string，不支持重复头（如多个 Received）和有序头（RFC 5322 §3.6
+	// 允许 Received 按序排列）；此类合规邮件请用 raw 模式。headers 值裸透传不转义，值含
+	// \r\n + 空白可实现 RFC 5322 §2.2.3 folding（合规），值含 \r\n + 非空白为头注入（畸形）。
+	// body 支持 @file(path) 注入外部文件内容（file_placeholder.go 反射遍历自动覆盖）。
+	// body 行结束符不自动归一化：用户须自行确保 \r\n（合规）或有意使用 \n（畸形/兼容）。
+	EMLDataFields struct {
+		Headers      map[string]string `yaml:"headers"`       // 结构化模式：邮件头（RFC 5322），按 key 字典序输出
+		Body         string            `yaml:"body"`          // 结构化模式：邮件正文体（headers 与 body 间自动插空行 \r\n）
+		Raw          string            `yaml:"raw"`           // 原始模式：整个正文字节裸透传（不拼头体、不做 dot-stuffing）
+		RawHex       string            `yaml:"raw_hex"`       // 原始模式（hex）：0x 前缀十六进制正文字节
+		DotStuff     string            `yaml:"dot_stuff"`     // auto（缺省，等同 on）/ on / off
+		DotTerminate string            `yaml:"dot_terminate"` // auto（缺省，等同 on）/ on / off
+	}
 )
