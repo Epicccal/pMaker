@@ -154,15 +154,14 @@ func icmpType(node yaml.Node) (uint8, error) {
 
 func icmpCode(node yaml.Node) (uint8, error) {
 	return parseICMPByte(node, map[string]uint8{
-		"net_unreachable":                     0,
-		"host_unreachable":                    1,
-		"protocol_unreachable":                2,
-		"port_unreachable":                    3,
-		"fragmentation_needed":                4,
-		"source_route_failed":                 5,
-		"ttl_exceeded":                        0,
-		"fragment_reassembly_time_exceeded":   1,
-		"fragment_reassembly_time_exceeded_0": 1, // 容错别名:兼容误写 _0 后缀,免做拼写纠错
+		"net_unreachable":                   0,
+		"host_unreachable":                  1,
+		"protocol_unreachable":              2,
+		"port_unreachable":                  3,
+		"fragmentation_needed":              4,
+		"source_route_failed":               5,
+		"ttl_exceeded":                      0,
+		"fragment_reassembly_time_exceeded": 1,
 	}, 0, "code")
 }
 
