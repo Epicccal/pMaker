@@ -168,7 +168,7 @@ func validateFlow(f FlowSpec) error {
 			return fmt.Errorf("messages[%d].stack 当前需恰好一个 payload 生产层,得到 %d 个", j, len(m.Stack))
 		}
 		switch m.Stack[0].Fields.(type) {
-		case *HTTPReqFields, *HTTPRespFields, *FTPRequestFields, *FTPResponseFields, *TelnetFields, *SMTPRequestFields, *SMTPResponseFields, *PayloadFields, PayloadHex:
+		case *HTTPReqFields, *HTTPRespFields, *FTPRequestFields, *FTPResponseFields, *TelnetFields, *SMTPRequestFields, *SMTPResponseFields, *EMLDataFields, *PayloadFields, PayloadHex:
 		default:
 			return fmt.Errorf("messages[%d].stack[0] 不支持 %q", j, m.Stack[0].Type)
 		}
@@ -440,6 +440,10 @@ func validateLayer(l Layer) error {
 		}
 	case *SMTPResponseFields:
 		if err := validateSMTPResponseFields(f); err != nil {
+			return err
+		}
+	case *EMLDataFields:
+		if err := validateEMLDataFields(f); err != nil {
 			return err
 		}
 	case PayloadHex:

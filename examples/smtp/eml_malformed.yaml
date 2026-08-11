@@ -1,0 +1,47 @@
+# examples/smtp/eml_malformed.yaml
+#
+# eml_data 畸形构造能力演示（三例独立 standalone packet，不走 flow）：
+#   ① 缺 dot-stuffing：body 行首为 . 但 dot_stuff: off（接收端可能误判为终止符）；
+#   ② 缺终止符：dot_terminate: off（服务器应超时或报错）；
+#   ③ 头注入：headers 值含 \r\n + 非空白（裸透传不转义，构造 header injection）。
+#
+# 每包为独立 TCP 段（eth/ipv4/tcp PSH+ACK），不构成完整会话，仅演示构造能力。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+packets:
+  # ① 缺 dot-stuffing：正文行首 . 未被 stuffing（畸形）
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 25, flags: [PSH, ACK], seq: 1000, ack: 5000 }
+      - eml_data:
+          headers:
+            Subject: "missing dot-stuffing"
+          body: ".hidden dot at line start\r\n"
+          dot_stuff: off       # 强制不做 stuffing → 传输 ".hidden dot…\r\n"
+          dot_terminate: on    # 仍追加终止符
+
+  # ② 缺终止符：DATA 正文不以 <CRLF>.<CRLF> 结束（服务器应超时）
+  - offset_time: "+10ms"
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 25, flags: [PSH, ACK], seq: 1040, ack: 5000 }
+      - eml_data:
+          headers:
+            Subject: "no terminator"
+          body: "body without proper termination\r\n"
+          dot_terminate: off   # 不追加终止符
+
+  # ③ 头注入：headers 值含 \r\n + 非空白（裸透传，构造 header injection）
+  - offset_time: "+10ms"
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 25, flags: [PSH, ACK], seq: 1090, ack: 5000 }
+      - eml_data:
+          headers:
+            X-Custom: "value\r\nInjected: header"
+          body: "body\r\n"

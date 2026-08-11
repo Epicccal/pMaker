@@ -1,0 +1,104 @@
+# examples/smtp/eml_structured.yaml
+#
+# 一次完整 SMTP 会话，DATA 正文用 eml_data 结构化层构造（替代 payload 兜底）：
+#   220 问候 → EHLO/250 多行 → MAIL(结构化+params)/250 → RCPT(结构化+params)/250
+#   → DATA/354 → eml_data 结构化正文(headers + body，自动 dot-stuffing + 终止符)/250
+#   → QUIT/221
+#
+# 覆盖点：
+#   - eml_data 结构化模式：headers 按 key 字典序输出 + 空行 + body；
+#   - 自动 dot-stuffing（dot_stuff 缺省 auto=on）+ 自动终止符（dot_terminate 缺省 auto=on）；
+#   - eml_data 作为 flow message 的 payload 生产层，序列化为 TCP payload 字节。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: smtp-send
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 25, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器 220 问候
+      - from: dst
+        stack:
+          - smtp_response: { code: 220, message: "mail.example ESMTP" }
+
+      # 客户端 EHLO
+      - from: src
+        stack:
+          - smtp_request: { verb: EHLO, args: "client.example" }
+
+      # 服务器多行 EHLO 响应
+      - from: dst
+        stack:
+          - smtp_response:
+              code: 250
+              lines:
+                - "mail.example"
+                - "8BITMIME"
+                - "PIPELINING"
+                - "SIZE 10485760"
+                - "STARTTLS"
+
+      # 结构化 MAIL：from + params
+      - from: src
+        stack:
+          - smtp_request:
+              verb: MAIL
+              from: "alice@example.com"
+              params: { SIZE: "1234" }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "OK" }
+
+      # 结构化 RCPT：to
+      - from: src
+        stack:
+          - smtp_request:
+              verb: RCPT
+              to: "bob@example.net"
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "OK" }
+
+      # DATA
+      - from: src
+        stack:
+          - smtp_request: { verb: DATA }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 354, message: "Start mail input; end with <CRLF>.<CRLF>" }
+
+      # ★ 结构化 EML 正文（eml_data 层）：headers 按 key 字典序输出 + 空行 + body
+      #   + 自动 dot-stuffing + 自动终止符 .\r\n
+      - from: src
+        stack:
+          - eml_data:
+              headers:
+                From: "alice@example.com"
+                To: "bob@example.net"
+                Subject: "Hello"
+                Date: "Thu, 01 Jan 2024 00:00:00 +0000"
+                Message-ID: "<abc@example.com>"
+                MIME-Version: "1.0"
+                Content-Type: "text/plain; charset=utf-8"
+              body: "Hi Bob,\r\nThis is a test message.\r\n.\r\nCheers,\r\nAlice\r\n"
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "queued as ABC123" }
+
+      # QUIT
+      - from: src
+        stack:
+          - smtp_request: { verb: QUIT }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 221, message: "bye" }

@@ -59,7 +59,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层)
 - L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)
 - L4:`tcp`、`udp`
-- 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`
+- 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`eml_data`
 - 兜底:`payload`、`payload_hex`(原始字节)
 
 **已实现特性**:
@@ -139,10 +139,30 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - 响应多行续行遵循 RFC 5321 §4.2 的 `Reply-line`(每条续行带 `code-` 前缀,末行 `code[ SP textstring]`),
   由 `builder.serializeSMTPResp` 实现(逐行带 `code-` 恰好匹配 RFC 5321 文法);
   空文本行如实输出(续行空文本 RFC 5321 合规)。
-- **envelope-first**:DATA 正文显式排除在当前阶段之外(走 `payload`,可 `@file` 注入 EML,用户自行
-  dot-stuff + 终止符);EHLO 一致性告警、MAIL/RCPT 参数语义级校验、正文结构化留后续扩展。
+- **envelope-first**:DATA 正文用独立的 `eml_data` 层结构化构造(headers + body,自动
+  dot-stuffing + 终止符,见下文「EML DATA 专项」);EHLO 一致性告警、MAIL/RCPT 参数语义级校验留后续扩展。
 - gopacket 无 SMTP layer,自己序列化为 `gopacket.Payload`(同 HTTP/FTP/TELNET);不引入 gopacket
   layer、不碰 IP 层 next-proto 串接、无独立 checksum(由 TCP 构造器处理)。
+
+**EML DATA 专项(协议无关 RFC 5322 正文层)**:
+
+- 一个 `eml_data` 层 = 一封 RFC 5322 邮件内容(headers + body),序列化为 TCP payload 字节,
+  与 `smtp_request`/`smtp_response` 同级。**协议无关**:RFC 5322 内容是 SMTP/POP3/IMAP 的共同核心,
+  framing 由 `dot_stuff`/`dot_terminate` 开关控制 —— SMTP DATA(RFC 5321)与 POP3 RETR(RFC 1939)
+  用行框架(dot-stuffing + `<CRLF>.<CRLF>` 终止符,`auto` 默认 on),IMAP FETCH(RFC 9051)用
+  长度前缀字面量(无 dot-stuffing/终止符,未来由 `imap_response` builder 自动覆写为 `off`)。
+- 两种模式(互斥,由校验保证):结构化模式(`headers` map + `body`,headers 按 key 字典序输出、
+  头体间自动插空行,与 HTTP `writeHeaders` 一致);原始模式(`raw` 裸透传 / `raw_hex` 十六进制,
+  不拼头体、不做 dot-stuffing,构造非法头/缺空行/非标换行/重复头等畸形)。全空报错。
+- `dot_stuff`(auto=on / on / off):行首 `.` → `..`(RFC 5321 §4.5.2 / RFC 1939 §3,作用于整个
+  正文);`dot_terminate`(auto=on / on / off):是否追加终止符 `<CRLF>.<CRLF>`(正文以 `\r\n`
+  结尾时追加 `.\r\n`,否则 `\r\n.\r\n`)。`auto` 统一等同 `on`,`off` 是 opt-out(IMAP / 畸形)。
+- headers 值裸透传不转义:值含 `\r\n`+空白 = RFC 5322 §2.2.3 folding(合规),值含 `\r\n`+非空白
+  = 头注入(畸形);重复头/有序头(RFC 5322 §3.6 Received)map 无法表达,走 `raw` 模式。
+  `body` 支持 `@file(path)` 注入;行结束符不自动归一化(用户自行确保 `\r\n`)。
+- 序列化纯函数 `builder.serializeEMLData`(协议无关,不放在 `smtp.go`);校验 `scenario.validateEMLDataFields`
+  (模式互斥、raw/raw_hex 互斥、枚举、空内容);接入 `PayloadBytes`/`serializeStack`/`validateLayer`/
+  flow message 白名单/`summaryLayerName`。gopacket 无 EML layer,自己序列化为 `gopacket.Payload`。
 
 **已实现 flow**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
 HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
@@ -161,12 +181,12 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 > builder 包:
 > - `builder.go`:层栈序列化入口 `BuildPlanned` + `serializeStack` 分派。
 > - `dns.go`(构包)/ `dns_enum.go`(枚举映射)/ `dns_raw.go`(原始层)。
-> - `http.go` / `ftp.go` / `telnet.go` / `smtp.go` / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
+> - `http.go` / `ftp.go` / `telnet.go` / `smtp.go` / `eml_data.go`(协议无关 RFC 5322 正文) / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
 >
 > scenario 包(详见 `doc.go`):
 > - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields)、
 >   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Parse/Load/Validate/Warnings)、`start_after_graph.go`、
->   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_request.go`(SMTP verb/响应码校验)、
+>   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_request.go`(SMTP verb/响应码校验)、`eml_data.go`(RFC 5322 正文校验)、
 >   `describe.go`(包/PlannedPacket 摘要)、`file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
 >
 > 测试按「一一对应 + 公共辅助集中」组织,详见下文「测试文件命名规约」。

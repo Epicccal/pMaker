@@ -140,6 +140,9 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 	case "smtp_response":
 		var f SMTPResponseFields
 		return &f, decodeKnownFields(val, typ, &f)
+	case "eml_data":
+		var f EMLDataFields
+		return &f, decodeKnownFields(val, typ, &f)
 	default:
 		return nil, fmt.Errorf("未知层类型 %q", typ)
 	}

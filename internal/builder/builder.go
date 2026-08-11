@@ -169,6 +169,12 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			serLayers = append(serLayers, gopacket.Payload(serializeSMTPReq(f)))
 		case *scenario.SMTPResponseFields:
 			serLayers = append(serLayers, gopacket.Payload(serializeSMTPResp(f)))
+		case *scenario.EMLDataFields:
+			b, err := serializeEMLData(f)
+			if err != nil {
+				return nil, fmt.Errorf("eml_data: %w", err)
+			}
+			serLayers = append(serLayers, gopacket.Payload(b))
 		default:
 			return nil, fmt.Errorf("不支持的层类型 %q", l.Type)
 		}

@@ -24,6 +24,8 @@ func PayloadBytes(l scenario.Layer) ([]byte, error) {
 		return serializeSMTPReq(f), nil
 	case *scenario.SMTPResponseFields:
 		return serializeSMTPResp(f), nil
+	case *scenario.EMLDataFields:
+		return serializeEMLData(f)
 	case *scenario.PayloadFields:
 		return payloadBytes(f)
 	case scenario.PayloadHex:
