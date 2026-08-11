@@ -1,6 +1,10 @@
 <h1 align="center">pMaker</h1>
 
 <p align="center">
+  <img src="img/pMaker.png" alt="pMaker" width="120">
+</p>
+
+<p align="center">
   <strong>Generate Pcap Easier Again.</strong>
 </p>
 
@@ -9,13 +13,11 @@
 </p>
 
 <p align="center">
-  <img alt="Go" src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=for-the-badge&logo=go&logoColor=white">
-  <img alt="YAML" src="https://img.shields.io/badge/Config-YAML-CB171E?style=for-the-badge&logo=yaml&logoColor=white">
-  <img alt="PCAP" src="https://img.shields.io/badge/Output-PCAP-7C3AED?style=for-the-badge">
-  <img alt="CGO" src="https://img.shields.io/badge/CGO-disabled-16A34A?style=for-the-badge">
-  <img alt="Offline" src="https://img.shields.io/badge/Network-offline_only-111827?style=for-the-badge">
-  <img alt="Coverage" src="https://img.shields.io/badge/Coverage-Codecov-01B4B4?style=for-the-badge&logo=codecov&logoColor=white">
-  <img alt="GoReport" src="https://img.shields.io/badge/Go_Report-A%2B-success?style=for-the-badge&logo=go&logoColor=white">
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat&logo=go&logoColor=white">
+  <img alt="YAML" src="https://img.shields.io/badge/Config-YAML-CB171E?style=flat&logo=yaml&logoColor=white">
+  <img alt="PCAP" src="https://img.shields.io/badge/Output-PCAP-7C3AED?style=flat">
+  <img alt="Coverage" src="https://img.shields.io/badge/Coverage-Codecov-01B4B4?style=flat&logo=codecov&logoColor=white">
+  <img alt="GoReport" src="https://img.shields.io/badge/Go_Report-A%2B-success?style=flat&logo=go&logoColor=white">
 </p>
 
 ---
