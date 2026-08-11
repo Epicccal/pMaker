@@ -76,7 +76,7 @@ flows:
 | L2 | `eth`、`vlan` | `pmaker://schema/eth`、`pmaker://schema/vlan` |
 | L3 | `ipv4`、`ipv6`、`gre` | `pmaker://schema/ipv4`、`pmaker://schema/ipv6`、`pmaker://schema/gre` |
 | L4 | `tcp`、`udp`、`tcp_session`(仅 flow) | `pmaker://schema/tcp`、`pmaker://schema/udp` |
-| 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response` | 对应 `pmaker://schema/<层名>` |
+| 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`eml_data` | 对应 `pmaker://schema/<层名>` |
 | 兜底 | `payload`、`payload_hex` | `pmaker://schema/payload` |
 
 ## 通用约定

@@ -35,14 +35,24 @@ func validateEML(t *testing.T, f scenario.EMLDataFields) error {
 func TestValidateEMLData_StructuredOK(t *testing.T) {
 	cases := []scenario.EMLDataFields{
 		{Headers: map[string]string{"From": "a@b"}, Body: "body\r\n"},
-		{Headers: map[string]string{"From": "a@b"}}, // 仅 headers
-		{Body: "just body\r\n"},                     // 仅 body
+		{Headers: map[string]string{"From": "a@b"}}, // 仅 headers（合规空体邮件）
 		{Headers: map[string]string{"From": "a@b"}, DotStuff: "off"},
 	}
 	for i, c := range cases {
 		if err := validateEML(t, c); err != nil {
 			t.Errorf("case %d 应通过，得到: %v", i, err)
 		}
+	}
+}
+
+func TestValidateEMLData_BodyOnlyRejects(t *testing.T) {
+	// 仅 body 无 headers → 报错（RFC 5322 邮件必有头；构造无头畸形请用 raw）
+	err := validateEML(t, scenario.EMLDataFields{Body: "just body\r\n"})
+	if err == nil {
+		t.Fatalf("仅 body 无 headers 应报错")
+	}
+	if !strings.Contains(err.Error(), "headers 非空") {
+		t.Errorf("错误应提及 headers 非空，得到: %v", err)
 	}
 }
 
@@ -107,13 +117,13 @@ func TestValidateEMLData_BadRawHex(t *testing.T) {
 }
 
 func TestValidateEMLData_DotStuffEnum(t *testing.T) {
-	for _, val := range []string{"auto", "on", "off", ""} {
-		err := validateEML(t, scenario.EMLDataFields{Body: "x", DotStuff: val})
+	for _, val := range []string{"on", "off", ""} {
+		err := validateEML(t, scenario.EMLDataFields{Headers: map[string]string{"From": "a@b"}, Body: "x", DotStuff: val})
 		if err != nil {
 			t.Errorf("dot_stuff=%q 应通过，得到: %v", val, err)
 		}
 	}
-	err := validateEML(t, scenario.EMLDataFields{Body: "x", DotStuff: "maybe"})
+	err := validateEML(t, scenario.EMLDataFields{Headers: map[string]string{"From": "a@b"}, Body: "x", DotStuff: "maybe"})
 	if err == nil {
 		t.Fatalf("dot_stuff 非法值应报错")
 	}
@@ -123,13 +133,13 @@ func TestValidateEMLData_DotStuffEnum(t *testing.T) {
 }
 
 func TestValidateEMLData_DotTerminateEnum(t *testing.T) {
-	for _, val := range []string{"auto", "on", "off", ""} {
-		err := validateEML(t, scenario.EMLDataFields{Body: "x", DotTerminate: val})
+	for _, val := range []string{"on", "off", ""} {
+		err := validateEML(t, scenario.EMLDataFields{Headers: map[string]string{"From": "a@b"}, Body: "x", DotTerminate: val})
 		if err != nil {
 			t.Errorf("dot_terminate=%q 应通过，得到: %v", val, err)
 		}
 	}
-	err := validateEML(t, scenario.EMLDataFields{Body: "x", DotTerminate: "maybe"})
+	err := validateEML(t, scenario.EMLDataFields{Headers: map[string]string{"From": "a@b"}, Body: "x", DotTerminate: "maybe"})
 	if err == nil {
 		t.Fatalf("dot_terminate 非法值应报错")
 	}
@@ -148,6 +158,7 @@ packets:
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
       - tcp:  { sport: 1234, dport: 25 }
       - eml_data:
+          headers: { From: "a@b" }
           body: "x"
           bogus_field: true
 `)

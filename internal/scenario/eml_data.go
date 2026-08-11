@@ -4,17 +4,19 @@ import "fmt"
 
 // 本文件实现 eml_data 层的字段组合校验（合法基线），对齐 SMTP/FTP/Telnet 校验风格：
 // 只判合法性，绝不改变序列化行为（序列化在 builder/eml_data.go）。无法用结构化字段
-// 表达的畸形正文（重复头、非标换行、二进制正文等）走 raw/raw_hex 或 payload/payload_hex。
+// 表达的畸形正文（重复头、非标换行、二进制正文等）走 eml_data 的 raw/raw_hex。
 //
 // eml_data 命名反映协议无关性：RFC 5322 邮件内容（headers + body）是 SMTP/POP3/IMAP 的
 // 共同核心，framing 由 dot_stuff/dot_terminate 开关控制，详见 EMLDataFields 文档。
 
 // validateEMLDataFields 校验 eml_data 字段组合的合法性。
 //   - 模式互斥：结构化（headers/body）与原始（raw/raw_hex）不可同设；
+//   - 结构化模式要求 headers 非空（RFC 5322 §3.6 邮件必有头；body 可空＝合规空体邮件）；
+//     无头邮件（headers 空）非法，构造无头/缺头/重复头等畸形请用 raw/raw_hex；
 //   - raw 与 raw_hex 互斥；
 //   - 至少一种模式有内容（全空报错）；
 //   - raw_hex 须为合法 0x 前缀十六进制；
-//   - dot_stuff / dot_terminate 须为 auto/on/off（缺省 auto，等同 on）。
+//   - dot_stuff / dot_terminate 须为 on/off（缺省 on）。
 func validateEMLDataFields(f *EMLDataFields) error {
 	// 1. 模式互斥检查
 	hasStruct := len(f.Headers) > 0 || f.Body != ""
@@ -23,25 +25,30 @@ func validateEMLDataFields(f *EMLDataFields) error {
 		return fmt.Errorf("headers/body 与 raw/raw_hex 不可同设（结构化模式与原始模式互斥）")
 	}
 	if !hasStruct && !hasRaw {
-		return fmt.Errorf("需要 headers/body 或 raw/raw_hex（空 EML 内容无意义；非标正文请用 payload/payload_hex）")
+		return fmt.Errorf("需要 headers/body 或 raw/raw_hex（空 EML 内容无意义；构造畸形正文请用 raw 或 raw_hex）")
 	}
-	// 2. raw 与 raw_hex 互斥
+	// 2. 结构化模式要求 headers 非空：RFC 5322 §3.6 邮件必有头（至少 Date/From）。
+	//    body 可空（合规空体邮件）；无头邮件非法，构造无头/缺头/重复头畸形请走 raw/raw_hex。
+	if hasStruct && len(f.Headers) == 0 {
+		return fmt.Errorf("结构化模式需要 headers 非空（RFC 5322 邮件必有头；构造无头/缺头/重复头等畸形正文请用 raw 或 raw_hex）")
+	}
+	// 3. raw 与 raw_hex 互斥
 	if f.Raw != "" && f.RawHex != "" {
 		return fmt.Errorf("raw 与 raw_hex 只能配置一个")
 	}
-	// 3. raw_hex 合法性
+	// 4. raw_hex 合法性
 	if f.RawHex != "" {
 		if _, err := ParsePayloadHex(f.RawHex); err != nil {
 			return err
 		}
 	}
-	// 4. dot_stuff / dot_terminate 枚举校验（缺省 auto 等同 on）
+	// 5. dot_stuff / dot_terminate 枚举校验（缺省 on）
 	for _, v := range []struct{ name, val string }{
 		{"dot_stuff", f.DotStuff},
 		{"dot_terminate", f.DotTerminate},
 	} {
-		if v.val != "" && v.val != "auto" && v.val != "on" && v.val != "off" {
-			return fmt.Errorf("%s 只能是 auto/on/off，得到 %q", v.name, v.val)
+		if v.val != "" && v.val != "on" && v.val != "off" {
+			return fmt.Errorf("%s 只能是 on/off，得到 %q", v.name, v.val)
 		}
 	}
 	return nil

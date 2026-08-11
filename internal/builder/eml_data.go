@@ -22,9 +22,10 @@ import (
 // dot-stuffing（RFC 5321 §4.5.2 / RFC 1939 §3）：正文每行行首为 '.' 的行前面加一个 '.'，
 // 无论该行是否只有 '.'。终止符 <CRLF>.<CRLF> 是正文之后的独立追加，不参与 stuffing。
 //
-// 结构化模式空行处理：headers 为空但 body 非空时，仍插入空行（产出 "\r\n" + body），
-// 即无头邮件（RFC 5322 不合规但可构造为畸形）。body 为空但 headers 非空时，产出
-// headers + 空行（headers 末尾的 \r\n 即为空行）。
+// 结构化模式空行处理：headers 与 body 之间无条件插空行 "\r\n"（头体分隔符）。
+// body 为空但 headers 非空时（合规空体邮件），产出 headers + 空行
+// （headers 末尾的 \r\n 即为空行）。结构化模式要求 headers 非空（校验保证），
+// 无头邮件等畸形请走 raw/raw_hex。
 //
 // 纯函数：可在层栈独立调用（SMTP/POP3），也可在 imap_response builder 中嵌套调用（IMAP）。
 // IMAP builder 调用前应自动覆写 dot_stuff/dot_terminate 为 off（见设计文档 §3.4/§10.3）。
@@ -46,6 +47,7 @@ func serializeEMLData(f *scenario.EMLDataFields) ([]byte, error) {
 	} else {
 		// 3. 结构化模式拼装：headers 字典序 → "Key: Value\r\n" → 空行 "\r\n" → body。
 		//    headers 为空时仍插空行；body 为空时 headers 末尾 \r\n 即空行，不重复插。
+		//    body 写入前做 line-ending 归一化（裸 \n → \r\n），见 normalizeCRLF。
 		var b strings.Builder
 		keys := make([]string, 0, len(f.Headers))
 		for k := range f.Headers {
@@ -53,19 +55,22 @@ func serializeEMLData(f *scenario.EMLDataFields) ([]byte, error) {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			fmt.Fprintf(&b, "%s: %s\r\n", k, f.Headers[k])
+			b.WriteString(k)
+			b.WriteString(": ")
+			b.WriteString(f.Headers[k])
+			b.WriteString("\r\n")
 		}
 		b.WriteString("\r\n")
-		b.WriteString(f.Body)
+		b.WriteString(normalizeCRLF(f.Body))
 		content = []byte(b.String())
 	}
 
-	// 4. dot_stuff 决策（auto 等同 on）。
+	// 4. dot_stuff 决策（缺省 on，off 为 opt-out）。
 	if f.DotStuff != "off" {
 		content = dotStuff(content)
 	}
 
-	// 5. dot_terminate 决策（auto 等同 on）。
+	// 5. dot_terminate 决策（缺省 on，off 为 opt-out）。
 	if f.DotTerminate != "off" {
 		// 终止符 <CRLF>.<CRLF>：若正文以 \r\n 结尾，追加 ".\r\n"；否则追加 "\r\n.\r\n"。
 		if bytes.HasSuffix(content, []byte("\r\n")) {
@@ -81,8 +86,8 @@ func serializeEMLData(f *scenario.EMLDataFields) ([]byte, error) {
 // dotStuff 对正文做 RFC 5321 §4.5.2 / RFC 1939 §3 的透明性处理：
 // 每行行首为 '.' 的行前面加一个 '.'，无论该行是否只有 '.'。
 // 按 \r\n 分行处理（保留 \r\n），首行特殊处理（无前导 \r\n）。
-// 只识别 \r\n 行边界，不兼容裸 \n（raw 模式下 \n 开头的 '.' 不做 stuffing，
-// 这本身就是畸形用例，行为可接受）。
+// 结构化模式的 body 已由 normalizeCRLF 归一化为 \r\n，故行边界一致；
+// raw 模式不归一化，裸 \n 开头的 '.' 不做 stuffing（构造非标换行畸形，行为可接受）。
 func dotStuff(content []byte) []byte {
 	out := make([]byte, 0, len(content)+8)
 	atLineStart := true
@@ -100,4 +105,27 @@ func dotStuff(content []byte) []byte {
 		}
 	}
 	return out
+}
+
+// normalizeCRLF 把字符串里的裸 \n（前一字符不是 \r）归一化为 \r\n。
+// 已是 \r\n 的不动；lone \r 不动（老 Mac 换行，结构化 body 里不预期出现，
+// 归一化 lone \r 会改变二进制语义，故不碰）。
+//
+// 结构化模式专属：RFC 5322 §2.1 要求邮件 body 行以 CRLF 结束，但用户在 YAML 里
+// 写 body（尤其用 `|` 块标量，YAML 默认产出 \n）常带入裸 \n。结构化模式帮用户
+// 抹平这个落差，产出合规的 \r\n。raw 模式不归一化（保留精确字节，构造非标换行畸形）。
+func normalizeCRLF(s string) string {
+	if !strings.ContainsRune(s, '\n') {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\n' && (i == 0 || s[i-1] != '\r') {
+			b.WriteByte('\r')
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
