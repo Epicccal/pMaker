@@ -149,17 +149,20 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - 一个 `eml_data` 层 = 一封 RFC 5322 邮件内容(headers + body),序列化为 TCP payload 字节,
   与 `smtp_request`/`smtp_response` 同级。**协议无关**:RFC 5322 内容是 SMTP/POP3/IMAP 的共同核心,
   framing 由 `dot_stuff`/`dot_terminate` 开关控制 —— SMTP DATA(RFC 5321)与 POP3 RETR(RFC 1939)
-  用行框架(dot-stuffing + `<CRLF>.<CRLF>` 终止符,`auto` 默认 on),IMAP FETCH(RFC 9051)用
+  用行框架(dot-stuffing + `<CRLF>.<CRLF>` 终止符,`dot_stuff`/`dot_terminate` 默认 on),IMAP FETCH(RFC 9051)用
   长度前缀字面量(无 dot-stuffing/终止符,未来由 `imap_response` builder 自动覆写为 `off`)。
-- 两种模式(互斥,由校验保证):结构化模式(`headers` map + `body`,headers 按 key 字典序输出、
-  头体间自动插空行,与 HTTP `writeHeaders` 一致);原始模式(`raw` 裸透传 / `raw_hex` 十六进制,
-  不拼头体、不做 dot-stuffing,构造非法头/缺空行/非标换行/重复头等畸形)。全空报错。
-- `dot_stuff`(auto=on / on / off):行首 `.` → `..`(RFC 5321 §4.5.2 / RFC 1939 §3,作用于整个
-  正文);`dot_terminate`(auto=on / on / off):是否追加终止符 `<CRLF>.<CRLF>`(正文以 `\r\n`
-  结尾时追加 `.\r\n`,否则 `\r\n.\r\n`)。`auto` 统一等同 `on`,`off` 是 opt-out(IMAP / 畸形)。
+- 两种模式(互斥,由校验保证):结构化模式(`headers` map 必填 + `body` 可空,headers 按 key 字典序输出、
+  头体间自动插空行,与 HTTP `writeHeaders` 一致;`headers` 为空 → 报错,构造无头/缺头/重复头等畸形走 `raw`);
+  原始模式(`raw` 裸透传 / `raw_hex` 十六进制,不拼头体、不做 dot-stuffing,构造无头/非法头/缺空行/非标换行/重复头等畸形)。全空报错。
+- `dot_stuff`(on / off,缺省 on):行首 `.` → `..`(RFC 5321 §4.5.2 / RFC 1939 §3)。结构化模式下
+  作用于整个 content(headers + 空行 + body)逐行处理——合规 header 的 folding 续行以 WSP 起始,
+  行首非 `.`,不受影响;若 header value 含 `\r\n.`(非 folding、属注入/畸形)也会被 stuff,
+  构造此类 header 区行首 `.` 的畸形请用 `raw` 模式(精确字节、不自动 stuffing);
+  `dot_terminate`(on / off,缺省 on):是否追加终止符 `<CRLF>.<CRLF>`(正文以 `\r\n`
+  结尾时追加 `.\r\n`,否则 `\r\n.\r\n`)。`off` 是 opt-out(IMAP / 畸形)。
 - headers 值裸透传不转义:值含 `\r\n`+空白 = RFC 5322 §2.2.3 folding(合规),值含 `\r\n`+非空白
   = 头注入(畸形);重复头/有序头(RFC 5322 §3.6 Received)map 无法表达,走 `raw` 模式。
-  `body` 支持 `@file(path)` 注入;行结束符不自动归一化(用户自行确保 `\r\n`)。
+  `body` 支持 `@file(path)` 注入;行结束符结构化模式自动归一化(裸 `\n` → `\r\n`,抹平 YAML `|` 块标量等常用写法带入的裸 `\n`),raw 模式不归一化(保留精确字节)。
 - 序列化纯函数 `builder.serializeEMLData`(协议无关,不放在 `smtp.go`);校验 `scenario.validateEMLDataFields`
   (模式互斥、raw/raw_hex 互斥、枚举、空内容);接入 `PayloadBytes`/`serializeStack`/`validateLayer`/
   flow message 白名单/`summaryLayerName`。gopacket 无 EML layer,自己序列化为 `gopacket.Payload`。
