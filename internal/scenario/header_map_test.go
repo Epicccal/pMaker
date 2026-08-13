@@ -121,7 +121,10 @@ func TestHeaderMap_Range_PreservesOrder(t *testing.T) {
 	}
 	var got strings.Builder
 	h.Range(func(k, v string) {
-		got.WriteString(k + "=" + v + ";")
+		got.WriteString(k)
+		got.WriteString("=")
+		got.WriteString(v)
+		got.WriteString(";")
 	})
 	want := "B=2;A=1;B=3;"
 	if got.String() != want {
