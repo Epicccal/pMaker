@@ -75,7 +75,7 @@ flows:
         stack:
           - smtp_response: { code: 354, message: "Start mail input; end with <CRLF>.<CRLF>" }
 
-      # ★ 结构化 EML 正文（eml_data 层）：headers 按 key 字典序输出 + 空行 + body
+      # ★ 结构化 EML 正文（eml_data 层）：headers 按 YAML 声明顺序输出 + 空行 + body
       #   + 自动 dot-stuffing + 自动终止符 .\r\n
       - from: src
         stack:

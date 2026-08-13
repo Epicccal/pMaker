@@ -36,8 +36,8 @@
 | **任意层栈嵌套** | QinQ、GRE 隧道、递归封装——无固定 L2/L3/L4 槽位 |
 | **有状态 TCP 流** | 自动握手、seq/ack 推导、MSS 分段、FIN/RST 挥手 |
 | **畸形与逃逸** | 逐层 `fix_lengths`/`checksum` 覆盖、`payload_hex` 原始字节注入、断链 next-proto |
-| **确定性输出** | 同一 scenario + seed → 逐字节相同的 pcap；无 `time.Now()` |
-| **纯 Go，无 CGO** | 通过 `pcapgo` 生成静态跨平台二进制；不依赖 libpcap |
+| **确定性输出** | 同一 scenario + seed → 逐字节相同的 pcap  |
+| **纯 Go 实现** | 通过 `pcapgo` 生成静态跨平台二进制 |
 | **MCP server** | 将生成/校验暴露为 Model Context Protocol 工具，供 LLM agent 调用 |
 
 ## 协议覆盖
@@ -49,7 +49,7 @@
 | L4 | `tcp`、`udp` | checksum 绑定最近一层 IP |
 | 控制层 | `icmp`、`icmpv6` | echo + 错误报文 |
 | 应用层 | `dns`、`http`、`ftp`、`smtp`、`telnet` | 结构化字段 + 原始回退 |
-| 回退 | `payload`、`payload_hex` | 用于畸形的原始字节 |
+| 保底字段 | `payload`、`payload_hex` | 用于畸形的原始字节 |
 
 ## 快速开始
 
@@ -128,7 +128,8 @@ client                                              server
 
 ### 确定性时序
 
-- 时序可选：`base_time`（ISO8601 / UTC 绝对锚）+ 各级非负 `offset_time`。未指定则每包按序 1ms。
+- 时序可选：`base_time`（ISO8601 / UTC 绝对锚）+ 各级非负 `offset_time`。
+- 未指定时序则每包按序 1ms 递增。
 - 同一 scenario + 同一 seed → 逐字节相同的 pcap。
 
 完整字段定义见 [`internal/scenario`](internal/scenario) 类型与 [`examples/`](examples)。
@@ -199,21 +200,6 @@ CGO_ENABLED=0 go build -o bin/pmaker-mcp ./cmd/pmaker-mcp
 go test ./...
 go test ./internal/scenario -run TestExamplesGolden -update   # 重生 golden pcap
 ```
-
-## 路线图
-
-- [ ] IP 分片（外层 + 内层）
-- [ ] TCP 重叠 / 重传 / 乱序
-- [ ] `fix_lengths` / `checksum` 畸形开关（当前已解析但构建时忽略）
-- [ ] HTTP 头部原始顺序保留
-- [ ] `.pcapng` 输出格式
-- [ ] 更多封装：MPLS、VXLAN、GTP-U、Geneve
-
-## 贡献
-
-欢迎贡献。新增协议时：在 [`internal/builder/`](internal/builder) 下加 builder helper，在 [`internal/scenario/`](internal/scenario) 下加 schema 结构 + 校验，在 `examples/<protocol>/` 下加示例，并在 [`cmd/pmaker-mcp/resources/schema/<proto>.md`](cmd/pmaker-mcp/resources/schema) 加 MCP schema 资源（Go 代码零改动）。补一个 golden 测试并确保 `go test -race ./...` 通过。
-
-完整开发指南见 [`CLAUDE.md`](CLAUDE.md)。
 
 ## 许可证
 

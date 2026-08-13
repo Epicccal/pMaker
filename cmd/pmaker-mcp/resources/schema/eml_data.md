@@ -20,16 +20,16 @@ IMAP FETCH（RFC 9051）用长度前缀字面量（`{n}\r\n` + bytes，无 dot-s
     body: "This is the email body.\r\nSecond line.\r\n"
 ```
 
-序列化结果（headers 按 key 字典序输出）：
+序列化结果（headers 按 YAML 声明顺序输出，保留原序）：
 
 ```
-Content-Type: text/plain; charset=utf-8\r\n
-Date: Thu, 01 Jan 2024 00:00:00 +0000\r\n
 From: alice@example.com\r\n
+To: bob@example.net\r\n
+Subject: Hello\r\n
+Date: Thu, 01 Jan 2024 00:00:00 +0000\r\n
 Message-ID: <abc@example.com>\r\n
 MIME-Version: 1.0\r\n
-Subject: Hello\r\n
-To: bob@example.net\r\n
+Content-Type: text/plain; charset=utf-8\r\n
 \r\n
 This is the email body.\r\n
 Second line.\r\n
@@ -51,7 +51,7 @@ Second line.\r\n
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `headers` | map[string]string | 结构化模式必填 | 邮件头（RFC 5322），按 key 字典序输出为 `Key: Value\r\n`；不支持重复头/有序头（用 `raw`）；值含 `\r\n`+空白=folding，`\r\n`+非空白=头注入 |
+| `headers` | map[string]string | 结构化模式必填 | 邮件头（RFC 5322），保留 YAML 声明顺序输出为 `Key: Value\r\n`，支持重复头/有序头（如多个 `Received`）；值含 `\r\n`+空白=folding，`\r\n`+非空白=头注入 |
 | `body` | string | 结构化模式可选 | 邮件正文体；可空（合规空体邮件）；支持 `@file(path)` 注入；headers 与 body 间自动插空行；行结束符自动归一化（裸 `\n` → `\r\n`，兼容 YAML `|` 块标量等常用写法；raw 模式不归一化） |
 | `raw` | string | 原始模式 | 整个正文字节裸透传（不拼头体、不做 dot-stuffing，终止符由 `dot_terminate` 控制）；支持 `@file` |
 | `raw_hex` | string | 原始模式 | `0x` 前缀十六进制正文字节（二进制正文）；与 `raw` 互斥 |
@@ -60,7 +60,7 @@ Second line.\r\n
 
 ## 模式互斥
 
-- **结构化模式**：`headers` 非空（必填），`body` 可空（合规空体邮件），`raw`/`raw_hex` 均空。`headers` 为空 → 报错（RFC 5322 邮件必有头；构造无头/缺头/重复头等畸形请用 `raw`）。
+- **结构化模式**：`headers` 非空（必填），`body` 可空（合规空体邮件），`raw`/`raw_hex` 均空。`headers` 为空 → 报错（RFC 5322 邮件必有头；构造无头/缺头等畸形请用 `raw`）。重复头（如多个 `Received`）结构化模式即可表达，无需 `raw`。
 - **原始模式**：`raw` 或 `raw_hex` 非空，`headers`/`body` 均空。
 - 两种模式**互斥**；`raw` 与 `raw_hex` 互斥；全空报错。
 
@@ -70,7 +70,7 @@ Second line.\r\n
 |----------|----------|
 | 缺 dot-stuffing | `dot_stuff: off` + body 行首含 `.` |
 | 缺终止符 | `dot_terminate: off` |
-| 非法/缺失头、缺空行、非标换行、重复头 | `raw` 模式裸透传 |
+| 非法/缺失头、缺空行、非标换行 | `raw` 模式裸透传 |
 | 二进制正文 | `raw_hex` 模式 |
 | 头注入（CRLF in header value） | `headers` 值含 `\r\n`（裸透传不转义） |
 | header 区行首 `.` 不被 stuff | `raw` 模式（结构化模式会对 header 区行首 `.` 也 stuff；合规 folding 不受影响） |
