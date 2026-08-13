@@ -117,7 +117,7 @@ func TestExpandFilePlaceholdersWalksScenario(t *testing.T) {
 				Stack: []Layer{
 					{Type: "http_request", Fields: &HTTPReqFields{
 						Method:  "POST",
-						Headers: map[string]string{"X-Custom": "@file(hdr.txt)"},
+						Headers: HeaderMap{{Key: "X-Custom", Value: "@file(hdr.txt)"}},
 						Body:    "@file(body.txt)",
 					}},
 				},
@@ -141,8 +141,8 @@ func TestExpandFilePlaceholdersWalksScenario(t *testing.T) {
 	if got := msg0.Body; got != "BODY" {
 		t.Errorf("http body = %q,期望 BODY", got)
 	}
-	if got := msg0.Headers["X-Custom"]; got != "HDR" {
-		t.Errorf("header X-Custom = %q,期望 HDR", got)
+	if got, ok := msg0.Headers.Get("X-Custom"); !ok || got != "HDR" {
+		t.Errorf("header X-Custom = %q(ok=%v),期望 HDR", got, ok)
 	}
 	msg1 := s.Flows[0].Messages[1].Stack[0].Fields.(*FTPRequestFields)
 	if got := msg1.Command; got != "RETR x" {

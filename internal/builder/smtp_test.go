@@ -22,14 +22,14 @@ func TestSerializeSMTPReq_MailStruct(t *testing.T) {
 		want string
 	}{
 		{
-			name: "MAIL 地址 + params 排序",
+			name: "MAIL 地址 + params 保留声明顺序",
 			f: scenario.SMTPRequestFields{
 				Verb:   "MAIL",
 				From:   strPtr("a@b"),
-				Params: map[string]string{"SMTPUTF8": "", "SIZE": "10"},
+				Params: scenario.HeaderMap{{Key: "SMTPUTF8", Value: ""}, {Key: "SIZE", Value: "10"}},
 			},
-			// 字典序 SIZE < SMTPUTF8;SMTPUTF8 裸键、SIZE 带值
-			want: "MAIL FROM:<a@b> SIZE=10 SMTPUTF8\r\n",
+			// 声明序 SMTPUTF8 在前、SIZE 在后;SMTPUTF8 裸键、SIZE 带值
+			want: "MAIL FROM:<a@b> SMTPUTF8 SIZE=10\r\n",
 		},
 		{
 			name: "MAIL 退信空 from",
@@ -52,9 +52,18 @@ func TestSerializeSMTPReq_MailStruct(t *testing.T) {
 			f: scenario.SMTPRequestFields{
 				Verb:   "RCPT",
 				To:     "bob@example.net",
-				Params: map[string]string{"NOTIFY": "SUCCESS,FAILURE"},
+				Params: scenario.HeaderMap{{Key: "NOTIFY", Value: "SUCCESS,FAILURE"}},
 			},
 			want: "RCPT TO:<bob@example.net> NOTIFY=SUCCESS,FAILURE\r\n",
+		},
+		{
+			name: "RCPT 重复 ORCPT 保留声明顺序",
+			f: scenario.SMTPRequestFields{
+				Verb:   "RCPT",
+				To:     "bob@example.net",
+				Params: scenario.HeaderMap{{Key: "ORCPT", Value: "rfc822;a"}, {Key: "ORCPT", Value: "rfc822;b"}},
+			},
+			want: "RCPT TO:<bob@example.net> ORCPT=rfc822;a ORCPT=rfc822;b\r\n",
 		},
 		{
 			name: "MAIL 地址含 CRLF 注入(裸透传)",

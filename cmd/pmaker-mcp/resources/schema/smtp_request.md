@@ -23,7 +23,7 @@
 | `verb` | string | 是 | EHLO/HELO/MAIL/RCPT/DATA/QUIT/RSET/NOOP/VRFY/EXPN/HELP/AUTH/STARTTLS/BDAT/ETRN/ATRN;非标走 `payload`/`payload_hex` |
 | `from` | string(指针) | MAIL 必填 | 反向路径;省略(nil)报错;`""`→`<>`(退信);`"addr"`→`<addr>` |
 | `to` | string | RCPT 必填 | 前向路径,须非空 |
-| `params` | map[string]string | 仅 MAIL/RCPT | 扩展参数,按 key 字典序输出;空值=裸键(如 `SMTPUTF8`),非空=`KEY=VALUE` |
+| `params` | map[string]string | 仅 MAIL/RCPT | 扩展参数,保留 YAML 声明顺序输出、支持重复键(如多个 `ORCPT`);空值=裸键(如 `SMTPUTF8`),非空=`KEY=VALUE` |
 | `args` | string | 非 MAIL/RCPT verb | 普通参数(如 EHLO 域名、AUTH 机制+凭证);MAIL/RCPT 禁用 |
 
 ## verb 参数要求

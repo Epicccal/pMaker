@@ -43,6 +43,9 @@ func ExpandFilePlaceholders(s *Scenario, baseDir string) error {
 
 // walkStrings 递归遍历 v,对其所有可设置的 string 字段执行占位符替换。
 // path 是当前值在 Scenario 结构中的字段路径(用于错误定位,如 "Packets[0].Stack[0].Fields.Body")。
+//
+// 对 HeaderEntry(HeaderMap 的元素):只替换 Value、不替换 Key,对齐旧 map[string]string
+// 「值替换、键不替换」语义(HTTP headers 的 key 是结构字段,不应被 @file 改写)。
 func walkStrings(v reflect.Value, baseDir, path string) error {
 	if !v.IsValid() {
 		return nil
@@ -75,6 +78,10 @@ func walkStrings(v reflect.Value, baseDir, path string) error {
 	case reflect.Struct:
 		if v.Type() == yamlNodeType {
 			return nil // 跳过 yaml.Node
+		}
+		// HeaderMap 的元素 HeaderEntry 只替换 Value、不替换 Key(对齐旧 map 语义)。
+		if v.Type() == reflect.TypeFor[HeaderEntry]() {
+			return walkStrings(v.FieldByName("Value"), baseDir, joinPath(path, "Value"))
 		}
 		for i := 0; i < v.NumField(); i++ {
 			f := v.Type().Field(i)

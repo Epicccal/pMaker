@@ -127,8 +127,8 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   不复刻 FTP 的 `{command, args}` 扁平形态。
 - 字段:命令 `verb`(EHLO/HELO/MAIL/RCPT/DATA/QUIT/RSET/NOOP/VRFY/EXPN/HELP/AUTH/STARTTLS/BDAT/
   ETRN/ATRN,空报错)、MAIL 的 `from`(`*string` 三态:nil 报错 / `""`→`<>` 退信 / `"addr"`→`<addr>`)、
-  RCPT 的 `to`(裸 string,须非空)、`params`(MAIL/RCPT 扩展参数,按 key 字典序输出;空值→裸键如
-  `SMTPUTF8`,非空→`KEY=VALUE`)、`args`(非 MAIL/RCPT verb 的普通参数,如 EHLO 域名 / AUTH 机制+凭证);
+  RCPT 的 `to`(裸 string,须非空)、`params`(MAIL/RCPT 扩展参数,保留声明顺序输出、支持重复键如多
+  `ORCPT`;空值→裸键如 `SMTPUTF8`,非空→`KEY=VALUE`)、`args`(非 MAIL/RCPT verb 的普通参数,如 EHLO 域名 / AUTH 机制+凭证);
   响应 `code`(200-559,SMTP 无 1xx)、`message`(单行)/`lines`(多行,互斥)。
 - **分派按 verb 身份**(MAIL/RCPT 结构化 vs 其余 args 普通参数),`args` **不承担兜底职责**:
   私有/非标 verb、MAIL/RCPT 的结构性畸形(缺 `<>`、非标空格、FROM/TO 关键字大小写非标、缺冒号)
@@ -151,9 +151,9 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   framing 由 `dot_stuff`/`dot_terminate` 开关控制 —— SMTP DATA(RFC 5321)与 POP3 RETR(RFC 1939)
   用行框架(dot-stuffing + `<CRLF>.<CRLF>` 终止符,`dot_stuff`/`dot_terminate` 默认 on),IMAP FETCH(RFC 9051)用
   长度前缀字面量(无 dot-stuffing/终止符,未来由 `imap_response` builder 自动覆写为 `off`)。
-- 两种模式(互斥,由校验保证):结构化模式(`headers` map 必填 + `body` 可空,headers 按 key 字典序输出、
-  头体间自动插空行,与 HTTP `writeHeaders` 一致;`headers` 为空 → 报错,构造无头/缺头/重复头等畸形走 `raw`);
-  原始模式(`raw` 裸透传 / `raw_hex` 十六进制,不拼头体、不做 dot-stuffing,构造无头/非法头/缺空行/非标换行/重复头等畸形)。全空报错。
+- 两种模式(互斥,由校验保证):结构化模式(`headers` 必填 + `body` 可空,headers 保留 YAML 声明顺序输出、
+  支持重复头(如多个 `Received`);头体间自动插空行;`headers` 为空 → 报错,构造无头/缺头等畸形走 `raw`);
+  原始模式(`raw` 裸透传 / `raw_hex` 十六进制,不拼头体、不做 dot-stuffing,构造无头/非法头/缺空行/非标换行等畸形)。全空报错。
 - `dot_stuff`(on / off,缺省 on):行首 `.` → `..`(RFC 5321 §4.5.2 / RFC 1939 §3)。结构化模式下
   作用于整个 content(headers + 空行 + body)逐行处理——合规 header 的 folding 续行以 WSP 起始,
   行首非 `.`,不受影响;若 header value 含 `\r\n.`(非 folding、属注入/畸形)也会被 stuff,
@@ -161,7 +161,8 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   `dot_terminate`(on / off,缺省 on):是否追加终止符 `<CRLF>.<CRLF>`(正文以 `\r\n`
   结尾时追加 `.\r\n`,否则 `\r\n.\r\n`)。`off` 是 opt-out(IMAP / 畸形)。
 - headers 值裸透传不转义:值含 `\r\n`+空白 = RFC 5322 §2.2.3 folding(合规),值含 `\r\n`+非空白
-  = 头注入(畸形);重复头/有序头(RFC 5322 §3.6 Received)map 无法表达,走 `raw` 模式。
+  = 头注入(畸形);重复头/有序头(RFC 5322 §3.6 Received)结构化模式已支持(`HeaderMap` 保序、
+  允许重复 key),无需走 `raw`。
   `body` 支持 `@file(path)` 注入;行结束符结构化模式自动归一化(裸 `\n` → `\r\n`,抹平 YAML `|` 块标量等常用写法带入的裸 `\n`),raw 模式不归一化(保留精确字节)。
 - 序列化纯函数 `builder.serializeEMLData`(协议无关,不放在 `smtp.go`);校验 `scenario.validateEMLDataFields`
   (模式互斥、raw/raw_hex 互斥、枚举、空内容);接入 `PayloadBytes`/`serializeStack`/`validateLayer`/
@@ -177,7 +178,7 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 
 - flow 的 overlap / 重传 / IP 分片未做(乱序与段间 RTT 已由 `message.offset_time` / `segment.interval` 覆盖)。
 - 畸形开关 `fix_lengths` / `checksum` **解析但忽略**(build 时 `slog.Warn`),真正的畸形 / 原始字节兜底待做。
-- HTTP 头按 key 排序输出(未保留原序)。
+- HTTP/EML 头部与 SMTP 参数保留 YAML 声明顺序输出、支持重复键(`scenario.HeaderMap` 有序键值集合,见 `internal/scenario/header_map.go`)。
 
 > **源码组织**:builder 与 scenario 包已按职责拆分。
 >

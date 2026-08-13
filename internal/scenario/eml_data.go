@@ -12,14 +12,14 @@ import "fmt"
 // validateEMLDataFields 校验 eml_data 字段组合的合法性。
 //   - 模式互斥：结构化（headers/body）与原始（raw/raw_hex）不可同设；
 //   - 结构化模式要求 headers 非空（RFC 5322 §3.6 邮件必有头；body 可空＝合规空体邮件）；
-//     无头邮件（headers 空）非法，构造无头/缺头/重复头等畸形请用 raw/raw_hex；
+//     无头邮件（headers 空）非法，构造无头/缺头等畸形请用 raw/raw_hex；
 //   - raw 与 raw_hex 互斥；
 //   - 至少一种模式有内容（全空报错）；
 //   - raw_hex 须为合法 0x 前缀十六进制；
 //   - dot_stuff / dot_terminate 须为 on/off（缺省 on）。
 func validateEMLDataFields(f *EMLDataFields) error {
 	// 1. 模式互斥检查
-	hasStruct := len(f.Headers) > 0 || f.Body != ""
+	hasStruct := f.Headers.Len() > 0 || f.Body != ""
 	hasRaw := f.Raw != "" || f.RawHex != ""
 	if hasStruct && hasRaw {
 		return fmt.Errorf("headers/body 与 raw/raw_hex 不可同设（结构化模式与原始模式互斥）")
@@ -28,9 +28,10 @@ func validateEMLDataFields(f *EMLDataFields) error {
 		return fmt.Errorf("需要 headers/body 或 raw/raw_hex（空 EML 内容无意义；构造畸形正文请用 raw 或 raw_hex）")
 	}
 	// 2. 结构化模式要求 headers 非空：RFC 5322 §3.6 邮件必有头（至少 Date/From）。
-	//    body 可空（合规空体邮件）；无头邮件非法，构造无头/缺头/重复头畸形请走 raw/raw_hex。
-	if hasStruct && len(f.Headers) == 0 {
-		return fmt.Errorf("结构化模式需要 headers 非空（RFC 5322 邮件必有头；构造无头/缺头/重复头等畸形正文请用 raw 或 raw_hex）")
+	//    body 可空（合规空体邮件）；无头邮件非法,构造无头/缺头畸形请走 raw/raw_hex。
+	//    重复头(如多个 Received)结构化模式已支持,无需走 raw。
+	if hasStruct && f.Headers.Len() == 0 {
+		return fmt.Errorf("结构化模式需要 headers 非空（RFC 5322 邮件必有头；构造无头/缺头等畸形正文请用 raw 或 raw_hex）")
 	}
 	// 3. raw 与 raw_hex 互斥
 	if f.Raw != "" && f.RawHex != "" {

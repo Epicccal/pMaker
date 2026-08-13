@@ -18,7 +18,7 @@
 | `version` | string | 否 | 缺省 HTTP/1.1 |
 | `status` | int | 否 | 状态码 |
 | `reason` | string | 否 | 状态短语 |
-| `headers` | map[string]string | 否 | 头部;`Content-Length: auto` 自动按 body 长度计算 |
+| `headers` | map[string]string | 否 | 头部;`Content-Length: auto` 自动按 body 长度计算;保留声明顺序、支持重复头 |
 | `body` | string | 否 | 响应体;可用 `@file(...)` 注入 |
 
-> headers 按 key 字典序输出(未保留原序)。
+> headers 保留 YAML 声明顺序输出(不再按 key 字典序);支持重复头(如多个 `Set-Cookie`)。

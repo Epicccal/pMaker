@@ -3,7 +3,6 @@ package builder
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
@@ -14,7 +13,7 @@ import (
 // IMAP FETCH（RFC 9051）使用长度前缀字面量（无 dot-stuffing/终止符），由开关适配。
 //
 // 两种模式（互斥，由校验保证）：
-//   - 结构化模式（headers/body）：拼装 headers（字典序）+ 空行 + body，
+//   - 结构化模式（headers/body）：拼装 headers（按 YAML 声明顺序）+ 空行 + body，
 //     按 dot_stuff 做行首 dot-stuffing，按 dot_terminate 追加终止符 <CRLF>.<CRLF>。
 //   - 原始模式（raw/raw_hex）：裸透传字节，按 dot_stuff 决定是否 stuffing，
 //     按 dot_terminate 决定是否追加终止符。
@@ -45,21 +44,16 @@ func serializeEMLData(f *scenario.EMLDataFields) ([]byte, error) {
 			content = []byte(f.Raw)
 		}
 	} else {
-		// 3. 结构化模式拼装：headers 字典序 → "Key: Value\r\n" → 空行 "\r\n" → body。
+		// 3. 结构化模式拼装：headers 按 YAML 声明顺序 → "Key: Value\r\n" → 空行 "\r\n" → body。
 		//    headers 为空时仍插空行；body 为空时 headers 末尾 \r\n 即空行，不重复插。
 		//    body 写入前做 line-ending 归一化（裸 \n → \r\n），见 normalizeCRLF。
 		var b strings.Builder
-		keys := make([]string, 0, len(f.Headers))
-		for k := range f.Headers {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
+		f.Headers.Range(func(k, v string) {
 			b.WriteString(k)
 			b.WriteString(": ")
-			b.WriteString(f.Headers[k])
+			b.WriteString(v)
 			b.WriteString("\r\n")
-		}
+		})
 		b.WriteString("\r\n")
 		b.WriteString(normalizeCRLF(f.Body))
 		content = []byte(b.String())

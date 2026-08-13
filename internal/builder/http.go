@@ -3,7 +3,6 @@ package builder
 import (
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -11,7 +10,7 @@ import (
 )
 
 // serializeHTTPReq/Resp:把结构化 HTTP 序列化为 TCP payload 字节。
-// 头按 key 排序输出以保证确定性(保留原序留待后续)。
+// 头按 YAML 声明顺序输出(保留原序、支持重复头如多个 Set-Cookie)。
 func serializeHTTPReq(f *scenario.HTTPReqFields) []byte {
 	method := orDefault(f.Method, "GET")
 	url := orDefault(f.URL, "/")
@@ -41,19 +40,16 @@ func serializeHTTPResp(f *scenario.HTTPRespFields) []byte {
 	return []byte(b.String())
 }
 
-func writeHeaders(b *strings.Builder, h map[string]string, bodyLen int) {
-	keys := make([]string, 0, len(h))
-	for k := range h {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		v := h[k]
+// writeHeaders 按 HeaderMap 原序输出头。遇任意大小写的 Content-Length 且值为 "auto"
+// 时替换为 bodyLen;重复 Content-Length 的每个 auto 都替换为同一长度(合规用例不会重复
+// Content-Length;若用户故意写重复且想差异化,应改用具体值或 raw 兜底)。
+func writeHeaders(b *strings.Builder, h scenario.HeaderMap, bodyLen int) {
+	h.Range(func(k, v string) {
 		if strings.EqualFold(k, "Content-Length") && v == "auto" {
 			v = strconv.Itoa(bodyLen)
 		}
 		fmt.Fprintf(b, "%s: %s\r\n", k, v)
-	}
+	})
 }
 
 func orDefault(v, def string) string {

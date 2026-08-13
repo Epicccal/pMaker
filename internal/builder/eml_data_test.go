@@ -15,17 +15,17 @@ import (
 
 func TestSerializeEMLData_Structured(t *testing.T) {
 	f := &scenario.EMLDataFields{
-		Headers: map[string]string{
-			"From":    "alice@example.com",
-			"To":      "bob@example.net",
-			"Subject": "Hello",
+		Headers: scenario.HeaderMap{
+			{Key: "From", Value: "alice@example.com"},
+			{Key: "To", Value: "bob@example.net"},
+			{Key: "Subject", Value: "Hello"},
 		},
 		Body: "This is the email body.\r\nSecond line.\r\n",
 	}
-	// headers 按 key 字典序：From < Subject < To
+	// headers 按 YAML 声明顺序：From/To/Subject
 	want := "From: alice@example.com\r\n" +
-		"Subject: Hello\r\n" +
 		"To: bob@example.net\r\n" +
+		"Subject: Hello\r\n" +
 		"\r\n" +
 		"This is the email body.\r\n" +
 		"Second line.\r\n" +
@@ -74,7 +74,7 @@ func TestSerializeEMLData_RawHex(t *testing.T) {
 func TestSerializeEMLData_DotStuff_On(t *testing.T) {
 	// dot_stuff 缺省 on：body 行首 . → ..
 	f := &scenario.EMLDataFields{
-		Headers: map[string]string{"Subject": "t"},
+		Headers: scenario.HeaderMap{{Key: "Subject", Value: "t"}},
 		Body:    ".hidden dot\r\nnormal line\r\n",
 	}
 	want := "Subject: t\r\n\r\n..hidden dot\r\nnormal line\r\n.\r\n"
@@ -90,7 +90,7 @@ func TestSerializeEMLData_DotStuff_On(t *testing.T) {
 func TestSerializeEMLData_DotStuff_Off(t *testing.T) {
 	// dot_stuff=off：body 行首 . 不变（畸形）
 	f := &scenario.EMLDataFields{
-		Headers:  map[string]string{"Subject": "t"},
+		Headers:  scenario.HeaderMap{{Key: "Subject", Value: "t"}},
 		Body:     ".hidden dot\r\nnormal line\r\n",
 		DotStuff: "off",
 	}
@@ -107,7 +107,7 @@ func TestSerializeEMLData_DotStuff_Off(t *testing.T) {
 func TestSerializeEMLData_DotStuff_DotOnlyLine(t *testing.T) {
 	// body 行只有 . → stuffing 产出 .. （非终止符）
 	f := &scenario.EMLDataFields{
-		Headers:  map[string]string{"Subject": "t"},
+		Headers:  scenario.HeaderMap{{Key: "Subject", Value: "t"}},
 		Body:     ".\r\nafter\r\n",
 		DotStuff: "on",
 	}
@@ -124,7 +124,7 @@ func TestSerializeEMLData_DotStuff_DotOnlyLine(t *testing.T) {
 
 func TestSerializeEMLData_DotTerminate_Off(t *testing.T) {
 	f := &scenario.EMLDataFields{
-		Headers:      map[string]string{"Subject": "no term"},
+		Headers:      scenario.HeaderMap{{Key: "Subject", Value: "no term"}},
 		Body:         "body\r\n",
 		DotTerminate: "off",
 	}
@@ -141,8 +141,8 @@ func TestSerializeEMLData_DotTerminate_Off(t *testing.T) {
 func TestSerializeEMLData_HeaderInjection(t *testing.T) {
 	// headers 值含 \r\n 裸透传不转义（头注入畸形）
 	f := &scenario.EMLDataFields{
-		Headers: map[string]string{
-			"X-Custom": "value\r\nInjected: header",
+		Headers: scenario.HeaderMap{
+			{Key: "X-Custom", Value: "value\r\nInjected: header"},
 		},
 		Body:         "body\r\n",
 		DotTerminate: "off",
@@ -161,7 +161,7 @@ func TestSerializeEMLData_HeaderInjection(t *testing.T) {
 func TestSerializeEMLData_BodyEmpty_HeadersOnly(t *testing.T) {
 	// body 为空 + headers 非空 → headers + 空行（headers 末尾 \r\n 即空行）+ 终止符
 	f := &scenario.EMLDataFields{
-		Headers: map[string]string{"Subject": "empty body"},
+		Headers: scenario.HeaderMap{{Key: "Subject", Value: "empty body"}},
 	}
 	// headers 输出 "Subject: empty body\r\n"，再插空行 "\r\n"，body 空，终止符 .\r\n
 	want := "Subject: empty body\r\n\r\n.\r\n"
@@ -174,10 +174,37 @@ func TestSerializeEMLData_BodyEmpty_HeadersOnly(t *testing.T) {
 	}
 }
 
+// TestSerializeEMLData_DuplicateHeaders 断言结构化模式保留重复头(如多个 Received)
+// 并按 YAML 声明顺序全部输出,不去重、不排序。
+func TestSerializeEMLData_DuplicateHeaders(t *testing.T) {
+	f := &scenario.EMLDataFields{
+		Headers: scenario.HeaderMap{
+			{Key: "Received", Value: "from mx1 by mx2"},
+			{Key: "Received", Value: "from mx2 by mx3"},
+			{Key: "From", Value: "a@b"},
+		},
+		Body:         "body\r\n",
+		DotTerminate: "off",
+		DotStuff:     "off",
+	}
+	want := "Received: from mx1 by mx2\r\n" +
+		"Received: from mx2 by mx3\r\n" +
+		"From: a@b\r\n" +
+		"\r\n" +
+		"body\r\n"
+	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
+	if err != nil {
+		t.Fatalf("PayloadBytes: %v", err)
+	}
+	if !bytes.Equal(got, []byte(want)) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestSerializeEMLData_ConsecutiveBlankLines(t *testing.T) {
 	// body 含连续空行 → dot-stuffing 不影响空行（行首非 .）
 	f := &scenario.EMLDataFields{
-		Headers:  map[string]string{"Subject": "t"},
+		Headers:  scenario.HeaderMap{{Key: "Subject", Value: "t"}},
 		Body:     "line1\r\n\r\n\r\nline2\r\n",
 		DotStuff: "on",
 	}
@@ -235,7 +262,7 @@ func TestParseBackEMLData(t *testing.T) {
 				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.25", TTL: u8ptr(64)}},
 				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 49152, DPort: 25, Flags: []string{"PSH", "ACK"}}},
 				{Type: "eml_data", Fields: &scenario.EMLDataFields{
-					Headers: map[string]string{"Subject": "hi"},
+					Headers: scenario.HeaderMap{{Key: "Subject", Value: "hi"}},
 					Body:    "body\r\n",
 				}},
 			},
@@ -267,7 +294,7 @@ func TestParseBackEMLData(t *testing.T) {
 // 归一化为 \r\n（模拟用户用 YAML `|` 块标量写入多行 body 的常见场景）。
 func TestSerializeEMLData_BodyBareLF_Normalized(t *testing.T) {
 	f := &scenario.EMLDataFields{
-		Headers: map[string]string{"From": "a@b"},
+		Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}},
 		// body 用裸 \n 换行（如 YAML `|` 块标量产出）
 		Body: "first line\n... and more\n",
 	}
@@ -287,7 +314,7 @@ func TestSerializeEMLData_BodyBareLF_Normalized(t *testing.T) {
 // 已有的 \r\n 不动（不会变成 \r\r\n）。
 func TestSerializeEMLData_BodyMixedLF_Normalized(t *testing.T) {
 	f := &scenario.EMLDataFields{
-		Headers:      map[string]string{"From": "a@b"},
+		Headers:      scenario.HeaderMap{{Key: "From", Value: "a@b"}},
 		Body:         "line1\r\nline2\nline3\r\n",
 		DotTerminate: "off",
 		DotStuff:     "off",
@@ -306,7 +333,7 @@ func TestSerializeEMLData_BodyMixedLF_Normalized(t *testing.T) {
 // TestSerializeEMLData_BodyLeadingBareLF_Normalized 断言 body 以裸 \n 开头时也归一化。
 func TestSerializeEMLData_BodyLeadingBareLF_Normalized(t *testing.T) {
 	f := &scenario.EMLDataFields{
-		Headers:      map[string]string{"From": "a@b"},
+		Headers:      scenario.HeaderMap{{Key: "From", Value: "a@b"}},
 		Body:         "\nbody\n",
 		DotTerminate: "off",
 		DotStuff:     "off",

@@ -150,7 +150,7 @@ func validateSMTPRequestFields(f *SMTPRequestFields) error {
 		if f.To != "" {
 			return fmt.Errorf("verb %s 不支持 to(to 仅对 RCPT 有效)", f.Verb)
 		}
-		if len(f.Params) > 0 {
+		if f.Params.Len() > 0 {
 			return fmt.Errorf("params 仅对 MAIL/RCPT 有效")
 		}
 		// args 有/无按 verbArgsRule 校验。

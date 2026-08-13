@@ -39,8 +39,8 @@ and regression-friendly.
 | **Arbitrary layer nesting** | QinQ, GRE tunnels, recursive encapsulation — no fixed L2/L3/L4 slots |
 | **Stateful TCP flows** | Auto handshake, seq/ack derivation, MSS segmentation, FIN/RST teardown |
 | **Malformed & evasion** | Per-field `fix_lengths`/`checksum` overrides, `payload_hex` raw injection, broken next-proto chains |
-| **Deterministic output** | Same scenario + seed → byte-identical pcap; no `time.Now()` |
-| **Pure Go, no CGO** | Static cross-platform binary via `pcapgo`; no libpcap dependency |
+| **Deterministic output** | Same scenario + seed → byte-identical pcap |
+| **Pure Go** | Static cross-platform binary via `pcapgo` |
 | **MCP server** | Expose generate/validate as Model Context Protocol tools for LLM agents |
 
 ## Protocol Coverage
@@ -212,26 +212,6 @@ CGO_ENABLED=0 go build -o bin/pmaker-mcp ./cmd/pmaker-mcp
 go test ./...
 go test ./internal/scenario -run TestExamplesGolden -update   # regenerate golden pcaps
 ```
-
-## Roadmap
-
-- [ ] IP fragmentation (outer + inner)
-- [ ] TCP overlap / retransmit / reorder
-- [ ] `fix_lengths` / `checksum` malformed switches (currently parsed but ignored at build time)
-- [ ] HTTP header original-order preservation
-- [ ] `.pcapng` output format
-- [ ] More encapsulation: MPLS, VXLAN, GTP-U, Geneve
-
-## Contributing
-
-Contributions are welcome. To add a new protocol: add a builder helper under
-[`internal/builder/`](internal/builder), a schema struct + validation under
-[`internal/scenario/`](internal/scenario), examples under `examples/<protocol>/`,
-and an MCP schema resource at
-[`cmd/pmaker-mcp/resources/schema/<proto>.md`](cmd/pmaker-mcp/resources/schema)
-(zero Go code changes). Add a golden test and ensure `go test -race ./...` passes.
-
-See [`CLAUDE.md`](CLAUDE.md) for the full development guide.
 
 ## License
 
