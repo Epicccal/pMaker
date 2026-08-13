@@ -2,7 +2,6 @@ package builder
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
@@ -34,23 +33,18 @@ func serializeSMTPReq(f *scenario.SMTPRequestFields) []byte {
 			b.WriteString(f.To)
 			b.WriteByte('>')
 		}
-		// esmtp-param(RFC 5321 §4.1.2: esmtp-keyword ["=" esmtp-value])按 key 字典序升序输出,
+		// esmtp-param(RFC 5321 §4.1.2: esmtp-keyword ["=" esmtp-value])按 YAML 声明顺序输出,
 		// 空格分隔,接在路径后。空值 → 裸键(无值 flag,如 SMTPUTF8);非空 → KEY=VALUE。
-		// 排序保证确定性输出;nil map 排序循环安全。
-		if len(f.Params) > 0 {
-			keys := make([]string, 0, len(f.Params))
-			for k := range f.Params {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
+		// 保留声明顺序、支持重复键(如多个 ORCPT);nil/空 HeaderMap 安全(Range 不迭代)。
+		if f.Params.Len() > 0 {
+			f.Params.Range(func(k, v string) {
 				b.WriteByte(' ')
 				b.WriteString(k)
-				if v := f.Params[k]; v != "" {
+				if v != "" {
 					b.WriteByte('=')
 					b.WriteString(v)
 				}
-			}
+			})
 		}
 		b.WriteString("\r\n")
 	default:

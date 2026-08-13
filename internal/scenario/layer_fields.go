@@ -119,18 +119,18 @@ type (
 	}
 
 	HTTPReqFields struct {
-		Method  string            `yaml:"method"`
-		URL     string            `yaml:"url"`
-		Version string            `yaml:"version"`
-		Headers map[string]string `yaml:"headers"`
-		Body    string            `yaml:"body"`
+		Method  string    `yaml:"method"`
+		URL     string    `yaml:"url"`
+		Version string    `yaml:"version"`
+		Headers HeaderMap `yaml:"headers"` // 保留 YAML 声明顺序、支持重复头(如多个 Set-Cookie)
+		Body    string    `yaml:"body"`
 	}
 	HTTPRespFields struct {
-		Version string            `yaml:"version"`
-		Status  int               `yaml:"status"`
-		Reason  string            `yaml:"reason"`
-		Headers map[string]string `yaml:"headers"`
-		Body    string            `yaml:"body"`
+		Version string    `yaml:"version"`
+		Status  int       `yaml:"status"`
+		Reason  string    `yaml:"reason"`
+		Headers HeaderMap `yaml:"headers"` // 保留 YAML 声明顺序、支持重复头(如多个 Set-Cookie)
+		Body    string    `yaml:"body"`
 	}
 	// FTPRequestFields 是一条 FTP 控制连接命令:COMMAND[ arg]\r\n。
 	// command 原样输出(不强制大写),以便构造小写/非标命令等畸形用例。
@@ -176,11 +176,11 @@ type (
 	//   - from: "addr" → <addr>。
 	// to 保持裸 string:RCPT 必须有前向路径(RFC 5321 §4.1.2 无 null 路径语义),须非空,无歧义。
 	SMTPRequestFields struct {
-		Verb   string            `yaml:"verb"`   // EHLO/HELO/MAIL/RCPT/DATA/QUIT/RSET/NOOP/VRFY/EXPN/HELP/AUTH/STARTTLS/BDAT/ETRN/ATRN;非标/私有 verb 走 payload/payload_hex
-		From   *string           `yaml:"from"`   // 仅 MAIL(结构化):反向路径;指针区分未给出(nil,报错)与显式空串(<>,退信)
-		To     string            `yaml:"to"`     // 仅 RCPT(结构化):前向路径;须非空(RCPT 不可用 null 路径)
-		Params map[string]string `yaml:"params"` // MAIL/RCPT 扩展参数:键=参数名(SIZE/BODY/AUTH/NOTIFY/SMTPUTF8/ORCPT/RET/ENVID…),值=参数值(空值=无值 flag,如 SMTPUTF8)
-		Args   string            `yaml:"args"`   // 非 MAIL/RCPT verb 的普通参数(如 EHLO 的域名、AUTH 的机制+凭证、BDAT 的 chunk-size);MAIL/RCPT 禁用 args
+		Verb   string    `yaml:"verb"`   // EHLO/HELO/MAIL/RCPT/DATA/QUIT/RSET/NOOP/VRFY/EXPN/HELP/AUTH/STARTTLS/BDAT/ETRN/ATRN;非标/私有 verb 走 payload/payload_hex
+		From   *string   `yaml:"from"`   // 仅 MAIL(结构化):反向路径;指针区分未给出(nil,报错)与显式空串(<>,退信)
+		To     string    `yaml:"to"`     // 仅 RCPT(结构化):前向路径;须非空(RCPT 不可用 null 路径)
+		Params HeaderMap `yaml:"params"` // MAIL/RCPT 扩展参数:保留声明顺序、支持重复键(多 ORCPT);空值=无值 flag(如 SMTPUTF8),非空=KEY=VALUE
+		Args   string    `yaml:"args"`   // 非 MAIL/RCPT verb 的普通参数(如 EHLO 的域名、AUTH 的机制+凭证、BDAT 的 chunk-size);MAIL/RCPT 禁用 args
 	}
 
 	// SMTPResponseFields 是一条 SMTP 响应。单行/多行遵循 RFC 5321 §4.2 的 Reply-line 文法
@@ -206,20 +206,19 @@ type (
 	//   - 原始模式：raw 字段直接透传整个正文字节（含/不含终止符由 dot_terminate 控制），
 	//     用于构造无法用结构化字段表达的畸形正文（如无头、缺头、非法头、缺空行、非标换行）。
 	//
-	// headers 按 key 字典序输出（与 HTTP writeHeaders 一致，保证确定性）。
-	// headers 为 map[string]string，不支持重复头（如多个 Received）和有序头（RFC 5322 §3.6
-	// 允许 Received 按序排列）；此类合规邮件请用 raw 模式。headers 值裸透传不转义，值含
-	// \r\n + 空白可实现 RFC 5322 §2.2.3 folding（合规），值含 \r\n + 非空白为头注入（畸形）。
-	// body 支持 @file(path) 注入外部文件内容（file_placeholder.go 反射遍历自动覆盖）。
-	// body 行结束符：结构化模式自动把裸 \n 归一化为 \r\n（builder.normalizeCRLF，
-	// 抹平 YAML `|` 块标量等常用写法带入的裸 \n）；raw 模式不归一化（保留精确字节，
-	// 构造非标换行畸形）。
+	// headers 保留 YAML 声明顺序输出、支持重复头(如多个 Received、RFC 5322 §3.6
+	// Received 链按序排列)与有序头。headers 值裸透传不转义,值含
+	// \r\n + 空白可实现 RFC 5322 §2.2.3 folding(合规),值含 \r\n + 非空白为头注入(畸形)。
+	// body 支持 @file(path) 注入外部文件内容(file_placeholder.go 反射遍历自动覆盖)。
+	// body 行结束符:结构化模式自动把裸 \n 归一化为 \r\n(builder.normalizeCRLF,
+	// 抹平 YAML `|` 块标量等常用写法带入的裸 \n);raw 模式不归一化(保留精确字节,
+	// 构造非标换行畸形)。
 	EMLDataFields struct {
-		Headers      map[string]string `yaml:"headers"`       // 结构化模式：邮件头（RFC 5322），按 key 字典序输出
-		Body         string            `yaml:"body"`          // 结构化模式：邮件正文体（headers 与 body 间自动插空行 \r\n）
-		Raw          string            `yaml:"raw"`           // 原始模式：整个正文字节裸透传（不拼头体、不做 dot-stuffing）
-		RawHex       string            `yaml:"raw_hex"`       // 原始模式（hex）：0x 前缀十六进制正文字节
-		DotStuff     string            `yaml:"dot_stuff"`     // on（缺省）/ off：行首 . → ..；结构化模式作用于整个 content（合规 header 的 folding 续行以 WSP 起始，不受影响；构造 header 区行首 . 的畸形用 raw）
-		DotTerminate string            `yaml:"dot_terminate"` // on（缺省）/ off：是否追加终止符 <CRLF>.<CRLF>
+		Headers      HeaderMap `yaml:"headers"`       // 结构化模式：邮件头（RFC 5322），保留声明顺序、支持重复头
+		Body         string    `yaml:"body"`          // 结构化模式：邮件正文体（headers 与 body 间自动插空行 \r\n）
+		Raw          string    `yaml:"raw"`           // 原始模式：整个正文字节裸透传（不拼头体、不做 dot-stuffing）
+		RawHex       string    `yaml:"raw_hex"`       // 原始模式（hex）：0x 前缀十六进制正文字节
+		DotStuff     string    `yaml:"dot_stuff"`     // on（缺省）/ off：行首 . → ..；结构化模式作用于整个 content（合规 header 的 folding 续行以 WSP 起始，不受影响；构造 header 区行首 . 的畸形用 raw）
+		DotTerminate string    `yaml:"dot_terminate"` // on（缺省）/ off：是否追加终止符 <CRLF>.<CRLF>
 	}
 )
