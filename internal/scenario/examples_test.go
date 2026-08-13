@@ -636,7 +636,7 @@ func TestFTPMalformedInjection(t *testing.T) {
 }
 
 // TestSMTPEhloSendContent 回读 ehlo_send,断言多行 EHLO 响应(RFC 5321 每行带 250- 前缀)、
-// 结构化 MAIL/RCPT 路径(from/to + params 排序)、DATA 正文走 payload 均出现在 pcap 里。
+// 结构化 MAIL/RCPT 路径(from/to + params 按声明顺序输出)、DATA 正文走 payload 均出现在 pcap 里。
 func TestSMTPEhloSendContent(t *testing.T) {
 	pcap := generatePcap(t, "../../examples/smtp/ehlo_send.yaml")
 	for _, want := range [][]byte{
@@ -651,8 +651,8 @@ func TestSMTPEhloSendContent(t *testing.T) {
 		[]byte("250-STARTTLS\r\n"),
 		[]byte("250-AUTH PLAIN LOGIN\r\n"),
 		[]byte("250 8BITMIME\r\n"),
-		// 结构化 MAIL:params 按 key 字典序输出(BODY < SIZE)
-		[]byte("MAIL FROM:<alice@example.com> BODY=8BITMIME SIZE=1234\r\n"),
+		// 结构化 MAIL:params 按 YAML 声明顺序输出(SIZE < BODY)
+		[]byte("MAIL FROM:<alice@example.com> SIZE=1234 BODY=8BITMIME\r\n"),
 		// 结构化 RCPT
 		[]byte("RCPT TO:<bob@example.net> NOTIFY=SUCCESS,FAILURE\r\n"),
 		// DATA / 354

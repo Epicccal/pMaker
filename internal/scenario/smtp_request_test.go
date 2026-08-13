@@ -182,12 +182,12 @@ func TestValidateSMTPRequest_MailForbidsToAndArgs(t *testing.T) {
 
 // TestValidateSMTPRequest_ParamsOnlyMailRcpt: params 给非 MAIL/RCPT verb 报错。
 func TestValidateSMTPRequest_ParamsOnlyMailRcpt(t *testing.T) {
-	s := &scenario.Scenario{Packets: []scenario.Packet{{Stack: smtpBaseStack(smtpCmdLayer("EHLO", scenario.SMTPRequestFields{Args: "client", Params: map[string]string{"SIZE": "10"}}))}}}
+	s := &scenario.Scenario{Packets: []scenario.Packet{{Stack: smtpBaseStack(smtpCmdLayer("EHLO", scenario.SMTPRequestFields{Args: "client", Params: scenario.HeaderMap{{Key: "SIZE", Value: "10"}}}))}}}
 	if err := scenario.Validate(s); err == nil || !strings.Contains(err.Error(), "params") {
 		t.Errorf("非 MAIL/RCPT verb 带 params 应报错,得到: %v", err)
 	}
 	// MAIL 带 params 通过。
-	s = &scenario.Scenario{Packets: []scenario.Packet{{Stack: smtpBaseStack(smtpCmdLayer("MAIL", scenario.SMTPRequestFields{From: strPtr("a@b"), Params: map[string]string{"SIZE": "10"}}))}}}
+	s = &scenario.Scenario{Packets: []scenario.Packet{{Stack: smtpBaseStack(smtpCmdLayer("MAIL", scenario.SMTPRequestFields{From: strPtr("a@b"), Params: scenario.HeaderMap{{Key: "SIZE", Value: "10"}}}))}}}
 	if err := scenario.Validate(s); err != nil {
 		t.Errorf("MAIL 带 params 应通过,得到: %v", err)
 	}
