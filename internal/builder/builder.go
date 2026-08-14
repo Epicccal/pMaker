@@ -152,9 +152,17 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			}
 			serLayers = append(serLayers, d)
 		case *scenario.HTTPReqFields:
-			serLayers = append(serLayers, gopacket.Payload(serializeHTTPReq(f)))
+			b, err := serializeHTTPReq(f)
+			if err != nil {
+				return nil, fmt.Errorf("http_request: %w", err)
+			}
+			serLayers = append(serLayers, gopacket.Payload(b))
 		case *scenario.HTTPRespFields:
-			serLayers = append(serLayers, gopacket.Payload(serializeHTTPResp(f)))
+			b, err := serializeHTTPResp(f)
+			if err != nil {
+				return nil, fmt.Errorf("http_response: %w", err)
+			}
+			serLayers = append(serLayers, gopacket.Payload(b))
 		case *scenario.FTPRequestFields:
 			serLayers = append(serLayers, gopacket.Payload(serializeFTPReq(f)))
 		case *scenario.FTPResponseFields:

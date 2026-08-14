@@ -367,3 +367,166 @@ func TestSerializeEMLData_RawBareLF_NotNormalized(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// ---- multipart 经 eml_data 层的端到端序列化 ----
+// 单元级 multipart+EML 序列化(boundary/dot-stuff/终止符)见 multipart_test.go 的
+// TestSerializeMultipart_EMLMultipart / TestSerializeMultipart_EMLDotStuffOnPartBody。
+// 此处补 eml_data builder 的分派路径:multipart 取代字面 body、Content-Type 顶层头、
+// multipart + dot_terminate=off(无终止符)、multipart + dot_stuff=off(不 stuff)。
+
+// TestSerializeEMLData_MultipartReplaceBody 断言 eml_data 设 multipart 时 body 取自
+// serializeMultipart(取代字面 body),顶层头 + 空行 + multipart 字节 + 终止符。
+func TestSerializeEMLData_MultipartReplaceBody(t *testing.T) {
+	f := &scenario.EMLDataFields{
+		Headers: scenario.HeaderMap{
+			{Key: "From", Value: "a@b"},
+			{Key: "MIME-Version", Value: "1.0"},
+			{Key: "Content-Type", Value: "multipart/mixed; boundary=bnd"},
+		},
+		Multipart: &scenario.MultipartBody{
+			Boundary: "bnd",
+			Parts: []scenario.MultipartPart{{
+				Headers: scenario.HeaderMap{{Key: "Content-Type", Value: "text/plain"}},
+				Body:    "part\r\n",
+			}},
+		},
+	}
+	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
+	if err != nil {
+		t.Fatalf("PayloadBytes: %v", err)
+	}
+	want := "From: a@b\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=bnd\r\n" +
+		"\r\n" +
+		"--bnd\r\n" +
+		"Content-Type: text/plain\r\n" +
+		"\r\n" +
+		"part\r\n" +
+		"\r\n" +
+		"--bnd--\r\n" +
+		".\r\n"
+	if !bytes.Equal(got, []byte(want)) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestSerializeEMLData_MultipartDotTerminateOff 断言 multipart 邮件也能用 dot_terminate=off
+// 去掉终止符(IMAP 场景或畸形),multipart 字节原样输出不再追加 .\r\n。
+func TestSerializeEMLData_MultipartDotTerminateOff(t *testing.T) {
+	f := &scenario.EMLDataFields{
+		Headers: scenario.HeaderMap{
+			{Key: "From", Value: "a@b"},
+			{Key: "Content-Type", Value: "multipart/mixed; boundary=bnd"},
+		},
+		Multipart: &scenario.MultipartBody{
+			Boundary: "bnd",
+			Parts:    []scenario.MultipartPart{{Body: "x"}},
+		},
+		DotStuff:     "off",
+		DotTerminate: "off",
+	}
+	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
+	if err != nil {
+		t.Fatalf("PayloadBytes: %v", err)
+	}
+	want := "From: a@b\r\n" +
+		"Content-Type: multipart/mixed; boundary=bnd\r\n" +
+		"\r\n" +
+		"--bnd\r\n" +
+		"\r\n" +
+		"x\r\n" +
+		"--bnd--\r\n"
+	if !bytes.Equal(got, []byte(want)) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestSerializeEMLData_MultipartDotStuffOff 断言 dot_stuff=off 时 part body 行首 . 不被 stuff
+// (构造 SMTP 传输透明性畸形),boundary 行 -- 开头本就不受影响。
+func TestSerializeEMLData_MultipartDotStuffOff(t *testing.T) {
+	f := &scenario.EMLDataFields{
+		Headers: scenario.HeaderMap{
+			{Key: "From", Value: "a@b"},
+			{Key: "Content-Type", Value: "multipart/mixed; boundary=bnd"},
+		},
+		Multipart: &scenario.MultipartBody{
+			Boundary: "bnd",
+			Parts:    []scenario.MultipartPart{{Body: ".secret\r\n"}},
+		},
+		DotStuff:     "off",
+		DotTerminate: "off",
+	}
+	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
+	if err != nil {
+		t.Fatalf("PayloadBytes: %v", err)
+	}
+	// dot_stuff=off:part body 行首 . 原样保留(未被 stuff 成 ..)。
+	if !bytes.Contains(got, []byte("\r\n.secret\r\n")) {
+		t.Errorf("dot_stuff=off 应保留 part body 行首 .,got %q", got)
+	}
+	if bytes.Contains(got, []byte("\r\n..secret\r\n")) {
+		t.Errorf("dot_stuff=off 不应 stuff 行首 .,got %q", got)
+	}
+}
+
+// TestParseBackEMLData_MultipartE2E 端到端回读 eml_data(multipart)包,断言 TCP payload
+// 含 multipart 分界符行、顶层 Content-Type 头与 SMTP 终止符 .\r\n。
+func TestParseBackEMLData_MultipartE2E(t *testing.T) {
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Packets: []scenario.Packet{{
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.25", TTL: u8ptr(64)}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 49152, DPort: 25, Flags: []string{"PSH", "ACK"}}},
+				{Type: "eml_data", Fields: &scenario.EMLDataFields{
+					Headers: scenario.HeaderMap{
+						{Key: "From", Value: "a@b"},
+						{Key: "MIME-Version", Value: "1.0"},
+						{Key: "Content-Type", Value: "multipart/mixed; boundary=----=_pMaker_0001"},
+					},
+					Multipart: &scenario.MultipartBody{
+						Boundary: "----=_pMaker_0001",
+						Parts: []scenario.MultipartPart{{
+							Headers: scenario.HeaderMap{{Key: "Content-Type", Value: "text/plain"}},
+							Body:    "hi\r\n",
+						}},
+					},
+				}},
+			},
+		}},
+	}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	pkts, err := buildPackets(s)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	read := readPackets(t, buf.Bytes())
+	if len(read) != 1 {
+		t.Fatalf("期望 1 个包,得到 %d", len(read))
+	}
+	app := read[0].ApplicationLayer()
+	if app == nil {
+		t.Fatal("缺应用层 payload")
+	}
+	for _, want := range []string{
+		"Content-Type: multipart/mixed; boundary=----=_pMaker_0001",
+		"------=_pMaker_0001\r\n",
+		"------=_pMaker_0001--\r\n",
+	} {
+		if !bytes.Contains(app.Payload(), []byte(want)) {
+			t.Errorf("payload 不含 %q, got %q", want, app.Payload())
+		}
+	}
+	// SMTP 终止符 .\r\n 应在末尾(dot_terminate 默认 on)。
+	if !bytes.HasSuffix(app.Payload(), []byte(".\r\n")) {
+		t.Errorf("payload 应以 SMTP 终止符 .\\r\\n 结尾, got %q", app.Payload())
+	}
+}

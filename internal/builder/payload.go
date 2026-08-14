@@ -11,9 +11,9 @@ import (
 func PayloadBytes(l scenario.Layer) ([]byte, error) {
 	switch f := l.Fields.(type) {
 	case *scenario.HTTPReqFields:
-		return serializeHTTPReq(f), nil
+		return serializeHTTPReq(f)
 	case *scenario.HTTPRespFields:
-		return serializeHTTPResp(f), nil
+		return serializeHTTPResp(f)
 	case *scenario.FTPRequestFields:
 		return serializeFTPReq(f), nil
 	case *scenario.FTPResponseFields:

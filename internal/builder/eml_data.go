@@ -47,6 +47,8 @@ func serializeEMLData(f *scenario.EMLDataFields) ([]byte, error) {
 		// 3. 结构化模式拼装：headers 按 YAML 声明顺序 → "Key: Value\r\n" → 空行 "\r\n" → body。
 		//    headers 为空时仍插空行；body 为空时 headers 末尾 \r\n 即空行，不重复插。
 		//    body 写入前做 line-ending 归一化（裸 \n → \r\n），见 normalizeCRLF。
+		//    multipart 邮件:body 取自 serializeMultipart 的字节(取代字面 body);
+		//    multipart 字节不再经 normalizeCRLF(part 内部已保留原始字节)。
 		var b strings.Builder
 		f.Headers.Range(func(k, v string) {
 			b.WriteString(k)
@@ -55,7 +57,15 @@ func serializeEMLData(f *scenario.EMLDataFields) ([]byte, error) {
 			b.WriteString("\r\n")
 		})
 		b.WriteString("\r\n")
-		b.WriteString(normalizeCRLF(f.Body))
+		if f.Multipart != nil {
+			mp, err := serializeMultipart(f.Multipart)
+			if err != nil {
+				return nil, fmt.Errorf("multipart: %w", err)
+			}
+			b.Write(mp)
+		} else {
+			b.WriteString(normalizeCRLF(f.Body))
+		}
 		content = []byte(b.String())
 	}
 
