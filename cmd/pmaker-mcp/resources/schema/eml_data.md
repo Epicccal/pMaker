@@ -52,7 +52,8 @@ Second line.\r\n
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `headers` | map[string]string | 结构化模式必填 | 邮件头（RFC 5322），保留 YAML 声明顺序输出为 `Key: Value\r\n`，支持重复头/有序头（如多个 `Received`）；值含 `\r\n`+空白=folding，`\r\n`+非空白=头注入 |
-| `body` | string | 结构化模式可选 | 邮件正文体；可空（合规空体邮件）；支持 `@file(path)` 注入；headers 与 body 间自动插空行；行结束符自动归一化（裸 `\n` → `\r\n`，兼容 YAML `|` 块标量等常用写法；raw 模式不归一化） |
+| `body` | string | 结构化模式可选 | 邮件正文体；可空（合规空体邮件）；支持 `@file(path)` 注入；headers 与 body 间自动插空行；行结束符自动归一化（裸 `\n` → `\r\n`，兼容 YAML `|` 块标量等常用写法；raw 模式不归一化）；与 `multipart` 互斥 |
+| `multipart` | object | 结构化模式可选 | MIME multipart body（RFC 2046），作为邮件正文（multipart 邮件顶层 MIME 头仍必填）；与 `body`/`raw`/`raw_hex` 互斥；详见 `pmaker://schema/multipart` |
 | `raw` | string | 原始模式 | 整个正文字节裸透传（不拼头体、不做 dot-stuffing，终止符由 `dot_terminate` 控制）；支持 `@file` |
 | `raw_hex` | string | 原始模式 | `0x` 前缀十六进制正文字节（二进制正文）；与 `raw` 互斥 |
 | `dot_stuff` | string | 可选 | `on`（缺省）/ `off`：行首 `.` → `..`（RFC 5321 §4.5.2 / RFC 1939 §3）。结构化模式作用于整个 content（headers + 空行 + body）逐行处理；合规 header 的 folding 续行以 WSP 起始、行首非 `.`，不受影响。构造 header 区行首 `.` 的畸形请用 `raw`（精确字节、不自动 stuffing） |
@@ -60,9 +61,9 @@ Second line.\r\n
 
 ## 模式互斥
 
-- **结构化模式**：`headers` 非空（必填），`body` 可空（合规空体邮件），`raw`/`raw_hex` 均空。`headers` 为空 → 报错（RFC 5322 邮件必有头；构造无头/缺头等畸形请用 `raw`）。重复头（如多个 `Received`）结构化模式即可表达，无需 `raw`。
-- **原始模式**：`raw` 或 `raw_hex` 非空，`headers`/`body` 均空。
-- 两种模式**互斥**；`raw` 与 `raw_hex` 互斥；全空报错。
+- **结构化模式**：`headers` 非空（必填），`body` 可空（合规空体邮件）或用 `multipart`（multipart 邮件顶层 MIME 头仍必填），`raw`/`raw_hex` 均空。`headers` 为空 → 报错（RFC 5322 邮件必有头；构造无头/缺头等畸形请用 `raw`）。重复头（如多个 `Received`）结构化模式即可表达，无需 `raw`。
+- **原始模式**：`raw` 或 `raw_hex` 非空，`headers`/`body`/`multipart` 均空。
+- 两种模式**互斥**；`raw` 与 `raw_hex` 互斥；`multipart` 与 `body` 互斥；全空报错。
 
 ## 畸形构造
 

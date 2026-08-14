@@ -79,6 +79,14 @@ flows:
 | 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`eml_data` | 对应 `pmaker://schema/<层名>` |
 | 兜底 | `payload`、`payload_hex` | `pmaker://schema/payload` |
 
+## 子结构(非层,嵌在层内)
+
+部分结构不是独立层,不能单独放入 `stack`,而是作为某些层的子字段:
+
+| 子结构 | 嵌入位置 | schema |
+|--------|----------|--------|
+| `multipart` | `http_request`/`http_response`/`eml_data` 的 `multipart` 字段(MIME multipart body,非层) | `pmaker://schema/multipart` |
+
 ## 通用约定
 
 - **next-proto / EtherType 自动串接**:按层栈自动推导,可逐层显式覆盖(`type`/`tpid`/`ethertype`)制造解析断链。

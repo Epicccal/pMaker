@@ -18,32 +18,42 @@ import "fmt"
 //   - raw_hex 须为合法 0x 前缀十六进制；
 //   - dot_stuff / dot_terminate 须为 on/off（缺省 on）。
 func validateEMLDataFields(f *EMLDataFields) error {
-	// 1. 模式互斥检查
-	hasStruct := f.Headers.Len() > 0 || f.Body != ""
+	// 1. 模式互斥检查:multipart 属结构化模式(与 headers 同侧),与 raw 互斥、与字面 body 互斥。
+	hasStruct := f.Headers.Len() > 0 || f.Body != "" || f.Multipart != nil
 	hasRaw := f.Raw != "" || f.RawHex != ""
 	if hasStruct && hasRaw {
-		return fmt.Errorf("headers/body 与 raw/raw_hex 不可同设（结构化模式与原始模式互斥）")
+		return fmt.Errorf("headers/body/multipart 与 raw/raw_hex 不可同设（结构化模式与原始模式互斥）")
 	}
 	if !hasStruct && !hasRaw {
-		return fmt.Errorf("需要 headers/body 或 raw/raw_hex（空 EML 内容无意义；构造畸形正文请用 raw 或 raw_hex）")
+		return fmt.Errorf("需要 headers/body/multipart 或 raw/raw_hex（空 EML 内容无意义；构造畸形正文请用 raw 或 raw_hex）")
 	}
 	// 2. 结构化模式要求 headers 非空：RFC 5322 §3.6 邮件必有头（至少 Date/From）。
-	//    body 可空（合规空体邮件）；无头邮件非法,构造无头/缺头畸形请走 raw/raw_hex。
-	//    重复头(如多个 Received)结构化模式已支持,无需走 raw。
+	//    body 可空（合规空体邮件）；multipart 邮件顶层 MIME 头仍必填。
+	//    无头邮件非法,构造无头/缺头畸形请走 raw/raw_hex。重复头(如多个 Received)结构化模式已支持,无需走 raw。
 	if hasStruct && f.Headers.Len() == 0 {
 		return fmt.Errorf("结构化模式需要 headers 非空（RFC 5322 邮件必有头；构造无头/缺头等畸形正文请用 raw 或 raw_hex）")
 	}
-	// 3. raw 与 raw_hex 互斥
+	// 3. multipart 与字面 body 互斥(multipart 本身即 body)。
+	if f.Multipart != nil && f.Body != "" {
+		return fmt.Errorf("multipart 与 body 不可同设（multipart 本身即为邮件正文）")
+	}
+	// 4. multipart 内部合法性(parts/boundary/encoding/body_hex)。
+	if f.Multipart != nil {
+		if err := validateMultipart(f.Multipart); err != nil {
+			return err
+		}
+	}
+	// 5. raw 与 raw_hex 互斥
 	if f.Raw != "" && f.RawHex != "" {
 		return fmt.Errorf("raw 与 raw_hex 只能配置一个")
 	}
-	// 4. raw_hex 合法性
+	// 6. raw_hex 合法性
 	if f.RawHex != "" {
 		if _, err := ParsePayloadHex(f.RawHex); err != nil {
 			return err
 		}
 	}
-	// 5. dot_stuff / dot_terminate 枚举校验（缺省 on）
+	// 7. dot_stuff / dot_terminate 枚举校验（缺省 on）
 	for _, v := range []struct{ name, val string }{
 		{"dot_stuff", f.DotStuff},
 		{"dot_terminate", f.DotTerminate},

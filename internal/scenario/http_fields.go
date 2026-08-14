@@ -73,3 +73,15 @@ func validateHTTPRespFields(f *HTTPRespFields) error {
 	}
 	return nil
 }
+
+// validateHTTPMultipart 校验 http_request/http_response 的 multipart 子结构与 body 的互斥,
+// 并递归校验 multipart 内部合法性。multipart 本身就是 body,故与字面 body 互斥。
+func validateHTTPMultipart(body string, m *MultipartBody) error {
+	if m == nil {
+		return nil
+	}
+	if body != "" {
+		return fmt.Errorf("multipart 与 body 不可同设(multipart 本身即为请求/响应体)")
+	}
+	return validateMultipart(m)
+}

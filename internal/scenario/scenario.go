@@ -93,7 +93,10 @@ func Validate(s *Scenario) error {
 // 供 CLI 在生成后输出供用户复核。当前覆盖 FTP 控制通道 227/PORT 协商端口与
 // 数据连接 dst IP:port 的一致性检查(畸形用例可能故意不一致,故只告警不阻断)。
 func Warnings(s *Scenario) []string {
-	return CheckFTPDataPortConsistency(s)
+	return append(
+		CheckFTPDataPortConsistency(s),
+		CheckMultipartConsistency(s)...,
+	)
 }
 
 func packetNameCounts(pkts []Packet) map[string]int {
@@ -450,8 +453,14 @@ func validateLayer(l Layer) error {
 		if err := validateHTTPReqFields(f); err != nil {
 			return err
 		}
+		if err := validateHTTPMultipart(f.Body, f.Multipart); err != nil {
+			return err
+		}
 	case *HTTPRespFields:
 		if err := validateHTTPRespFields(f); err != nil {
+			return err
+		}
+		if err := validateHTTPMultipart(f.Body, f.Multipart); err != nil {
 			return err
 		}
 	case PayloadHex:

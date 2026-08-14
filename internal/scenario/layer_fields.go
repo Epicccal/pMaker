@@ -119,18 +119,20 @@ type (
 	}
 
 	HTTPReqFields struct {
-		Method  string    `yaml:"method"`
-		URL     string    `yaml:"url"`
-		Version string    `yaml:"version"`
-		Headers HeaderMap `yaml:"headers"` // 保留 YAML 声明顺序、支持重复头(如多个 Set-Cookie)
-		Body    string    `yaml:"body"`
+		Method    string         `yaml:"method"`
+		URL       string         `yaml:"url"`
+		Version   string         `yaml:"version"`
+		Headers   HeaderMap      `yaml:"headers"` // 保留 YAML 声明顺序、支持重复头(如多个 Set-Cookie)
+		Body      string         `yaml:"body"`
+		Multipart *MultipartBody `yaml:"multipart"` // MIME multipart body(RFC 2046);与 body/raw 互斥;非层,嵌在本层内
 	}
 	HTTPRespFields struct {
-		Version string    `yaml:"version"`
-		Status  int       `yaml:"status"`
-		Reason  string    `yaml:"reason"`
-		Headers HeaderMap `yaml:"headers"` // 保留 YAML 声明顺序、支持重复头(如多个 Set-Cookie)
-		Body    string    `yaml:"body"`
+		Version   string         `yaml:"version"`
+		Status    int            `yaml:"status"`
+		Reason    string         `yaml:"reason"`
+		Headers   HeaderMap      `yaml:"headers"` // 保留 YAML 声明顺序、支持重复头(如多个 Set-Cookie)
+		Body      string         `yaml:"body"`
+		Multipart *MultipartBody `yaml:"multipart"` // MIME multipart body(RFC 2046);与 body 互斥;非层,嵌在本层内
 	}
 	// FTPRequestFields 是一条 FTP 控制连接命令:COMMAND[ arg]\r\n。
 	// command 原样输出(不强制大写),以便构造小写/非标命令等畸形用例。
@@ -214,11 +216,31 @@ type (
 	// 抹平 YAML `|` 块标量等常用写法带入的裸 \n);raw 模式不归一化(保留精确字节,
 	// 构造非标换行畸形)。
 	EMLDataFields struct {
-		Headers      HeaderMap `yaml:"headers"`       // 结构化模式：邮件头（RFC 5322），保留声明顺序、支持重复头
-		Body         string    `yaml:"body"`          // 结构化模式：邮件正文体（headers 与 body 间自动插空行 \r\n）
-		Raw          string    `yaml:"raw"`           // 原始模式：整个正文字节裸透传（不拼头体、不做 dot-stuffing）
-		RawHex       string    `yaml:"raw_hex"`       // 原始模式（hex）：0x 前缀十六进制正文字节
-		DotStuff     string    `yaml:"dot_stuff"`     // on（缺省）/ off：行首 . → ..；结构化模式作用于整个 content（合规 header 的 folding 续行以 WSP 起始，不受影响；构造 header 区行首 . 的畸形用 raw）
-		DotTerminate string    `yaml:"dot_terminate"` // on（缺省）/ off：是否追加终止符 <CRLF>.<CRLF>
+		Headers      HeaderMap      `yaml:"headers"`       // 结构化模式：邮件头（RFC 5322），保留声明顺序、支持重复头
+		Body         string         `yaml:"body"`          // 结构化模式：邮件正文体（headers 与 body 间自动插空行 \r\n）
+		Multipart    *MultipartBody `yaml:"multipart"`     // 结构化模式：MIME multipart body(RFC 2046);与 body/raw 互斥;非层,嵌在本层内
+		Raw          string         `yaml:"raw"`           // 原始模式：整个正文字节裸透传（不拼头体、不做 dot-stuffing）
+		RawHex       string         `yaml:"raw_hex"`       // 原始模式（hex）：0x 前缀十六进制正文字节
+		DotStuff     string         `yaml:"dot_stuff"`     // on（缺省）/ off：行首 . → ..；结构化模式作用于整个 content（合规 header 的 folding 续行以 WSP 起始，不受影响；构造 header 区行首 . 的畸形用 raw）
+		DotTerminate string         `yaml:"dot_terminate"` // on（缺省）/ off：是否追加终止符 <CRLF>.<CRLF>
+	}
+
+	// MultipartBody 描述一个 MIME multipart 体(RFC 2046),作 HTTP 或 EML 的 body。
+	// 非「层」:不能独立出现在 stack 里,而是嵌在 http_request/http_response/eml_data 内部作为子字段。
+	// boundary 必须与父层 Content-Type 头里的 boundary= 参数一致(一致性告警覆盖,见 multipart_consistency.go)。
+	// v1 不支持嵌套 multipart 与 preamble/epilogue(见设计文档),需要时走父层原始字节兜底
+	// (eml_data 的 raw/raw_hex、http 的 payload/payload_hex)手拼。
+	MultipartBody struct {
+		Boundary string          `yaml:"boundary"` // 分界符;空 → 确定性默认 "----=_pMaker_0001"
+		Parts    []MultipartPart `yaml:"parts"`
+	}
+
+	// MultipartPart 是 multipart 体的一个 part(RFC 2046)。
+	// part 头复用 HeaderMap(保序、可重复键,如多个 Content-Disposition 参数)。
+	MultipartPart struct {
+		Headers  HeaderMap `yaml:"headers"`  // part 头(Content-Disposition/Content-Type/Content-Transfer-Encoding…),保序、可重复
+		Body     string    `yaml:"body"`     // part 体;支持 @file 注入(文本或二进制附件);与 body_hex 互斥
+		BodyHex  string    `yaml:"body_hex"` // part 体(hex,二进制附件);与 body 互斥;不可用 @file(hex 字段注入原始字节会破坏 hex 语义,二进制附件请用 body + @file)
+		Encoding string    `yaml:"encoding"` // none(缺省)/base64/quoted-printable:对 body/body_hex 做传输编码
 	}
 )
