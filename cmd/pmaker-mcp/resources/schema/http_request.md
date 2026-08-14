@@ -18,7 +18,8 @@
 | `url` | string | 否 | 请求路径 |
 | `version` | string | 否 | 缺省 HTTP/1.1;非空需符合 `HTTP/x.y` 文法(如 `HTTP/1.0`/`HTTP/2`/`HTTP/3.0`),否则报错并引导 `payload`/`payload_hex` |
 | `headers` | map[string]string | 否 | 头部(保留 YAML 声明顺序、支持重复头如多个 `Set-Cookie`) |
-| `body` | string | 否 | 请求体;可用 `@file(...)` 注入文件内容 |
+| `body` | string | 否 | 请求体;可用 `@file(...)` 注入文件内容;与 `multipart` 互斥 |
+| `multipart` | object | 否 | MIME multipart body(RFC 2046),`Content-Length: auto` 按其实际长度计算;与 `body` 互斥;详见 `pmaker://schema/multipart` |
 
 > headers 保留 YAML 声明顺序输出(不再按 key 字典序);支持重复头(如多个 `Set-Cookie`)。
 

@@ -70,6 +70,12 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV。
 - FTP 控制连接命令/响应(RFC 959 多行续行)。
 - SMTP 信封命令/响应(RFC 5321,MAIL/RCPT 结构化信封路径)。
+- **MIME multipart body**(`multipart` 子结构,嵌在 `http_request`/`http_response`/`eml_data` 内,非独立层):
+  结构化构造 RFC 2046 multipart(含 `multipart/form-data` 上传、`multipart/mixed` 带附件),
+  每 part 支持 base64/quoted-printable 传输编码(base64 按 RFC 2045 每 76 字符折行)与
+  7bit/8bit/binary 恒等编码(RFC 2045 §6 CTE,仅声明 body 字节性质、原样透传,行为同 none);
+  boundary 一致性 / CTE 一致性 / boundary 碰撞告警(非硬错);v1 不支持嵌套 multipart 与 preamble/epilogue,
+  需要时走既有 `raw`/`raw_hex` 兜底。
 - 确定性时间戳(`base_time` + offset,不用 `time.Now()`)。
 - golden pcap 逐字节比对 + gopacket 回读测试。
 - **MCP server**(`cmd/pmaker-mcp`):暴露两个 MCP 工具供其他大模型调用(stdio transport,`mcp-go`):
@@ -168,6 +174,28 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   (模式互斥、raw/raw_hex 互斥、枚举、空内容);接入 `PayloadBytes`/`serializeStack`/`validateLayer`/
   flow message 白名单/`summaryLayerName`。gopacket 无 EML layer,自己序列化为 `gopacket.Payload`。
 
+**MIME multipart 专项(RFC 2046,子结构非层)**:
+
+- `multipart` 子结构嵌在 `http_request`/`http_response`/`eml_data` 内作 body(非独立层,不能入 `stack`),
+  结构化构造 RFC 2046 multipart(含 `multipart/form-data` 上传、`multipart/mixed` 带附件)。boundary 必须与
+  父层 `Content-Type` 头的 `boundary=` 一致(一致性告警覆盖);`Content-Length: auto`(HTTP)按 multipart 实际字节长度计算。
+- 每 part:`headers`(`HeaderMap` 保序、可重复)+ `body`/`body_hex`(互斥,`body_hex` **不可用 `@file`**——
+  hex 字段注入原始字节会破坏 hex 语义,二进制附件用 `body` + `@file`)+ `encoding`(none 缺省 /
+  7bit/8bit/binary 恒等透传 / base64/quoted-printable 真变换;base64 按 RFC 2045 每 76 字符折行,确定性)。**不做 CRLF 归一化**:`@file` 可注入二进制附件,
+  归一化会破坏文件字节;换行正确性交给用户(与 HTTP body 现状一致)。
+- 一致性告警(`scenario.CheckMultipartConsistency`,非硬错,与 FTP 端口告警同一套 `Warnings`):
+  boundary 不一致 / 缺 `Content-Type` / part `encoding` 与 `Content-Transfer-Encoding` 头不符或缺失。
+  **boundary 碰撞告警**在 builder 序列化阶段(`slog.Warn`):part 编码后 body 逐行扫描,某行独占 `--<boundary>`
+  → 告警(RFC 2046 §5.1.1:分界符须独占一行,解析端会误判切分);按行匹配避免行内子串误报。
+- EML 下 multipart 字节作为 content,作用顺序固定「编码 → 拼装 → stuff → terminate」:dot-stuff 作用于
+  编码后整段 content(boundary 行 `--` 开头不受影响;base64 字母表不含 `.` 行首不会是 `.`;`none`/QP 的 part
+  body 行首 `.` 被 stuff 成 `..` 是 SMTP 传输透明性的正确形态)。multipart 字节不再经 `normalizeCRLF`。
+- **v1 限制**:不支持嵌套 multipart(`multipart/mixed` 内嵌 `multipart/alternative`)与 preamble/epilogue
+  (首 boundary 前、尾 boundary 后的可选文本);需要时走既有 `raw`/`raw_hex` 手拼。缺终止符等畸形统一走 `raw`/`payload_hex`。
+- 序列化纯函数 `builder.serializeMultipart`(手工拼装,不引 `mime/multipart`,便于后续加畸形开关);
+  校验 `scenario.validateMultipart` / `validateBoundary`(RFC 2046 §5.1.1 bchars 字符集、长度 1-70、空格不结尾);
+  一致性 `scenario/multipart_consistency.go`;`@file` 反射遍历自动覆盖嵌套 part body(`file_placeholder.go` 零改动)。
+
 **已实现 flow**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
 HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
 
@@ -185,12 +213,12 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 > builder 包:
 > - `builder.go`:层栈序列化入口 `BuildPlanned` + `serializeStack` 分派。
 > - `dns.go`(构包)/ `dns_enum.go`(枚举映射)/ `dns_raw.go`(原始层)。
-> - `http.go` / `ftp.go` / `telnet.go` / `smtp.go` / `eml_data.go`(协议无关 RFC 5322 正文) / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
+> - `http.go` / `ftp.go` / `telnet.go` / `smtp.go` / `eml_data.go`(协议无关 RFC 5322 正文) / `multipart.go`(RFC 2046 multipart body,被 http/eml 嵌套调用) / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
 >
 > scenario 包(详见 `doc.go`):
-> - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields)、
+> - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields + `MultipartBody`/`MultipartPart` 子结构)、
 >   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Parse/Load/Validate/Warnings)、`start_after_graph.go`、
->   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_request.go`(SMTP verb/响应码校验)、`eml_data.go`(RFC 5322 正文校验)、
+>   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_request.go`(SMTP verb/响应码校验)、`eml_data.go`(RFC 5322 正文校验)、`multipart.go`(RFC 2046 multipart 校验 + boundary 校验)、`multipart_consistency.go`(boundary/CTE 一致性告警)、
 >   `describe.go`(包/PlannedPacket 摘要)、`file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
 >
 > 测试按「一一对应 + 公共辅助集中」组织,详见下文「测试文件命名规约」。
@@ -552,3 +580,6 @@ packets:
 > **硬约束**:新增协议、为已有协议加字段、或改动 schema 语义时,**必须同步更新对应的 MCP schema resource**
 > (`cmd/pmaker-mcp/resources/schema/<proto>.md`)。MCP 客户端(其他大模型)靠这些 resource 带内学语法,
 > schema 与实现脱节会让模型写出过时/无效的 YAML。该约束同样适用于新增/改动 MCP 工具与 resource 本身。
+> **新增 MIME 子结构(如 `multipart`)同理**:子结构非层、不能入 `stack`,需在 `overview.md` 的「子结构」
+> 小节登记,并在 `cmd/pmaker-mcp/resources/schema/<子结构>.md` 单独建档;嵌入它的层(http_request/
+> http_response/eml_data)schema 也要加字段说明并链到子结构 schema,确保 MCP 客户端能从总览发现到。
