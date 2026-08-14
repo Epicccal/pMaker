@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong> Generate Pcap Easier Again !</strong>
+  <strong> Generate Pcap Easier Again</strong>
 </p>
 
 <p align="center">
