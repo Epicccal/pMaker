@@ -1,0 +1,59 @@
+# examples/http/multipart_form.yaml
+#
+# 一次完整的 HTTP/1.1 multipart/form-data 上传(POST)+ 200 响应,跑在 TCP 会话之上。
+# 演示结构化 multipart 子结构:一个文本字段 + 一个 @file 文件字段;boundary 显式声明
+# 且与 Content-Type 头里的 boundary= 对齐;Content-Length: auto 按 multipart 实际长度计算。
+#
+# 覆盖点:
+#   - multipart 子结构嵌在 http_request 内作 body(非独立层);
+#   - multipart/form-data 的两个 part:文本字段(form-data; name="field1")+
+#     文件字段(form-data; name="file"; filename="form_field.txt",Content-Type: text/plain);
+#   - @file(assets/form_field.txt) 注入文件内容到文件字段的 part body;
+#   - boundary 一致性(Content-Type 头 boundary= 与 multipart.boundary 一致,无告警);
+#   - Content-Length: auto 取 multipart 实际字节长度。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: http-multipart
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49160, dport: 80, client_isn: 12000, server_isn: 13000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: POST
+              url: /upload
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                User-Agent: pMaker/0.1
+                Content-Type: "multipart/form-data; boundary=----=_pMaker_0001"
+                Content-Length: auto
+              multipart:
+                boundary: "----=_pMaker_0001"
+                parts:
+                  - headers:
+                      Content-Disposition: 'form-data; name="field1"'
+                    body: "text-value"
+                  - headers:
+                      Content-Disposition: 'form-data; name="file"; filename="form_field.txt"'
+                      Content-Type: text/plain
+                    body: "@file(assets/form_field.txt)"
+
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              headers:
+                Server: nginx/1.24.0
+                Content-Type: application/json
+                Content-Length: auto
+                Connection: keep-alive
+              body: '{"ok":true}'

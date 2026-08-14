@@ -1,0 +1,108 @@
+# examples/smtp/eml_multipart.yaml
+#
+# 一次完整 SMTP 会话，DATA 正文用 eml_data + multipart/mixed 构造带附件邮件:
+#   220 问候 → EHLO/250 多行 → MAIL/250 → RCPT/250
+#   → DATA/354 → eml_data(multipart/mixed: text/plain part + base64 附件 part)/250
+#   → QUIT/221
+#
+# 覆盖点:
+#   - eml_data 结构化模式 + multipart 子结构(multipart 邮件顶层 MIME 头必填);
+#   - multipart/mixed 两个 part:text/plain 正文 + base64 编码的小附件;
+#   - encoding: base64 自动做传输编码(每 76 字符折行),part 头带 Content-Transfer-Encoding: base64(CTE 一致);
+#   - 自动 dot-stuffing + 终止符(dot_stuff/dot_terminate 默认 on,作用于编码后的整段 content);
+#   - boundary 一致性(Content-Type 头 boundary= 与 multipart.boundary 一致)。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: smtp-multipart
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 49162, dport: 25, client_isn: 14000, server_isn: 15000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: dst
+        stack:
+          - smtp_response: { code: 220, message: "mail.example ESMTP" }
+
+      - from: src
+        stack:
+          - smtp_request: { verb: EHLO, args: "client.example" }
+
+      - from: dst
+        stack:
+          - smtp_response:
+              code: 250
+              lines:
+                - "mail.example"
+                - "8BITMIME"
+                - "PIPELINING"
+                - "SIZE 10485760"
+                - "STARTTLS"
+
+      - from: src
+        stack:
+          - smtp_request:
+              verb: MAIL
+              from: "alice@example.com"
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "OK" }
+
+      - from: src
+        stack:
+          - smtp_request:
+              verb: RCPT
+              to: "bob@example.net"
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "OK" }
+
+      - from: src
+        stack:
+          - smtp_request: { verb: DATA }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 354, message: "Start mail input; end with <CRLF>.<CRLF>" }
+
+      # ★ 结构化 EML 正文(eml_data)+ multipart/mixed:顶层 MIME 头 + 两个 part
+      - from: src
+        stack:
+          - eml_data:
+              headers:
+                From: "alice@example.com"
+                To: "bob@example.net"
+                Subject: "Attachment test"
+                Date: "Thu, 01 Jan 2024 00:00:00 +0000"
+                Message-ID: "<multipart@example.com>"
+                MIME-Version: "1.0"
+                Content-Type: "multipart/mixed; boundary=----=_pMaker_0001"
+              multipart:
+                boundary: "----=_pMaker_0001"
+                parts:
+                  - headers:
+                      Content-Type: "text/plain; charset=utf-8"
+                    body: "Hi Bob,\r\nSee attached.\r\n"
+                  - headers:
+                      Content-Type: "application/octet-stream"
+                      Content-Disposition: 'attachment; filename="hello.bin"'
+                      Content-Transfer-Encoding: base64
+                    body: "Hello, attachment!"
+                    encoding: base64
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "queued as MULT123" }
+
+      - from: src
+        stack:
+          - smtp_request: { verb: QUIT }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 221, message: "bye" }
