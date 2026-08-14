@@ -446,6 +446,14 @@ func validateLayer(l Layer) error {
 		if err := validateEMLDataFields(f); err != nil {
 			return err
 		}
+	case *HTTPReqFields:
+		if err := validateHTTPReqFields(f); err != nil {
+			return err
+		}
+	case *HTTPRespFields:
+		if err := validateHTTPRespFields(f); err != nil {
+			return err
+		}
 	case PayloadHex:
 		if _, err := ParsePayloadHex(string(f)); err != nil {
 			return err
