@@ -146,6 +146,3 @@ reviews:
     github-checks:
       enabled: true
       timeout_ms: 90000
-
-# 审阅结束不自动改 PR 状态门禁(避免误阻塞);由人决定是否合并。
-# request_changes_workflow 保持 false(默认),不自动 approve。
