@@ -226,6 +226,8 @@ func summaryLayerName(layerType string) (string, bool) {
 		return "ftp", true
 	case "smtp_request", "smtp_response":
 		return "smtp", true
+	case "pop3_request", "pop3_response":
+		return "pop3", true
 	case "eml_data":
 		return "eml", true // 协议无关的 RFC 5322 邮件内容
 	case "payload", "payload_hex", "tcp_session":

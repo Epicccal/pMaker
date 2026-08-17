@@ -193,6 +193,36 @@ type (
 		Lines   []string `yaml:"lines"`   // 多行续行: code-text / code final(RFC 5321 每行带 code- 前缀)
 	}
 
+	// POP3RequestFields 是一条 POP3 客户端命令(RFC 1939),序列化为 TCP payload 字节
+	// "COMMAND[ args]\r\n"。字段对齐 ftp_request 的扁平 {command, args} 风格:POP3 命令
+	// 无 SMTP MAIL/RCPT 那种结构化信封,统一走 command + args。
+	//
+	// command 原样输出(不强制大写),保留 user/retr 等小写构造能力(RFC 1939 §3 命令
+	// 大小写不敏感,是合规测试点);非标/私有命令走 payload/payload_hex。
+	POP3RequestFields struct {
+		Command string `yaml:"command"` // RFC 1939 核心(USER/PASS/APOP/STAT/LIST/RETR/DELE/NOOP/RSET/TOP/UIDL/QUIT)+ 扩展(CAPA/STLS/AUTH);非标/私有命令走 payload/payload_hex
+		Args    string `yaml:"args"`    // 命令参数(如 USER 的邮箱名、RETR 的 msg#、TOP 的 "msg# n"、APOP 的 "name digest");有/无按 pop3ArgsRule 校验
+	}
+
+	// POP3ResponseFields 是一条 POP3 服务器响应(RFC 1939)。单行 "+OK/-ERR [text]\r\n",
+	// 或多行(status 行 + 正文行 + <CRLF>.<CRLF> 终止符)。
+	//
+	// status 原样输出(不强制大写),保留 +ok/-err 等大小写构造能力;非标状态指示符
+	// (非 +OK/-ERR)走 payload/payload_hex。
+	//
+	// message / lines / eml 三者互斥且至少其一非空(裸 status 行走 payload/payload_hex):
+	//   - message:单行 "+OK message\r\n"。
+	//   - lines:多行普通行列表(LIST/UIDL 扫描列表、CAPA 能力列表),逐行 dot-stuff +
+	//     追加 <CRLF>.<CRLF> 终止符(与 eml_data 同一 dot-stuff 规则)。
+	//   - eml:多行 RFC 5322 邮件内容(RETR/TOP 返回的正文),复用 EMLDataFields 子结构
+	//     (由 builder.serializeEMLData 处理 dot-stuff + 终止符,协议无关)。与 message/lines 互斥。
+	POP3ResponseFields struct {
+		Status  string         `yaml:"status"`  // +OK / -ERR(大小写不敏感,原样输出);非标状态指示符走 payload/payload_hex
+		Message string         `yaml:"message"` // 单行:"+OK message\r\n";与 lines/eml 互斥
+		Lines   []string       `yaml:"lines"`   // 多行普通行(LIST/UIDL/CAPA…);逐行 dot-stuff + 终止符;与 message/eml 互斥
+		EML     *EMLDataFields `yaml:"eml"`     // 多行 RFC 5322 正文(RETR/TOP);复用 eml_data 子结构(dot-stuff + 终止符由其内部处理);与 message/lines 互斥
+	}
+
 	// EMLDataFields 是一封 RFC 5322 邮件内容(headers + body)，协议无关。
 	// 一个 eml_data 层 = 一封完整邮件内容，序列化为 TCP payload 字节。
 	//
