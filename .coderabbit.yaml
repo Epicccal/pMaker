@@ -1,0 +1,150 @@
+# CodeRabbit 配置 —— pMaker 仓库
+#
+# 本仓库为 Go 编写的离线 pcap 构造工具,审阅重点关注:
+#   1. 畸形包/原始字节兜底通道不能被自动修正(FixLengths/ComputeChecksums)悄悄废掉;
+#   2. 任意深度封装(QinQ/GRE 递归)的 next-proto 串接正确性,多层 IP 下传输层
+#      checksum 绑定「就近内层 IP」;
+#   3. 确定性输出(禁用 time.Now()/全局 rand,同 scenario+seed 逐字节相同);
+#   4. 错误处理一律 fmt.Errorf("%w") 包装、库路径不 panic、配置校验尽早报具体字段路径。
+# 详细工作流规范见仓库根 CLAUDE.md 与 ~/.claude/CLAUDE.md。
+
+language: zh-CN
+# 评审/对话用中文;保持简洁、具体、就事论事,直接给可执行建议,不空泛客套。
+tone_instructions: "用中文审阅。保持简洁、具体,给出可直接落地的修改建议,避免空泛赞美。"
+
+reviews:
+  # chill:均衡的反馈粒度,既不噪也不漏关键问题。
+  profile: chill
+
+  high_level_summary: true
+  # 摘要按改动类型分组(功能/测试/文档/重构),与本仓库「按逻辑拆分提交」的规范对齐。
+  high_level_summary_instructions: "用中文按「功能改动 / 测试 / 文档 / 重构」分组列出本次 PR 的要点,每条一句话。"
+  review_status: true
+  review_progress: true
+  collapse_walkthrough: true
+  changed_files_summary: true
+  sequence_diagrams: false  # 纯 CLI 工具,无运行时交互序列,关掉省篇幅
+  estimate_code_review_effort: true
+  # 仓库无 issue tracker 联动,关掉相关噪声。
+  assess_linked_issues: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  auto_apply_labels: false
+  suggested_reviewers: false
+  auto_assign_reviewers: false
+  poem: false
+  in_progress_fortune: false
+  enable_prompt_for_ai_agents: true
+
+  # 排除生成产物与第三方/二进制文件,不让它们干扰评审。
+  path_filters:
+    - "!bin/**"          # 构建产物
+    - "!dist/**"         # goreleaser 产物
+    - "!pcap/**"         # MCP server 运行时归档的 pcap
+    - "!yaml/**"         # MCP server 运行时归档的场景 YAML
+    - "!**/testdata/**"  # golden pcap 等测试基准,固定字节,无需评审
+    - "!pmaker"          # 误提交的二进制
+    - "!pmaker-mcp"
+    - "!img/**"          # README 截图等
+    - "!README.en.md"    # README.md 的英文镜像,中文版为主,避免重复评审
+
+  path_instructions:
+    # Go 源码:核心评审规则,对齐 CLAUDE.md 的领域约束。
+    - path: "**/*.go"
+      instructions: |
+        本仓库核心约束(务必据此评审):
+        1. 畸形包必须能绕过自动修正:畸形/规避用例要能逐字段关闭 FixLengths/ComputeChecksums
+           并注入非法 length、错误 checksum;绝不能因「修正了 checksum/length」让本应畸形的
+           测试包变成合规包。发现把畸形开关忽略或硬编码 true 的,标为问题。
+        2. 任意深度封装:数据模型是「有序层栈」(非固定槽位),允许同类型重复(QinQ)与递归嵌套
+           (GRE 套报文)。next-proto/EtherType 默认自动推导、可逐层显式覆盖。检查串接是否正确、
+           覆盖能力是否被写死。
+        3. 多层 IP 时,TCP/UDP checksum 必须绑定「就近内层 IP」
+           (SetNetworkLayerForChecksum),不是外层。绑错标为问题。
+        4. 确定性:禁用 time.Now()/全局 rand,时间戳来自配置或 seed;同一 scenario+seed 必须
+           逐字节相同 pcap。发现引入非确定来源的标为问题。
+        5. 错误处理一律 fmt.Errorf("...: %w", err) 包装上抛,库路径不 panic,CLI 层统一打到
+           stderr 并非零码退出。配置校验尽早失败,报错带字段路径(用户多为非开发者)。
+        6. 依赖克制:标准库能做的不引第三方;新增依赖前确认是否真需要。
+        7. 测试:表驱动,新协议/新字段要有对应 golden pcap,关键路径跑 -race。
+           golden pcap 就近放 internal/<pkg>/testdata/<协议>/,不在仓库根建 testdata/。
+
+    # scenario 层:YAML schema 与校验
+    - path: "internal/scenario/**"
+      instructions: |
+        scenario 包负责 YAML schema、解析与校验。检查:
+        - 新增字段/层是否同步更新了 layer_decode.go 的解码分发与 describe.go 的摘要;
+        - 未知字段校验是否覆盖(未知字段应在解析阶段被拒,而非静默忽略);
+        - @file(...) 占位符的 baseDir 语义是否正确(CLI=scenario 文件所在目录,MCP=workdir);
+        - 时间编排:Offset 字段只接受非负时长,负值在解析阶段即失败;base_time 仅绝对时刻。
+
+    # builder 层:层栈序列化
+    - path: "internal/builder/**"
+      instructions: |
+        builder 包负责 scenario 模型 -> gopacket layers -> 字节。检查:
+        - 新协议是否单独成文件(proto.go),与 builder.go 的层派发解耦;
+        - checksum 伪首部绑定是否正确(多层 IP 绑内层);
+        - 原始字节兜底(payload_hex)路径是否完好,gopacket 无法表达的畸形能否落原始字节;
+        - gopacket 无 layer 的协议(HTTP/FTP/TELNET/SMTP/EML)是否序列化为 gopacket.Payload。
+
+    # flow / plan:有状态展开与时间编排
+    - path: "internal/flow/**"
+      instructions: |
+        flow 包是有状态展开器(非新包结构),维护 TCP 连接状态把脚本展开成 stack 包。
+        检查 TCP 状态不变式:seq 前进量 = len(payload)+SYN(1)+FIN(1),纯 ACK 不消耗 seq,
+        发包时 ack = 对端当前 seq。握手/挥手据此推导。
+    - path: "internal/plan/**"
+      instructions: |
+        plan 包是 packets 与 flows 的汇流点,按 Time 稳定排序后交 builder/writer。
+        检查:跨流 start_after 的两段式实现(事件粒度算时 + 各 flow 独立 Expand),
+        循环依赖是否在校验阶段拦截,全程不用 time.Now()。
+
+    # 示例场景 YAML
+    - path: "examples/**"
+      instructions: |
+        examples 是可直接运行的示例场景,按协议分目录。检查:
+        - 是否单职责、小而聚焦;封装/隧道层是否有嵌套用例(QinQ/GRE 套接);
+        - 是否同步在 cmd/pmaker-mcp/resources/schema/<proto>.md 加了字段速查
+          (MCP 客户端靠这些 resource 带内学语法,schema 与实现脱节会让模型写出无效 YAML);
+        - 时间编排字段语义是否符合 CLAUDE.md「时间编排与汇流」一节。
+
+    # GitHub Actions 工作流
+    - path: ".github/workflows/**"
+      instructions: |
+        检查:最小权限原则(permissions 显式声明)、action 版本是否锁定避免漂移、
+        CGO_ENABLED=0 静态构建是否保持、测试是否带 -race。
+
+  # 自动评审:针对 main 的 PR 自动跑;草稿 PR 不评审;依赖机器人跳过。
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 5
+    drafts: false
+    base_branches:
+      - "main"
+    ignore_usernames:
+      - dependabot
+      - github-actions
+
+  # 工具集成:复用仓库已有的 golangci-lint 配置,与 CI 质量门禁对齐。
+  tools:
+    golangci-lint:
+      enabled: true
+      config_file: ".golangci.yml"
+    # README 含中英文档,启 markdownlint 检查文档格式。
+    markdownlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    # 安全扫描:Go 依赖与密钥泄露。
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 90000
+
+# 审阅结束不自动改 PR 状态门禁(避免误阻塞);由人决定是否合并。
+# request_changes_workflow 保持 false(默认),不自动 approve。
