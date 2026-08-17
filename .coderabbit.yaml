@@ -1,4 +1,4 @@
-# CodeRabbit 配置 —— pMaker 仓库
+# CodeRabbit 配置
 #
 # 本仓库为 Go 编写的离线 pcap 构造工具,审阅重点关注:
 #   1. 畸形包/原始字节兜底通道不能被自动修正(FixLengths/ComputeChecksums)悄悄废掉;
@@ -9,12 +9,11 @@
 # 详细工作流规范见仓库根 CLAUDE.md 与 ~/.claude/CLAUDE.md。
 
 language: zh-CN
-# 评审/对话用中文;保持简洁、具体、就事论事,直接给可执行建议,不空泛客套。
 tone_instructions: "用中文审阅。保持简洁、具体,给出可直接落地的修改建议,避免空泛赞美。"
 
 reviews:
-  # chill:均衡的反馈粒度,既不噪也不漏关键问题。
-  profile: chill
+  # assertive:更详尽的反馈,覆盖面更广;适合本项目这种协议构造工具,
+  profile: assertive
 
   high_level_summary: true
   # 摘要按改动类型分组(功能/测试/文档/重构),与本仓库「按逻辑拆分提交」的规范对齐。
@@ -123,9 +122,11 @@ reviews:
     drafts: false
     base_branches:
       - "main"
+    # GitHub 机器人账号的真实 login 带 [bot] 后缀;此处大小写敏感精确匹配,
+    # 必须用完整值才能命中,否则机器人 PR 照样被审阅。
     ignore_usernames:
-      - dependabot
-      - github-actions
+      - dependabot[bot]
+      - github-actions[bot]
 
   # 工具集成:复用仓库已有的 golangci-lint 配置,与 CI 质量门禁对齐。
   tools:
