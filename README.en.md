@@ -51,7 +51,7 @@ and regression-friendly.
 | L3 | `ipv4`, `ipv6`, `gre` | next-proto auto-derivation + override |
 | L4 | `tcp`, `udp` | checksum binds to nearest IP |
 | Control | `icmp`, `icmpv6` | echo + error messages |
-| Application | `dns`, `http`, `ftp`, `smtp`, `telnet` | structured fields + raw fallback |
+| Application | `dns`, `http`, `ftp`, `smtp`, `pop3`, `telnet` | structured fields |
 | Fallback | `payload`, `payload_hex` | raw bytes for malformations |
 
 ## Quick Start

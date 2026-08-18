@@ -59,7 +59,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层)
 - L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)
 - L4:`tcp`、`udp`
-- 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`eml_data`
+- 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`eml_data`
 - 兜底:`payload`、`payload_hex`(原始字节)
 
 **已实现特性**:
@@ -70,6 +70,8 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV。
 - FTP 控制连接命令/响应(RFC 959 多行续行)。
 - SMTP 信封命令/响应(RFC 5321,MAIL/RCPT 结构化信封路径)。
+- POP3 命令/响应(RFC 1939,command+args 扁平;多行响应复用 `eml_data` 子结构做 dot-stuffing + 终止符;
+  响应 `status` 支持 `+OK`/`-ERR` 与 RFC 1734/4954 SASL 续行挑战 `+`)。
 - **MIME multipart body**(`multipart` 子结构,嵌在 `http_request`/`http_response`/`eml_data` 内,非独立层):
   结构化构造 RFC 2046 multipart(含 `multipart/form-data` 上传、`multipart/mixed` 带附件),
   每 part 支持 base64/quoted-printable 传输编码(base64 按 RFC 2045 每 76 字符折行)与
@@ -150,29 +152,60 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - gopacket 无 SMTP layer,自己序列化为 `gopacket.Payload`(同 HTTP/FTP/TELNET);不引入 gopacket
   layer、不碰 IP 层 next-proto 串接、无独立 checksum(由 TCP 构造器处理)。
 
-**EML DATA 专项(协议无关 RFC 5322 正文层)**:
+**POP3 专项(command+args 扁平)**:
+
+- 一个 `pop3_request` 层 = 一条 POP3 客户端命令,一个 `pop3_response` 层 = 一条 POP3 服务器响应,
+  均序列化为 TCP payload 字节。**字段对齐 `ftp_request` 的 `{command, args}` 扁平风格**:
+  POP3 命令无 SMTP MAIL/RCPT 那种结构化信封,统一走 command + args,builder 输出 `COMMAND[ args]\r\n`。
+- 字段:命令 `command`(RFC 1939 核心 USER/PASS/APOP/STAT/LIST/RETR/DELE/NOOP/RSET/TOP/UIDL/QUIT
+  + 扩展 CAPA/STLS/AUTH;空报错)、`args`(命令参数,如 USER 邮箱名、RETR msg#、TOP 的 `msg# n`、
+  APOP 的 `name digest`、AUTH 机制);响应 `status`(`+OK`/`-ERR`,大小写不敏感、原样输出)、
+  `message`(单行)/`lines`(多行普通行,如 LIST/UIDL/CAPA)/`eml`(多行 RFC 5322 正文,复用 `eml_data`
+  子结构,RETR/TOP)。`message` 是状态行附带文本,可与 `lines`/`eml` 组合(多行响应首行带说明文本,
+  RFC 1939 §3 合法形态,如 LIST 的 `+OK 2 messages (320 octets)`、CAPA 的 `+OK Capability list follows`),
+  也可单独(单行响应);`lines` 与 `eml` 互斥(多行正文二选一);三者至少其一非空。
+- **命令/状态校验对齐 DNS/FTP/SMTP 模式**:`command` 在已知命令表内(大小写不敏感),`status` 为
+  `+OK`/`-ERR`/`+`(大小写不敏感;`+` 是 RFC 1734/4954 SASL 续行挑战,单字符 `+` 而非 `+OK`);
+  未列入的命令、非标状态指示符报错,引导改用 `payload`/`payload_hex`
+  (与全项目「非标值走原始字节兜底」一致)。命令/状态原样输出(不强制大小写),保留 `user`/`+ok` 等大小写
+  构造能力(RFC 1939 §3 命令大小写不敏感,是合规测试点)。args 按 `pop3ArgsRule` 校验有/无
+  (required/forbidden/optional):必带 USER/PASS/APOP/RETR/DELE/TOP/AUTH,禁带 STAT/NOOP/RSET/QUIT/CAPA/STLS,
+  可选 LIST/UIDL(无参=多行,有参=msg# 单行)。
+- **多行响应复用 `eml_data` 子结构**:RETR/TOP 返回 RFC 5322 邮件内容,直接嵌入 `EMLDataFields` 作 `eml`
+  字段(非独立层),由 POP3 接入层(`serializePOP3Resp` 的 eml 分支)取 `serializeEMLData` 纯内容后
+  强制 dot-stuffing + `<CRLF>.<CRLF>` 终止符(与 SMTP DATA 同一成帧规则,由各自接入层强制)。
+  `lines` 多行(LIST/UIDL/CAPA)逐行 dot-stuff + 追加终止符(复用 `dotStuff`,接入层职责)。
+  `status` 行本身不参与 dot-stuff(只有 status 行之后的多行正文才 dot-stuff,与 POP3 语义一致)。
+  CAPA 响应用 `lines`(能力标签不区分大小写,如 `SASL CRAM-MD5 KERBEROS_V4`、`STLS`,RFC 2449)。
+- **eml 子结构校验委托**:`eml` 非空时委托 `validateEMLDataFields` 校验(模式互斥/raw_hex 等),无需在
+  pop3 侧重复实现。`@file` 占位符反射遍历自动覆盖 `eml` 子结构(HeaderMap/body/raw 等 string 字段,零改动)。
+- gopacket 无 POP3 layer,自己序列化为 `gopacket.Payload`(同 HTTP/FTP/TELNET/SMTP);不引入 gopacket
+  layer、不碰 IP 层 next-proto 串接、无独立 checksum(由 TCP 构造器处理)。
+
+**EML DATA 专项(协议无关 RFC 5322 内容层)**:
 
 - 一个 `eml_data` 层 = 一封 RFC 5322 邮件内容(headers + body),序列化为 TCP payload 字节,
-  与 `smtp_request`/`smtp_response` 同级。**协议无关**:RFC 5322 内容是 SMTP/POP3/IMAP 的共同核心,
-  framing 由 `dot_stuff`/`dot_terminate` 开关控制 —— SMTP DATA(RFC 5321)与 POP3 RETR(RFC 1939)
-  用行框架(dot-stuffing + `<CRLF>.<CRLF>` 终止符,`dot_stuff`/`dot_terminate` 默认 on),IMAP FETCH(RFC 9051)用
-  长度前缀字面量(无 dot-stuffing/终止符,未来由 `imap_response` builder 自动覆写为 `off`)。
+  与 `smtp_request`/`smtp_response` 同级。**协议无关的内容层**:RFC 5322 内容是 SMTP/POP3/IMAP 的共同核心,
+  `serializeEMLData` 只产内容字节,**不含成帧**。成帧(framing)是传输协议的职责,由接入层强制,
+  不在内容层暴露开关 —— SMTP DATA(RFC 5321 §4.5.2)与 POP3 RETR(RFC 1939 §3)的接入层
+  (eml_data standalone 层分支 / `serializePOP3Resp` 的 eml 分支)强制 dot-stuffing +
+  `<CRLF>.<CRLF>` 终止符,无 opt-out;IMAP FETCH(RFC 9051,未来)由 `imap_response` builder
+  用长度前缀 `{n}\r\n` 包装纯内容字节(无 dot-stuffing/终止符),同样不操作内容层字段。
+  缺 dot-stuffing / 缺终止符等成帧畸形走 `payload`/`payload_hex` 原始字节兜底
+  (与全项目「非标值走原始字节」一致)。
 - 两种模式(互斥,由校验保证):结构化模式(`headers` 必填 + `body` 可空,headers 保留 YAML 声明顺序输出、
   支持重复头(如多个 `Received`);头体间自动插空行;`headers` 为空 → 报错,构造无头/缺头等畸形走 `raw`);
-  原始模式(`raw` 裸透传 / `raw_hex` 十六进制,不拼头体、不做 dot-stuffing,构造无头/非法头/缺空行/非标换行等畸形)。全空报错。
-- `dot_stuff`(on / off,缺省 on):行首 `.` → `..`(RFC 5321 §4.5.2 / RFC 1939 §3)。结构化模式下
-  作用于整个 content(headers + 空行 + body)逐行处理——合规 header 的 folding 续行以 WSP 起始,
-  行首非 `.`,不受影响;若 header value 含 `\r\n.`(非 folding、属注入/畸形)也会被 stuff,
-  构造此类 header 区行首 `.` 的畸形请用 `raw` 模式(精确字节、不自动 stuffing);
-  `dot_terminate`(on / off,缺省 on):是否追加终止符 `<CRLF>.<CRLF>`(正文以 `\r\n`
-  结尾时追加 `.\r\n`,否则 `\r\n.\r\n`)。`off` 是 opt-out(IMAP / 畸形)。
+  原始模式(`raw` 裸透传 / `raw_hex` 十六进制,不拼头体、不归一化,构造无头/非法头/缺空行/非标换行等畸形;
+  成帧仍由接入层追加)。全空报错。
 - headers 值裸透传不转义:值含 `\r\n`+空白 = RFC 5322 §2.2.3 folding(合规),值含 `\r\n`+非空白
   = 头注入(畸形);重复头/有序头(RFC 5322 §3.6 Received)结构化模式已支持(`HeaderMap` 保序、
   允许重复 key),无需走 `raw`。
   `body` 支持 `@file(path)` 注入;行结束符结构化模式自动归一化(裸 `\n` → `\r\n`,抹平 YAML `|` 块标量等常用写法带入的裸 `\n`),raw 模式不归一化(保留精确字节)。
-- 序列化纯函数 `builder.serializeEMLData`(协议无关,不放在 `smtp.go`);校验 `scenario.validateEMLDataFields`
-  (模式互斥、raw/raw_hex 互斥、枚举、空内容);接入 `PayloadBytes`/`serializeStack`/`validateLayer`/
-  flow message 白名单/`summaryLayerName`。gopacket 无 EML layer,自己序列化为 `gopacket.Payload`。
+- 成帧助手 `builder.ApplyDotStuffing` / `AppendDotTerminator`(导出,供接入层调用);
+  序列化纯函数 `builder.serializeEMLData`(协议无关,只产内容,不放在 `smtp.go`);
+  校验 `scenario.validateEMLDataFields`(模式互斥、raw/raw_hex 互斥、空内容);
+  接入 `PayloadBytes`/`serializeStack`/`validateLayer`/flow message 白名单/`summaryLayerName`。
+  gopacket 无 EML layer,自己序列化为 `gopacket.Payload`。
 
 **MIME multipart 专项(RFC 2046,子结构非层)**:
 
@@ -187,7 +220,8 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   boundary 不一致 / 缺 `Content-Type` / part `encoding` 与 `Content-Transfer-Encoding` 头不符或缺失。
   **boundary 碰撞告警**在 builder 序列化阶段(`slog.Warn`):part 编码后 body 逐行扫描,某行独占 `--<boundary>`
   → 告警(RFC 2046 §5.1.1:分界符须独占一行,解析端会误判切分);按行匹配避免行内子串误报。
-- EML 下 multipart 字节作为 content,作用顺序固定「编码 → 拼装 → stuff → terminate」:dot-stuff 作用于
+- EML 下 multipart 字节作为 content,作用顺序固定「编码 → 拼装 → stuff(接入层) → terminate(接入层)」:
+  `serializeEMLData` 产纯内容(编码 → 拼装),接入层(SMTP/POP3)做 stuff + terminate。dot-stuff 作用于
   编码后整段 content(boundary 行 `--` 开头不受影响;base64 字母表不含 `.` 行首不会是 `.`;`none`/QP 的 part
   body 行首 `.` 被 stuff 成 `..` 是 SMTP 传输透明性的正确形态)。multipart 字节不再经 `normalizeCRLF`。
 - **v1 限制**:不支持嵌套 multipart(`multipart/mixed` 内嵌 `multipart/alternative`)与 preamble/epilogue
@@ -213,12 +247,12 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 > builder 包:
 > - `builder.go`:层栈序列化入口 `BuildPlanned` + `serializeStack` 分派。
 > - `dns.go`(构包)/ `dns_enum.go`(枚举映射)/ `dns_raw.go`(原始层)。
-> - `http.go` / `ftp.go` / `telnet.go` / `smtp.go` / `eml_data.go`(协议无关 RFC 5322 正文) / `multipart.go`(RFC 2046 multipart body,被 http/eml 嵌套调用) / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
+> - `http.go` / `ftp.go` / `telnet.go` / `smtp.go` / `pop3.go`(POP3 命令/响应,多行复用 eml_data) / `eml_data.go`(协议无关 RFC 5322 正文) / `multipart.go`(RFC 2046 multipart body,被 http/eml 嵌套调用) / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
 >
 > scenario 包(详见 `doc.go`):
 > - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields + `MultipartBody`/`MultipartPart` 子结构)、
 >   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Parse/Load/Validate/Warnings)、`start_after_graph.go`、
->   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_request.go`(SMTP verb/响应码校验)、`eml_data.go`(RFC 5322 正文校验)、`multipart.go`(RFC 2046 multipart 校验 + boundary 校验)、`multipart_consistency.go`(boundary/CTE 一致性告警)、
+>   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_command.go`(SMTP verb/响应码校验)、`pop3_command.go`(POP3 命令/状态校验)、`eml_data.go`(RFC 5322 正文校验)、`multipart.go`(RFC 2046 multipart 校验 + boundary 校验)、`multipart_consistency.go`(boundary/CTE 一致性告警)、
 >   `describe.go`(包/PlannedPacket 摘要)、`file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
 >
 > 测试按「一一对应 + 公共辅助集中」组织,详见下文「测试文件命名规约」。
