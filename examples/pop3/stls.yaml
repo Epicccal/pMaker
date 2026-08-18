@@ -1,0 +1,58 @@
+# examples/pop3/stls.yaml
+#
+# POP3 TLS 升级流程(RFC 2595 STLS + RFC 2449 CAPA):
+#   问候 → CAPA(多行 lines,含 STLS/SASL/UIDL…)→ STLS → +OK Begin TLS negotiation
+#   (TLS 握手在 +OK 的 CRLF 之后开始;此处只到 +OK,TLS 记录字节超出 POP3 层范围)。
+#
+# 覆盖点:
+#   - CAPA 命令(禁带 args)+ 多行 lines 响应(能力标签,含 STLS/SASL/PIPELINING);
+#   - STLS 命令(禁带 args)+ 单行 +OK 响应(RFC 2595 §4:TLS 握手在响应 CRLF 后开始)。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: pop3-stls
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.110", ttl: 64 }
+      - tcp:  { sport: 49154, dport: 110, client_isn: 3000, server_isn: 7000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器问候
+      - from: dst
+        stack:
+          - pop3_response:
+              status: "+OK"
+              message: "POP3 server ready <1896.697170952@mail.example>"
+
+      # CAPA 询问能力
+      - from: src
+        stack:
+          - pop3_request: { command: CAPA }
+
+      # CAPA 多行响应(带说明文本的首行 + 能力列表,含 STLS/SASL/UIDL/PIPELINING)
+      - from: dst
+        stack:
+          - pop3_response:
+              status: "+OK"
+              message: "Capability list follows"
+              lines:
+                - "TOP"
+                - "USER"
+                - "SASL PLAIN LOGIN CRAM-MD5"
+                - "RESP-CODES"
+                - "PIPELINING"
+                - "EXPIRE 60"
+                - "UIDL"
+                - "STLS"
+
+      # STLS 请求 TLS 升级
+      - from: src
+        stack:
+          - pop3_request: { command: STLS }
+
+      # +OK Begin TLS negotiation(TLS 握手在 CRLF 后开始)
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "Begin TLS negotiation" }
