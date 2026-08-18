@@ -224,12 +224,14 @@ type (
 	// lines:多行普通行列表(LIST/UIDL 扫描列表、CAPA 能力列表),逐行 dot-stuff +
 	//   追加 <CRLF>.<CRLF> 终止符(与 eml_data 同一 dot-stuff 规则)。
 	// eml:多行 RFC 5322 邮件内容(RETR/TOP 返回的正文),复用 EMLDataFields 子结构
-	//   (由 builder.serializeEMLData 处理 dot-stuff + 终止符,协议无关)。与 lines 互斥。
+	//   (builder.serializeEMLData 只产纯 RFC 5322 内容、不含成帧;dot-stuff + 终止符
+	//   由 POP3 接入层 serializePOP3Resp 在其返回后强制追加,与 lines 分支同一职责)。
+	//   与 lines 互斥。
 	POP3ResponseFields struct {
 		Status  string         `yaml:"status"`  // +OK / -ERR / +(大小写不敏感,原样输出);+ 为 RFC 1734/4954 SASL 续行挑战;非标状态指示符走 payload/payload_hex
 		Message string         `yaml:"message"` // 状态行附带文本:单独非空=单行响应(SASL 续行则承载 base64 挑战);与 lines/eml 组合=多行首行带说明文本(RFC 1939 §3)
 		Lines   []string       `yaml:"lines"`   // 多行普通行(LIST/UIDL/CAPA…);逐行 dot-stuff + 终止符;与 eml 互斥
-		EML     *EMLDataFields `yaml:"eml"`     // 多行 RFC 5322 正文(RETR/TOP);复用 eml_data 子结构(dot-stuff + 终止符由其内部处理);与 lines 互斥
+		EML     *EMLDataFields `yaml:"eml"`     // 多行 RFC 5322 正文(RETR/TOP);复用 eml_data 子结构(其只产纯内容,dot-stuff + 终止符由 POP3 接入层追加);与 lines 互斥
 	}
 
 	// EMLDataFields 是一封 RFC 5322 邮件内容(headers + body)，协议无关的**内容层**。

@@ -186,14 +186,10 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			}
 			serLayers = append(serLayers, gopacket.Payload(b))
 		case *scenario.EMLDataFields:
-			// eml_data standalone 层 = SMTP DATA 正文：接入层强制成帧
-			// （dot-stuffing + <CRLF>.<CRLF> 终止符，RFC 5321 §4.5.2，无 opt-out）。
-			// 缺 dot-stuffing/缺终止符等畸形走 payload/payload_hex 原始字节兜底。
-			b, err := serializeEMLData(f)
+			b, err := serializeEMLDataFramed(f)
 			if err != nil {
 				return nil, fmt.Errorf("eml_data: %w", err)
 			}
-			b = AppendDotTerminator(ApplyDotStuffing(b))
 			serLayers = append(serLayers, gopacket.Payload(b))
 		default:
 			return nil, fmt.Errorf("不支持的层类型 %q", l.Type)

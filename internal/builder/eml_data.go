@@ -69,6 +69,18 @@ func serializeEMLData(f *scenario.EMLDataFields) ([]byte, error) {
 	return content, nil
 }
 
+// serializeEMLDataFramed 把 eml_data standalone 层序列化为带成帧的完整 SMTP DATA 正文字节：
+// serializeEMLData（纯内容）→ ApplyDotStuffing → AppendDotTerminator。
+// serializeStack 与 PayloadBytes 都调用此函数，确保两条路径字节一致（flow 展开器
+// 按 PayloadBytes 的长度切段，不一致会导致静默的分段长度错误）。
+func serializeEMLDataFramed(f *scenario.EMLDataFields) ([]byte, error) {
+	b, err := serializeEMLData(f)
+	if err != nil {
+		return nil, err
+	}
+	return AppendDotTerminator(ApplyDotStuffing(b)), nil
+}
+
 // ApplyDotStuffing 对正文做 RFC 5321 §4.5.2 / RFC 1939 §3 的透明性处理：
 // 每行行首为 '.' 的行前面加一个 '.'，无论该行是否只有 '.'。
 // 按 \r\n 分行处理（保留 \r\n），首行特殊处理（无前导 \r\n）。

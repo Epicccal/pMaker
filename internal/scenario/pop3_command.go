@@ -63,13 +63,18 @@ func validatePOP3Command(c string) (string, error) {
 
 // validatePOP3RequestFields 校验 pop3_request 字段组合的合法性(command + args 约束)。
 //   - command 经 validatePOP3Command 校验(已知表);
-//   - args 有/无按 pop3Commands 中该命令的策略校验(required/forbidden/optional)。
+//   - args 有/无按 pop3Commands 中该命令的策略校验(required/forbidden/optional);
+//   - args 不能含 \r 或 \n:POP3 以 CRLF 为命令行终止符,注入换行符会产出额外命令行;
+//     需构造畸形命令行请用 payload / payload_hex。
 //
 // 只判合法性,不解析 args 内容(避免过度约束畸形构造)。
 func validatePOP3RequestFields(f *POP3RequestFields) error {
 	uc, err := validatePOP3Command(f.Command)
 	if err != nil {
 		return err
+	}
+	if hasCRLF(f.Args) {
+		return fmt.Errorf("args 不能包含 \\r 或 \\n(会注入额外命令行;畸形 POP3 字节流请用 payload / payload_hex)")
 	}
 	switch pop3Commands[uc] {
 	case pop3ArgsRequired:
@@ -104,6 +109,12 @@ func validatePOP3Status(s string) (string, error) {
 	}
 }
 
+// hasCRLF 报告字符串是否含 \r 或 \n。POP3 以 CRLF 为行终止符,结构化字段中注入换行符
+// 会在字节流中产出额外命令 / 响应行,因此在校验阶段拦截;畸形 POP3 字节流请用 payload / payload_hex。
+func hasCRLF(s string) bool {
+	return strings.ContainsAny(s, "\r\n")
+}
+
 // validatePOP3ResponseFields 校验 pop3_response 字段组合的合法性(status + message/lines/eml 约束)。
 //   - status 非空且为 +OK / -ERR / +(大小写不敏感),否则报错引导 payload/payload_hex(+ 是
 //     RFC 1734/4954 SASL 续行的服务器挑战,单字符 + 而非 +OK);
@@ -131,6 +142,16 @@ func validatePOP3ResponseFields(f *POP3ResponseFields) error {
 	}
 	if us == "+" && (hasLines || hasEML) {
 		return fmt.Errorf("%s 为 RFC 1734/4954 SASL 续行挑战,每轮挑战是独立单行(+ <base64>\\r\\n),不接受多行正文;多轮 AUTH 握手用多条独立 pop3_response,构造非标形态请用 payload / payload_hex", f.Status)
+	}
+	// message / lines 不能含 \r 或 \n:POP3 以 CRLF 为行终止符,注入换行符会产出额外响应行;
+	// 畸形 POP3 字节流请用 payload / payload_hex。
+	if hasCRLF(f.Message) {
+		return fmt.Errorf("message 不能包含 \\r 或 \\n(会注入额外响应行;畸形 POP3 字节流请用 payload / payload_hex)")
+	}
+	for i, line := range f.Lines {
+		if hasCRLF(line) {
+			return fmt.Errorf("lines[%d] 不能包含 \\r 或 \\n(会注入额外响应行;畸形 POP3 字节流请用 payload / payload_hex)", i)
+		}
 	}
 	// lines 与 eml 互斥(多行正文二选一);message 可与任一组合,也可单独(单行)。
 	if hasLines && hasEML {

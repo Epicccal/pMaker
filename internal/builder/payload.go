@@ -27,15 +27,17 @@ func PayloadBytes(l scenario.Layer) ([]byte, error) {
 	case *scenario.POP3RequestFields:
 		return serializePOP3Req(f), nil
 	case *scenario.POP3ResponseFields:
-		return serializePOP3Resp(f)
-	case *scenario.EMLDataFields:
-		// eml_data standalone 层 = SMTP DATA 正文：接入层强制成帧（与 serializeStack
-		// 的 case *scenario.EMLDataFields 保持一致），flow 展开器据此取长度切段。
-		b, err := serializeEMLData(f)
+		b, err := serializePOP3Resp(f)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("pop3_response: %w", err)
 		}
-		return AppendDotTerminator(ApplyDotStuffing(b)), nil
+		return b, nil
+	case *scenario.EMLDataFields:
+		b, err := serializeEMLDataFramed(f)
+		if err != nil {
+			return nil, fmt.Errorf("eml_data: %w", err)
+		}
+		return b, nil
 	case *scenario.PayloadFields:
 		return payloadBytes(f)
 	case scenario.PayloadHex:
