@@ -168,7 +168,7 @@ type (
 	}
 
 	// SMTPRequestFields 是一条 SMTP 信封命令。MAIL/RCPT 走结构化信封路径(from/to + params);
-	// 其余 verb(EHLO/AUTH/BDAT/…)用 args 携带普通参数(verb 仍走 knownSMTPVerbs 校验)。
+	// 其余 verb(EHLO/AUTH/BDAT/…)用 args 携带普通参数(verb 仍走 smtpVerbs 校验)。
 	// 私有/非标 verb、MAIL/RCPT 的结构性畸形(缺 <>、非标空格、FROM/TO 大小写非标、缺冒号)不走 args,
 	// 而是走 payload/payload_hex 原始字节兜底。
 	//
