@@ -1,9 +1,14 @@
 # examples/smtp/eml_malformed.yaml
 #
-# eml_data 畸形构造能力演示（三例独立 standalone packet，不走 flow）：
-#   ① 缺 dot-stuffing：body 行首为 . 但 dot_stuff: off（接收端可能误判为终止符）；
-#   ② 缺终止符：dot_terminate: off（服务器应超时或报错）；
-#   ③ 头注入：headers 值含 \r\n + 非空白（裸透传不转义，构造 header injection）。
+# eml_data 畸形构造能力演示（三例独立 standalone packet，不走 flow）。
+# eml_data 是协议无关的**内容层**：只产 RFC 5322 内容字节，成帧（dot-stuffing +
+# <CRLF>.<CRLF> 终止符）由 SMTP 接入层强制，无 opt-out。缺 dot-stuffing / 缺终止符 /
+# 精确畸形字节走 payload / payload_hex 原始字节兜底（与全项目「非标值走原始字节」一致）。
+#
+#   ① 缺 dot-stuffing：body 行首 . 未被 stuffing（畸形）—— 走 payload 承载精确字节；
+#   ② 缺终止符：DATA 正文不以 <CRLF>.<CRLF> 结束（服务器应超时）—— 走 payload；
+#   ③ 头注入：headers 值含 \r\n + 非空白（裸透传不转义，构造 header injection）——
+#      仍走 eml_data 结构化模式（合规的结构化构造能力，不依赖成帧开关），由接入层正常成帧。
 #
 # 每包为独立 TCP 段（eth/ipv4/tcp PSH+ACK），不构成完整会话，仅演示构造能力。
 link_type: ethernet
@@ -11,31 +16,25 @@ seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 packets:
-  # ① 缺 dot-stuffing：正文行首 . 未被 stuffing（畸形）
+  # ① 缺 dot-stuffing：正文行首 . 未被 stuffing（畸形）—— payload_hex 承载精确字节
+  #    "Subject: missing dot-stuffing\r\n\r\n.hidden dot at line start\r\n.\r\n"
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
       - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
       - tcp:  { sport: 49152, dport: 25, flags: [PSH, ACK], seq: 1000, ack: 5000 }
-      - eml_data:
-          headers:
-            Subject: "missing dot-stuffing"
-          body: ".hidden dot at line start\r\n"
-          dot_stuff: off       # 强制不做 stuffing → 传输 ".hidden dot…\r\n"
-          dot_terminate: on    # 仍追加终止符
+      - payload_hex: "0x5375626a6563743a206d697373696e6720646f742d7374756666696e670d0a0d0a2e68696464656e20646f74206174206c696e652073746172740d0a2e0d0a"
 
-  # ② 缺终止符：DATA 正文不以 <CRLF>.<CRLF> 结束（服务器应超时）
+  # ② 缺终止符：DATA 正文不以 <CRLF>.<CRLF> 结束（服务器应超时）—— payload_hex 承载无终止符字节
+  #    "Subject: no terminator\r\n\r\nbody without proper termination\r\n"
   - offset_time: "+10ms"
     stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
       - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
       - tcp:  { sport: 49152, dport: 25, flags: [PSH, ACK], seq: 1040, ack: 5000 }
-      - eml_data:
-          headers:
-            Subject: "no terminator"
-          body: "body without proper termination\r\n"
-          dot_terminate: off   # 不追加终止符
+      - payload_hex: "0x5375626a6563743a206e6f207465726d696e61746f720d0a0d0a626f647920776974686f75742070726f706572207465726d696e6174696f6e0d0a"
 
-  # ③ 头注入：headers 值含 \r\n + 非空白（裸透传，构造 header injection）
+  # ③ 头注入：headers 值含 \r\n + 非空白（裸透传不转义，构造 header injection）
+  #    eml_data 结构化模式合规构造能力，由 SMTP 接入层正常成帧（dot-stuff + 终止符）
   - offset_time: "+10ms"
     stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }

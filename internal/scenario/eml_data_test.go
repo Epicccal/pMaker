@@ -7,8 +7,11 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-// 本文件覆盖 eml_data.go 的字段组合校验（模式互斥、枚举、空内容拒绝），
-// 对齐 smtp_request_test.go 的风格：结构化/原始模式、raw/raw_hex 互斥、dot 开关枚举。
+// 本文件覆盖 eml_data.go 的字段组合校验（模式互斥、空内容拒绝），
+// 对齐 smtp_command_test.go 的风格：结构化/原始模式、raw/raw_hex 互斥。
+//
+// eml_data 是协议无关的内容层，framing（dot-stuffing/终止符）已下沉到接入层，
+// 故本文件不再含 dot_stuff/dot_terminate 枚举校验（字段已移除）。
 
 // emlLayer 包装一个 eml_data 层，便于表驱动构造。
 func emlLayer(f scenario.EMLDataFields) scenario.Layer {
@@ -36,7 +39,6 @@ func TestValidateEMLData_StructuredOK(t *testing.T) {
 	cases := []scenario.EMLDataFields{
 		{Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}}, Body: "body\r\n"},
 		{Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}}}, // 仅 headers（合规空体邮件）
-		{Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}}, DotStuff: "off"},
 	}
 	for i, c := range cases {
 		if err := validateEML(t, c); err != nil {
@@ -60,7 +62,7 @@ func TestValidateEMLData_RawOK(t *testing.T) {
 	cases := []scenario.EMLDataFields{
 		{Raw: "From: a\r\n\r\nbody\r\n.\r\n"},
 		{RawHex: "0x466f6f"},
-		{Raw: "x", DotTerminate: "off"},
+		{Raw: "x"},
 	}
 	for i, c := range cases {
 		if err := validateEML(t, c); err != nil {
@@ -116,35 +118,27 @@ func TestValidateEMLData_BadRawHex(t *testing.T) {
 	}
 }
 
-func TestValidateEMLData_DotStuffEnum(t *testing.T) {
-	for _, val := range []string{"on", "off", ""} {
-		err := validateEML(t, scenario.EMLDataFields{Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}}, Body: "x", DotStuff: val})
-		if err != nil {
-			t.Errorf("dot_stuff=%q 应通过，得到: %v", val, err)
-		}
-	}
-	err := validateEML(t, scenario.EMLDataFields{Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}}, Body: "x", DotStuff: "maybe"})
+func TestValidateEMLData_DotFieldsRemoved(t *testing.T) {
+	// dot_stuff / dot_terminate 字段已移除（framing 下沉到接入层）：
+	// 通过 YAML 解析路径验证二者现在被当作未知字段拒绝（decodeKnownFields）。
+	path := writeScenario(t, "eml_dot_removed.yaml", `link_type: ethernet
+seed: 42
+packets:
+  - stack:
+      - eth:  { src: "00:00:00:00:00:01", dst: "00:00:00:00:00:02" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1234, dport: 25 }
+      - eml_data:
+          headers: { From: "a@b" }
+          body: "x"
+          dot_stuff: off
+`)
+	_, err := scenario.Load(path)
 	if err == nil {
-		t.Fatalf("dot_stuff 非法值应报错")
+		t.Fatalf("dot_stuff 字段已移除，应作为未知字段报错")
 	}
 	if !strings.Contains(err.Error(), "dot_stuff") {
 		t.Errorf("错误应提及 dot_stuff，得到: %v", err)
-	}
-}
-
-func TestValidateEMLData_DotTerminateEnum(t *testing.T) {
-	for _, val := range []string{"on", "off", ""} {
-		err := validateEML(t, scenario.EMLDataFields{Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}}, Body: "x", DotTerminate: val})
-		if err != nil {
-			t.Errorf("dot_terminate=%q 应通过，得到: %v", val, err)
-		}
-	}
-	err := validateEML(t, scenario.EMLDataFields{Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}}, Body: "x", DotTerminate: "maybe"})
-	if err == nil {
-		t.Fatalf("dot_terminate 非法值应报错")
-	}
-	if !strings.Contains(err.Error(), "dot_terminate") {
-		t.Errorf("错误应提及 dot_terminate，得到: %v", err)
 	}
 }
 

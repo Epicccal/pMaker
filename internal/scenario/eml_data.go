@@ -6,8 +6,10 @@ import "fmt"
 // 只判合法性，绝不改变序列化行为（序列化在 builder/eml_data.go）。无法用结构化字段
 // 表达的畸形正文（重复头、非标换行、二进制正文等）走 eml_data 的 raw/raw_hex。
 //
-// eml_data 命名反映协议无关性：RFC 5322 邮件内容（headers + body）是 SMTP/POP3/IMAP 的
-// 共同核心，framing 由 dot_stuff/dot_terminate 开关控制，详见 EMLDataFields 文档。
+// eml_data 是协议无关的**内容层**：只产 RFC 5322 邮件内容字节（headers + body 或 raw），
+// 不含成帧（dot-stuffing / 终止符）。成帧是传输协议的职责，由接入层强制
+// （SMTP/POP3 接入层强制 dot-stuffing + <CRLF>.<CRLF>；IMAP 未来用长度前缀包装），
+// 详见 EMLDataFields 文档。
 
 // validateEMLDataFields 校验 eml_data 字段组合的合法性。
 //   - 模式互斥：结构化（headers/body）与原始（raw/raw_hex）不可同设；
@@ -15,8 +17,7 @@ import "fmt"
 //     无头邮件（headers 空）非法，构造无头/缺头等畸形请用 raw/raw_hex；
 //   - raw 与 raw_hex 互斥；
 //   - 至少一种模式有内容（全空报错）；
-//   - raw_hex 须为合法 0x 前缀十六进制；
-//   - dot_stuff / dot_terminate 须为 on/off（缺省 on）。
+//   - raw_hex 须为合法 0x 前缀十六进制。
 func validateEMLDataFields(f *EMLDataFields) error {
 	// 1. 模式互斥检查:multipart 属结构化模式(与 headers 同侧),与 raw 互斥、与字面 body 互斥。
 	hasStruct := f.Headers.Len() > 0 || f.Body != "" || f.Multipart != nil
@@ -51,15 +52,6 @@ func validateEMLDataFields(f *EMLDataFields) error {
 	if f.RawHex != "" {
 		if _, err := ParsePayloadHex(f.RawHex); err != nil {
 			return err
-		}
-	}
-	// 7. dot_stuff / dot_terminate 枚举校验（缺省 on）
-	for _, v := range []struct{ name, val string }{
-		{"dot_stuff", f.DotStuff},
-		{"dot_terminate", f.DotTerminate},
-	} {
-		if v.val != "" && v.val != "on" && v.val != "off" {
-			return fmt.Errorf("%s 只能是 on/off，得到 %q", v.name, v.val)
 		}
 	}
 	return nil
