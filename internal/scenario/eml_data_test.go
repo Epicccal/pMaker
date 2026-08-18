@@ -120,8 +120,17 @@ func TestValidateEMLData_BadRawHex(t *testing.T) {
 
 func TestValidateEMLData_DotFieldsRemoved(t *testing.T) {
 	// dot_stuff / dot_terminate 字段已移除（framing 下沉到接入层）：
-	// 通过 YAML 解析路径验证二者现在被当作未知字段拒绝（decodeKnownFields）。
-	path := writeScenario(t, "eml_dot_removed.yaml", `link_type: ethernet
+	// 通过 YAML 解析路径验证二者现在都被当作未知字段拒绝（decodeKnownFields）。
+	cases := []struct {
+		field string // 已移除的字段名，同时用作错误断言关键字与文件名片段
+		frag  string // 该字段在 eml_data 下的 YAML 片段（缩进对齐 headers/body）
+	}{
+		{field: "dot_stuff", frag: `          dot_stuff: off`},
+		{field: "dot_terminate", frag: `          dot_terminate: off`},
+	}
+	for _, c := range cases {
+		t.Run(c.field, func(t *testing.T) {
+			path := writeScenario(t, "eml_removed_"+c.field+".yaml", `link_type: ethernet
 seed: 42
 packets:
   - stack:
@@ -131,14 +140,15 @@ packets:
       - eml_data:
           headers: { From: "a@b" }
           body: "x"
-          dot_stuff: off
-`)
-	_, err := scenario.Load(path)
-	if err == nil {
-		t.Fatalf("dot_stuff 字段已移除，应作为未知字段报错")
-	}
-	if !strings.Contains(err.Error(), "dot_stuff") {
-		t.Errorf("错误应提及 dot_stuff，得到: %v", err)
+`+c.frag+"\n")
+			_, err := scenario.Load(path)
+			if err == nil {
+				t.Fatalf("%s 字段已移除，应作为未知字段报错", c.field)
+			}
+			if !strings.Contains(err.Error(), c.field) {
+				t.Errorf("错误应提及 %s，得到: %v", c.field, err)
+			}
+		})
 	}
 }
 

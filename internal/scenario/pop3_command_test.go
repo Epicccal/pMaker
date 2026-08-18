@@ -90,7 +90,11 @@ func TestValidatePOP3RequestFields_ArgsRules(t *testing.T) {
 		{"QUIT 无 args", "QUIT", "", false},
 		{"CAPA 禁 args", "CAPA", "x", true},
 		{"STLS 禁 args", "STLS", "x", true},
-		// 可选 args:LIST/UIDL
+		// CRLF 注入拦截:args 含换行符应报错
+		{"RETR args 含 LF", "RETR", "1\n", true},
+		{"RETR args 含 CRLF", "RETR", "1\r\n", true},
+		{"USER args 含 CR", "USER", "alice\r", true},
+		// CRLF 拦截在 args 有/无规则之前:空 args 已由 required 规则拦截,这里只测非空含换行
 		{"LIST 无 args", "LIST", "", false},
 		{"LIST 带 args", "LIST", "1", false},
 		{"UIDL 无 args", "UIDL", "", false},
@@ -207,71 +211,116 @@ func TestValidatePOP3ResponseFields_MultilineStatusOnlyOK(t *testing.T) {
 // TestValidatePOP3ResponseFields_MutualExclusion: message 可与 lines/eml 组合(单行或多行首行带文本);
 // lines 与 eml 互斥;message/lines/eml 至少其一非空。
 func TestValidatePOP3ResponseFields_MutualExclusion(t *testing.T) {
-	// message + lines 合法(多行首行带说明文本,RFC 1939 §3 LIST 形态)
-	s := &scenario.Scenario{Packets: []scenario.Packet{{
-		Stack: pop3BaseStack(scenario.Layer{Type: "pop3_response", Fields: &scenario.POP3ResponseFields{
-			Status: "+OK", Message: "2 messages (320 octets)", Lines: []string{"1 1200", "2 2000"},
-		}}),
-	}}}
-	if err := scenario.Validate(s); err != nil {
-		t.Errorf("message+lines 应合法(多行首行带文本),得到: %v", err)
-	}
-
-	// message + eml 合法(多行首行带说明文本 + RFC 5322 正文)
-	s = &scenario.Scenario{Packets: []scenario.Packet{{
-		Stack: pop3BaseStack(scenario.Layer{Type: "pop3_response", Fields: &scenario.POP3ResponseFields{
-			Status: "+OK", Message: "message 1 follows", EML: &scenario.EMLDataFields{
+	cases := []struct {
+		name    string
+		status  string
+		message string
+		lines   []string
+		eml     *scenario.EMLDataFields
+		wantErr bool
+		errSub  string
+	}{
+		// 合法组合
+		{
+			name:   "message+lines 多行首行带文本(LIST 形态)",
+			status: "+OK", message: "2 messages (320 octets)",
+			lines: []string{"1 1200", "2 2000"},
+		},
+		{
+			name:   "message+eml 多行首行带文本+正文",
+			status: "+OK", message: "message 1 follows",
+			eml: &scenario.EMLDataFields{
 				Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}},
 				Body:    "hi",
 			},
-		}}),
-	}}}
-	if err := scenario.Validate(s); err != nil {
-		t.Errorf("message+eml 应合法(多行首行带文本 + 正文),得到: %v", err)
-	}
-
-	// 两者同设:lines + eml 互斥报错
-	s = &scenario.Scenario{Packets: []scenario.Packet{{
-		Stack: pop3BaseStack(scenario.Layer{Type: "pop3_response", Fields: &scenario.POP3ResponseFields{
-			Status: "+OK", Lines: []string{"a"}, EML: &scenario.EMLDataFields{Raw: "x"},
-		}}),
-	}}}
-	if err := scenario.Validate(s); err == nil || !strings.Contains(err.Error(), "互斥") {
-		t.Errorf("lines+eml 应报互斥错,得到: %v", err)
-	}
-
-	// 全空:裸 status 行
-	s = &scenario.Scenario{Packets: []scenario.Packet{{
-		Stack: pop3BaseStack(scenario.Layer{Type: "pop3_response", Fields: &scenario.POP3ResponseFields{
-			Status: "+OK",
-		}}),
-	}}}
-	if err := scenario.Validate(s); err == nil || !strings.Contains(err.Error(), "需要 message / lines / eml") {
-		t.Errorf("裸 status 行应报错,得到: %v", err)
-	}
-
-	// 仅 eml 合法(带合法 EML 内容)
-	s = &scenario.Scenario{Packets: []scenario.Packet{{
-		Stack: pop3BaseStack(scenario.Layer{Type: "pop3_response", Fields: &scenario.POP3ResponseFields{
-			Status: "+OK",
-			EML: &scenario.EMLDataFields{
+		},
+		{
+			name:   "仅 eml 合法 EML 内容",
+			status: "+OK",
+			eml: &scenario.EMLDataFields{
 				Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}},
 				Body:    "hi",
 			},
-		}}),
-	}}}
-	if err := scenario.Validate(s); err != nil {
-		t.Errorf("仅 eml(合法 EML 内容)不应报错,得到: %v", err)
+		},
+		// CRLF 注入拦截:message 或 lines 元素含换行符应报错
+		{
+			name:    "message 含 LF 注入",
+			status:  "+OK",
+			message: "ok\ninjected",
+			wantErr: true,
+			errSub:  "message",
+		},
+		{
+			name:    "message 含 CRLF 注入",
+			status:  "+OK",
+			message: "ok\r\n+OK injected",
+			wantErr: true,
+			errSub:  "message",
+		},
+		{
+			name:    "lines[0] 含 CRLF 注入",
+			status:  "+OK",
+			lines:   []string{"1 1200\r\nDELE 1"},
+			wantErr: true,
+			errSub:  "lines[0]",
+		},
+		{
+			name:    "lines[1] 含 LF 注入",
+			status:  "+OK",
+			lines:   []string{"1 1200", "2 840\ninjected"},
+			wantErr: true,
+			errSub:  "lines[1]",
+		},
+		// lines 元素合法(无换行)
+		{
+			name:   "lines 合法无换行",
+			status: "+OK",
+			lines:  []string{"1 1200", "2 840"},
+		},
+		// 错误组合
+		{
+			name:    "lines+eml 互斥",
+			status:  "+OK",
+			lines:   []string{"a"},
+			eml:     &scenario.EMLDataFields{Raw: "x"},
+			wantErr: true,
+			errSub:  "互斥",
+		},
+		{
+			name:    "裸 status 行缺 message/lines/eml",
+			status:  "+OK",
+			wantErr: true,
+			errSub:  "需要 message / lines / eml",
+		},
+		{
+			name:    "eml 子结构全空委托校验报错",
+			status:  "+OK",
+			eml:     &scenario.EMLDataFields{},
+			wantErr: true,
+			errSub:  "eml:",
+		},
 	}
-
-	// eml 子结构校验委托:空 EML 报错
-	s = &scenario.Scenario{Packets: []scenario.Packet{{
-		Stack: pop3BaseStack(scenario.Layer{Type: "pop3_response", Fields: &scenario.POP3ResponseFields{
-			Status: "+OK",
-			EML:    &scenario.EMLDataFields{}, // 全空
-		}}),
-	}}}
-	if err := scenario.Validate(s); err == nil || !strings.Contains(err.Error(), "eml:") {
-		t.Errorf("空 EML 子结构应委托校验报错,得到: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &scenario.Scenario{Packets: []scenario.Packet{{
+				Stack: pop3BaseStack(scenario.Layer{Type: "pop3_response", Fields: &scenario.POP3ResponseFields{
+					Status:  tc.status,
+					Message: tc.message,
+					Lines:   tc.lines,
+					EML:     tc.eml,
+				}}),
+			}}}
+			err := scenario.Validate(s)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("期望报错,实际通过")
+				}
+				if tc.errSub != "" && !strings.Contains(err.Error(), tc.errSub) {
+					t.Errorf("错误应含 %q,得到: %v", tc.errSub, err)
+				}
+			} else if err != nil {
+				t.Errorf("不期望报错,得到: %v", err)
+			}
+		})
 	}
 }
