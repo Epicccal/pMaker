@@ -1,0 +1,94 @@
+# examples/smtp/eml_file.yaml
+#
+# SMTP 上传(投递)一封真实邮件:DATA 正文由 @file 占位符从 assets/sample.eml 注入。
+#   220 问候 → EHLO/250 多行 → MAIL/250 → RCPT/250 → DATA/354
+#   → eml_data(raw + @file 注入整封邮件)/250 → QUIT/221
+#
+# 覆盖点:
+#   - @file(assets/sample.eml) 把外部 .eml 文件原始字节注入 eml_data;
+#   - eml_data 原始模式(raw):整封邮件(headers + multipart body)裸透传、不归一化换行,
+#     保留文件精确字节(sample.eml 本身即 CRLF + multipart/mixed 带附件);
+#   - 接入层(SMTP DATA)强制成帧:自动 dot-stuffing + <CRLF>.<CRLF> 终止符;
+#   - 106KB 正文经 mss 1460 自动分段,验证大邮件的 TCP 分段与 seq 推导。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: smtp-upload
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.25", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 25, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器问候
+      - from: dst
+        stack:
+          - smtp_response: { code: 220, message: "mail.qq.com ESMTP" }
+
+      # EHLO / 多行能力响应
+      - from: src
+        stack:
+          - smtp_request: { verb: EHLO, args: "client.example" }
+
+      - from: dst
+        stack:
+          - smtp_response:
+              code: 250
+              lines:
+                - "mail.qq.com"
+                - "8BITMIME"
+                - "PIPELINING"
+                - "SIZE 73400320"
+
+      # 信封:MAIL / RCPT(与 sample.eml 的 From/To 对应)
+      - from: src
+        stack:
+          - smtp_request:
+              verb: MAIL
+              from: "userA@qq.com"
+              params: { SIZE: "106458", BODY: "8BITMIME" }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "OK" }
+
+      - from: src
+        stack:
+          - smtp_request:
+              verb: RCPT
+              to: "userB@qq.com"
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "OK" }
+
+      # DATA
+      - from: src
+        stack:
+          - smtp_request: { verb: DATA }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 354, message: "End data with <CR><LF>.<CR><LF>" }
+
+      # ★ 整封邮件由 @file 注入(raw 模式:字节精确,不归一化换行)
+      #   接入层自动 dot-stuffing + 追加 <CRLF>.<CRLF> 终止符
+      - from: src
+        stack:
+          - eml_data:
+              raw: "@file(assets/sample.eml)"
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 250, message: "OK: queued as 8D2F1C" }
+
+      # QUIT
+      - from: src
+        stack:
+          - smtp_request: { verb: QUIT }
+
+      - from: dst
+        stack:
+          - smtp_response: { code: 221, message: "bye" }
