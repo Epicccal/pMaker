@@ -52,7 +52,7 @@ flows:
 
       - from: dst
         stack:
-          - pop3_response: { status: "+OK", message: "2 320" }
+          - pop3_response: { status: "+OK", message: "2 3200" }
 
       # LIST 无参(多行 lines 响应:带说明文本的首行 + 扫描列表 + 终止符)
       - from: src
@@ -63,7 +63,7 @@ flows:
         stack:
           - pop3_response:
               status: "+OK"
-              message: "2 messages (320 octets)"
+              message: "2 messages (3200 octets)"
               lines:
                 - "1 1200"
                 - "2 2000"

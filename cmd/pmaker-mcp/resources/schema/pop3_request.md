@@ -21,7 +21,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `command` | string | 是 | RFC 1939 核心(USER/PASS/APOP/STAT/LIST/RETR/DELE/NOOP/RSET/TOP/UIDL/QUIT)+ 扩展(CAPA/STLS/AUTH);非标/私有命令走 `payload`/`payload_hex` |
-| `args` | string | 视命令 | 命令参数(如 USER 邮箱名、RETR msg#、TOP 的 `msg# n`、APOP 的 `name digest`、AUTH 机制);有/无按下表 |
+| `args` | string | 视命令 | 命令参数(如 USER 邮箱名、RETR msg#、TOP 的 `msg# n`、APOP 的 `name digest`、AUTH 机制);有/无按下表;**不能含 `\r` / `\n`** |
 
 ## command 参数要求
 

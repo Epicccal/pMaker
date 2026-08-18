@@ -60,7 +60,7 @@ SASL 续行挑战(`status: "+"`,`message` 承载 base64 挑战,RFC 1734/4954):
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `status` | string | 是 | `+OK` / `-ERR` / `+`(大小写不敏感,原样输出);`+` 为 RFC 1734/4954 SASL 续行挑战;非标状态指示符走 `payload`/`payload_hex` |
-| `message` | string | 否 | 状态行附带文本:单独非空=单行 `status message\r\n`(SASL 续行则承载 base64 挑战);与 `lines`/`eml` 组合=多行首行带说明文本(RFC 1939 §3) |
+| `message` | string | 否 | 状态行附带文本:单独非空=单行 `status message\r\n`(SASL 续行则承载 base64 挑战);与 `lines`/`eml` 组合=多行首行带说明文本(RFC 1939 §3);**不能含 `\r` / `\n`**(注入换行符会产出额外响应行,畸形 POP3 字节流请用 `payload`/`payload_hex`) |
 | `lines` | []string | 否 | 多行普通行(LIST/UIDL/CAPA…);逐行 dot-stuffing + `<CRLF>.<CRLF>` 终止符;与 `eml` 互斥。**每个元素是一行逻辑内容,不应包含换行符(`\n`/`\r\n`)**——行边界由 builder 在 join 时注入 `\r\n`,元素内嵌换行符不会被识别为行边界,dot-stuffing 也不会在该位置生效。需要构造含嵌入换行的行(畸形场景)请用 `payload`/`payload_hex`。 |
 | `eml` | `eml_data` 子结构 | 否 | 多行 RFC 5322 正文(RETR/TOP);复用 `eml_data`(dot-stuffing + 终止符由 POP3 接入层强制),详见 `pmaker://schema/eml_data`;与 `lines` 互斥 |
 

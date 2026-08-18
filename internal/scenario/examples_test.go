@@ -723,9 +723,9 @@ func TestPOP3AuthRetrContent(t *testing.T) {
 		// 单行响应
 		[]byte("+OK User accepted\r\n"),
 		[]byte("+OK Maildrop locked and ready\r\n"),
-		[]byte("+OK 2 320\r\n"),
+		[]byte("+OK 2 3200\r\n"),
 		// 多行 LIST(首行带说明文本 + lines + 终止符)
-		[]byte("+OK 2 messages (320 octets)\r\n1 1200\r\n2 2000\r\n.\r\n"),
+		[]byte("+OK 2 messages (3200 octets)\r\n1 1200\r\n2 2000\r\n.\r\n"),
 		// 多行 RETR(首行带说明文本 + eml 子结构:headers + 空行 + body + 终止符)
 		[]byte("+OK message 1 follows\r\nFrom: alice@example.com\r\nTo: bob@example.net\r\nSubject: Hello\r\nDate: Thu, 01 Jan 2024 00:00:00 +0000\r\nMessage-ID: <abc@example.com>\r\n\r\nHi Bob,\r\nThis is a test message.\r\n"),
 		// RETR 正文行首 . 被 dot-stuff("..\r\n"),末尾终止符 ".\r\n"

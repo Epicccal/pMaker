@@ -4,7 +4,8 @@
 #
 #   ① 非标/私有命令:command 校验表内没有(如 XLIST),走 payload_hex 自行构造整行。
 #   ② 小写命令:合规(command 原样输出不强制大写,RFC 1939 命令大小写不敏感),走结构化路径。
-#   ③ CRLF 注入:args 含 \r\nDELE 1\r\n(命令走私),结构化路径即可(command/args 原样输出)。
+#   ③ CRLF 注入:args 含 \r\nDELE 1\r\n(命令走私);结构化 pop3_request 在校验阶段
+#      拒绝 args 含换行符,畸形 POP3 字节流须用 payload_hex 直构。
 #   ④ 非标状态指示符:POP3 状态只能是 +OK/-ERR,"+FOO" 越界,走 payload_hex。
 #
 # 流量验证关注点:协议解析器对畸形命令/状态的容忍/拒绝边界、CRLF 注入检测、私有命令处理。
@@ -29,19 +30,20 @@ packets:
       - tcp:  { sport: 50001, dport: 110, flags: [PSH, ACK], seq: 2001, ack: 5001 }
       - pop3_request: { command: retr, args: "1" }
 
-  # ③ CRLF 注入:USER 的 args 含 \r\nDELE 1\r\n(命令走私)
-  # → "USER alice\r\nDELE 1\r\n\r\n"
+  # ③ CRLF 注入:USER args 含 \r\nDELE 1\r\n(命令走私)
+  # 结构化 pop3_request 在校验阶段拒绝 args 含换行符;畸形 POP3 字节流用 payload_hex 直构。
+  # 等价字节:"USER alice\r\nDELE 1\r\n\r\n"
   - name: crlf-injection
     stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
       - ipv4: { src: "10.0.0.10", dst: "10.0.0.110", ttl: 64 }
       - tcp:  { sport: 50002, dport: 110, flags: [PSH, ACK], seq: 3001, ack: 5001 }
-      - pop3_request: { command: USER, args: "alice\r\nDELE 1\r\n" }
+      - payload_hex: "0x5553455220616c6963650d0a44454c4520310d0a0d0a"
 
   # ④ 非标状态指示符 "+FOO bar\r\n"(POP3 状态只能 +OK/-ERR,走 payload_hex)
   - name: nonstandard-status
     stack:
       - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
       - ipv4: { src: "10.0.0.110", dst: "10.0.0.10", ttl: 64 }
-      - tcp:  { sport: 110, dport: 50002, flags: [PSH, ACK], seq: 5001, ack: 3019 }
+      - tcp:  { sport: 110, dport: 50002, flags: [PSH, ACK], seq: 5001, ack: 3023 }
       - payload_hex: "0x2b464f4f206261720d0a"
