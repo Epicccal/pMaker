@@ -57,7 +57,7 @@ flows:
           - http_response: { status: 200, body: "hi" }
 ```
 
-**约束**:flow.stack 须含 `eth` + `tcp` + 恰好一个网络层(`ipv4` 或 `ipv6`);每条 message 当前仅一个 payload 生产层。
+**约束**:flow.stack 须含 `eth` + `tcp` + 恰好一个网络层(`ipv4` 或 `ipv6`);每条 message 须 ≥1 个 payload 生产层,按声明顺序拼接(standalone packet 同此规则)。
 
 ## 时间字段
 

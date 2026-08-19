@@ -234,6 +234,72 @@ func TestFlowCloseRST(t *testing.T) {
 	}
 }
 
+// TestFlowMessageMultiPayload 校验一条 message 装多个 payload 生产层时,
+// 各层按栈声明顺序拼接进同一个 TCP 段:两个 payload 层 "aaaa"+"bbbb" → 段内 "aaaabbbb",
+// seq 推进量 = 8(= 拼接后总字节,与 standalone packet 多 payload 层语义一致)。
+func TestFlowMessageMultiPayload(t *testing.T) {
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Flows: []scenario.FlowSpec{{
+			Name: "multi",
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 1000, ServerISN: 5000}},
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "handshake", Close: "none"}},
+			},
+			Messages: []scenario.Message{{
+				From: "src",
+				Stack: []scenario.Layer{
+					{Type: "payload", Fields: &scenario.PayloadFields{Payload: "aaaa"}},
+					{Type: "payload", Fields: &scenario.PayloadFields{Payload: "bbbb"}},
+				},
+			}},
+		}},
+	}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	pkts, err := builder.BuildPlanned(planned)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	tcps := readTCP(t, buf.Bytes())
+
+	// 找唯一的 PSH 数据段(client→server),断言 payload == "aaaabbbb"。
+	var dataSeg *layers.TCP
+	for _, tc := range tcps {
+		if tc.PSH && len(tc.Payload) > 0 && tc.SrcPort == 1111 {
+			dataSeg = tc
+			break
+		}
+	}
+	if dataSeg == nil {
+		t.Fatalf("未找到 client→server 的 PSH 数据段")
+	}
+	if string(dataSeg.Payload) != "aaaabbbb" {
+		t.Errorf("数据段 payload=%q,期望 \"aaaabbbb\"(两个 payload 层按栈序拼接)", string(dataSeg.Payload))
+	}
+	// 只应有一个 client→server 数据段(未设 mss,整条不切)。
+	count := 0
+	for _, tc := range tcps {
+		if tc.PSH && len(tc.Payload) > 0 && tc.SrcPort == 1111 {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("client→server 数据段数=%d,期望 1(拼接后整段不切)", count)
+	}
+}
+
 func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 	s, err := scenario.Load("../../examples/http/get.yaml")
 	if err != nil {

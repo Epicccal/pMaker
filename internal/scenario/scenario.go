@@ -167,13 +167,16 @@ func validateFlow(f FlowSpec) error {
 		if m.From != "src" && m.From != "dst" {
 			return fmt.Errorf("messages[%d].from 只能是 src/dst,得到 %q", j, m.From)
 		}
-		if len(m.Stack) != 1 {
-			return fmt.Errorf("messages[%d].stack 当前需恰好一个 payload 生产层,得到 %d 个", j, len(m.Stack))
+		if len(m.Stack) == 0 {
+			return fmt.Errorf("messages[%d].stack 需至少一个 payload 生产层", j)
 		}
-		switch m.Stack[0].Fields.(type) {
-		case *HTTPReqFields, *HTTPRespFields, *FTPRequestFields, *FTPResponseFields, *TelnetFields, *SMTPRequestFields, *SMTPResponseFields, *EMLDataFields, *PayloadFields, PayloadHex, *POP3RequestFields, *POP3ResponseFields:
-		default:
-			return fmt.Errorf("messages[%d].stack[0] 不支持 %q", j, m.Stack[0].Type)
+		// message.stack 仍只允许 payload 生产层(白名单语义):eth/ipv4/tcp 等由 flow.stack 提供,
+		// message.stack 不混入非 payload 层。支持一个或多个 payload 生产层,按栈顺序拼接。
+		// 白名单须与 builder.PayloadBytes(internal/builder/payload.go)的 switch 保持一致。
+		for k, l := range m.Stack {
+			if !isPayloadProducingLayer(l.Fields) {
+				return fmt.Errorf("messages[%d].stack[%d] 不支持 %q(只允许 payload 生产层,非标内容走 payload/payload_hex)", j, k, l.Type)
+			}
 		}
 		// message_id 供跨流 start_after 引用,同一 flow 内必须唯一(否则引用歧义)。
 		if m.MessageID != "" {
@@ -189,6 +192,21 @@ func validateFlow(f FlowSpec) error {
 		}
 	}
 	return nil
+}
+
+// isPayloadProducingLayer 判断某层的 Fields 是否为 payload 生产层。
+// 白名单须与 builder.PayloadBytes(internal/builder/payload.go)的 switch 保持一致:
+// 该 switch 支持的全部 Fields 类型即 payload 生产层集合,改动一处须同步另一处。
+func isPayloadProducingLayer(f any) bool {
+	switch f.(type) {
+	case *HTTPReqFields, *HTTPRespFields, *FTPRequestFields, *FTPResponseFields,
+		*TelnetFields, *SMTPRequestFields, *SMTPResponseFields,
+		*POP3RequestFields, *POP3ResponseFields, *EMLDataFields,
+		*PayloadFields, PayloadHex:
+		return true
+	default:
+		return false
+	}
 }
 
 // SplitStartAfter 把 start_after 引用拆成 (flow, msg):"flow名" → (flow, ""),

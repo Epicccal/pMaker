@@ -366,10 +366,20 @@ func (c *conn) netLayer(src, dst string) scenario.Layer {
 }
 
 func messagePayload(m scenario.Message) ([]byte, error) {
-	if len(m.Stack) != 1 {
-		return nil, fmt.Errorf("message.stack 当前需恰好一个 payload 生产层")
+	if len(m.Stack) == 0 {
+		return nil, fmt.Errorf("message.stack 需至少一个 payload 生产层")
 	}
-	return builder.PayloadBytes(m.Stack[0])
+	// 多 payload 生产层按栈声明顺序(外→内)依次拼接,与 serializeStack 对 standalone
+	// packet 多 payload 层的拼接语义一致;拼接后的总字节照常按 segment.mss 切段。
+	var out []byte
+	for k, l := range m.Stack {
+		b, err := builder.PayloadBytes(l)
+		if err != nil {
+			return nil, fmt.Errorf("message.stack[%d]: %w", k, err)
+		}
+		out = append(out, b...)
+	}
+	return out, nil
 }
 
 func segMSS(m scenario.Message) int {

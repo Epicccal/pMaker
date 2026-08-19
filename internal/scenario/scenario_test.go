@@ -477,6 +477,48 @@ func TestStartAfterAcceptsFTPStyleInterleave(t *testing.T) {
 	}
 }
 
+// TestValidateMessageStackMultiPayload 校验 message.stack 放宽后的规则:
+// ≥1 个 payload 生产层,且每层都在白名单内。空 stack / 非 payload 层报错;
+// 多个合法 payload 层通过(与 standalone packet 多 payload 层拼接语义一致)。
+func TestValidateMessageStackMultiPayload(t *testing.T) {
+	baseStack := []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+		{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80}},
+		{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "none", Close: "none"}},
+	}
+	flow := func(msg scenario.Message) scenario.FlowSpec {
+		return scenario.FlowSpec{Name: "f", Stack: baseStack, Messages: []scenario.Message{msg}}
+	}
+
+	// 空 stack → 报错。
+	if err := scenario.Validate(&scenario.Scenario{Flows: []scenario.FlowSpec{
+		flow(scenario.Message{From: "src", Stack: nil}),
+	}}); err == nil || !strings.Contains(err.Error(), "至少一个 payload 生产层") {
+		t.Fatalf("空 message.stack 应报错,得到 %v", err)
+	}
+
+	// 含非 payload 层(eth) → 报错,并点名层索引与层名,引导 payload/payload_hex。
+	if err := scenario.Validate(&scenario.Scenario{Flows: []scenario.FlowSpec{
+		flow(scenario.Message{From: "src", Stack: []scenario.Layer{
+			{Type: "payload", Fields: &scenario.PayloadFields{Payload: "aa"}},
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+		}}),
+	}}); err == nil || !strings.Contains(err.Error(), "stack[1]") || !strings.Contains(err.Error(), "eth") {
+		t.Fatalf("含非 payload 层应报错并点名 stack[1]/eth,得到 %v", err)
+	}
+
+	// 两个合法 payload 层 → 通过。
+	if err := scenario.Validate(&scenario.Scenario{Flows: []scenario.FlowSpec{
+		flow(scenario.Message{From: "src", Stack: []scenario.Layer{
+			{Type: "payload", Fields: &scenario.PayloadFields{Payload: "aaaa"}},
+			{Type: "payload", Fields: &scenario.PayloadFields{Payload: "bbbb"}},
+		}}),
+	}}); err != nil {
+		t.Fatalf("两个合法 payload 层应通过,得到 %v", err)
+	}
+}
+
 // TestStartAfterMessageLevelCycleRejected 验证事件粒度仍能拦住真正的跨流消息级环:
 // a.msgA start_after b.msgB,b.msgB start_after a.msgA。
 func TestStartAfterMessageLevelCycleRejected(t *testing.T) {

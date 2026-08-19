@@ -33,7 +33,7 @@ type FlowSpec struct {
 	Messages   []Message `yaml:"messages"`
 }
 
-// Message 是一条方向性的应用层消息;当前只支持一个 payload 生产层。
+// Message 是一条方向性的应用层消息;支持一个或多个 payload 生产层,按栈顺序拼接。
 type Message struct {
 	From    string   `yaml:"from"` // src | dst
 	Stack   []Layer  `yaml:"stack"`
