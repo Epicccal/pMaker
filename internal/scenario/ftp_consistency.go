@@ -170,66 +170,70 @@ func extractFTPNegotiations(flowName string, msgIdx int, m Message) (negotiation
 			flowName, msgIdx, text))
 	}
 
-	switch f := m.Stack[0].Fields.(type) {
-	case *FTPResponseFields:
-		switch f.Code {
-		case 227:
-			// 227 文本可能在 message 或 lines(多行续行)里;合并扫描,以括号六元组为准。
-			var b strings.Builder
-			b.WriteString(f.Message)
-			for _, ln := range f.Lines {
-				if ln != "" {
-					b.WriteByte(' ')
-					b.WriteString(ln)
+	// message.stack 可含多个 payload 生产层(按栈顺序拼接),须逐层检查,
+	// 否则把 227/PORT/229/EPRT 放在非首层时协商端点会被漏提取,致一致性校验假阴性。
+	for _, l := range m.Stack {
+		switch f := l.Fields.(type) {
+		case *FTPResponseFields:
+			switch f.Code {
+			case 227:
+				// 227 文本可能在 message 或 lines(多行续行)里;合并扫描,以括号六元组为准。
+				var b strings.Builder
+				b.WriteString(f.Message)
+				for _, ln := range f.Lines {
+					if ln != "" {
+						b.WriteByte(' ')
+						b.WriteString(ln)
+					}
+				}
+				add6("227", b.String())
+			case 229:
+				// 229(EPSV)文本同 227 可能在 message 或 lines 里;合并扫描。
+				var b strings.Builder
+				b.WriteString(f.Message)
+				for _, ln := range f.Lines {
+					if ln != "" {
+						b.WriteByte(' ')
+						b.WriteString(ln)
+					}
+				}
+				addEpsv(b.String())
+			}
+		case *FTPRequestFields:
+			switch strings.ToUpper(f.Command) {
+			case "PORT":
+				add6("PORT", f.Args)
+			case "EPRT":
+				addEprt(f.Args)
+			}
+		case *PayloadFields:
+			// 原始 payload 文本:仅在首 token 为协商命令/响应码时尝试,避免误扫文件内容。
+			if kind, ok := ftpNegotiationKind(f.Payload); ok {
+				switch kind {
+				case "227", "PORT":
+					add6(kind, f.Payload)
+				case "229":
+					addEpsv(f.Payload)
+				case "EPRT":
+					addEprt(f.Payload)
 				}
 			}
-			add6("227", b.String())
-		case 229:
-			// 229(EPSV)文本同 227 可能在 message 或 lines 里;合并扫描。
-			var b strings.Builder
-			b.WriteString(f.Message)
-			for _, ln := range f.Lines {
-				if ln != "" {
-					b.WriteByte(' ')
-					b.WriteString(ln)
+		case PayloadHex:
+			// payload_hex 是原始字节;控制通道候选才扫到这里,解码后按文本同法判断。
+			raw, err := ParsePayloadHex(string(f))
+			if err != nil {
+				continue
+			}
+			text := string(raw)
+			if kind, ok := ftpNegotiationKind(text); ok {
+				switch kind {
+				case "227", "PORT":
+					add6(kind, text)
+				case "229":
+					addEpsv(text)
+				case "EPRT":
+					addEprt(text)
 				}
-			}
-			addEpsv(b.String())
-		}
-	case *FTPRequestFields:
-		switch strings.ToUpper(f.Command) {
-		case "PORT":
-			add6("PORT", f.Args)
-		case "EPRT":
-			addEprt(f.Args)
-		}
-	case *PayloadFields:
-		// 原始 payload 文本:仅在首 token 为协商命令/响应码时尝试,避免误扫文件内容。
-		if kind, ok := ftpNegotiationKind(f.Payload); ok {
-			switch kind {
-			case "227", "PORT":
-				add6(kind, f.Payload)
-			case "229":
-				addEpsv(f.Payload)
-			case "EPRT":
-				addEprt(f.Payload)
-			}
-		}
-	case PayloadHex:
-		// payload_hex 是原始字节;控制通道候选才扫到这里,解码后按文本同法判断。
-		raw, err := ParsePayloadHex(string(f))
-		if err != nil {
-			return
-		}
-		text := string(raw)
-		if kind, ok := ftpNegotiationKind(text); ok {
-			switch kind {
-			case "227", "PORT":
-				add6(kind, text)
-			case "229":
-				addEpsv(text)
-			case "EPRT":
-				addEprt(text)
 			}
 		}
 	}

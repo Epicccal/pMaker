@@ -30,21 +30,17 @@ flows:
       - tcp:  { sport: 49160, dport: 23, client_isn: 1000, server_isn: 5000, mss: 1460 }
       - tcp_session: { open: handshake, close: fin }
     messages:
-      # 服务器主动协商:WILL ECHO、WILL SGA(flow message 当前需恰好一个生产层,
-      # 故分两条 message;standalone packet 可用多 telnet 层同段拼接,见 negotiation.yaml)
+      # 服务器主动协商:WILL ECHO、WILL SGA —— 一条 message 多个 telnet 层同段拼接
+      # (与 standalone packet 的 negotiation.yaml 同语义:多 payload 生产层按栈序拼进同一 TCP 段)
       - from: dst
         stack:
           - telnet: { command: WILL, option: ECHO }
-      - from: dst
-        stack:
           - telnet: { command: WILL, option: SGA }
 
-      # 客户端协商响应:DO SGA、DO ECHO
+      # 客户端协商响应:DO SGA、DO ECHO(同样合并到同一段)
       - from: src
         stack:
           - telnet: { command: DO, option: SGA }
-      - from: src
-        stack:
           - telnet: { command: DO, option: ECHO }
 
       # 服务器登录提示

@@ -167,13 +167,24 @@ func validateFlow(f FlowSpec) error {
 		if m.From != "src" && m.From != "dst" {
 			return fmt.Errorf("messages[%d].from 只能是 src/dst,得到 %q", j, m.From)
 		}
-		if len(m.Stack) != 1 {
-			return fmt.Errorf("messages[%d].stack 当前需恰好一个 payload 生产层,得到 %d 个", j, len(m.Stack))
+		if len(m.Stack) == 0 {
+			return fmt.Errorf("messages[%d].stack 需至少一个 payload 生产层", j)
 		}
-		switch m.Stack[0].Fields.(type) {
-		case *HTTPReqFields, *HTTPRespFields, *FTPRequestFields, *FTPResponseFields, *TelnetFields, *SMTPRequestFields, *SMTPResponseFields, *EMLDataFields, *PayloadFields, PayloadHex, *POP3RequestFields, *POP3ResponseFields:
-		default:
-			return fmt.Errorf("messages[%d].stack[0] 不支持 %q", j, m.Stack[0].Type)
+		// message.stack 仍只允许 payload 生产层(白名单语义):eth/ipv4/tcp 等由 flow.stack 提供,
+		// message.stack 不混入非 payload 层。支持一个或多个 payload 生产层,按栈顺序拼接。
+		// 白名单须与 builder.PayloadBytes(internal/builder/payload.go)的 switch 保持一致。
+		for k, l := range m.Stack {
+			if !isPayloadProducingLayer(l) {
+				return fmt.Errorf("messages[%d].stack[%d] 不支持 %q(只允许 payload 生产层,非标内容走 payload/payload_hex)", j, k, l.Type)
+			}
+			// 逐层字段校验:与 standalone packet 的 validateLayer 等价。此前 message.stack
+			// 恰好一层时也有白名单 type switch 校验,但跳过了 validateLayer 的字段级规则,
+			// 故 payload 同时配 payload+payload_hex(互斥)、ftp_response code 越界、
+			// telnet 二字节命令带 option 等无效配置会静默通过、推迟到 build 才报错。
+			// 多层后同样需要在 Validate 阶段尽早拦截,报错带 messages[%d].stack[%d].<type> 定位。
+			if err := validateLayer(l); err != nil {
+				return fmt.Errorf("messages[%d].stack[%d].%s: %w", j, k, l.Type, err)
+			}
 		}
 		// message_id 供跨流 start_after 引用,同一 flow 内必须唯一(否则引用歧义)。
 		if m.MessageID != "" {
@@ -189,6 +200,48 @@ func validateFlow(f FlowSpec) error {
 		}
 	}
 	return nil
+}
+
+// isPayloadProducingLayer 判断一层是否为合法的 payload 生产层:Type 与 Fields 的
+// 类型映射必须一致,且 Fields 类型属于 payload 生产层集合。
+//
+// 仅判 Fields 类型会放过 Layer{Type: "eth", Fields: &PayloadFields{...}} 这种 Type 与
+// Fields 不匹配的状态——YAML 解码(decodeFields 按 Type 构造对应 Fields)不会产出,
+// 但 Layer 是导出类型,程序代码可直接构造。此时 builder 按 Fields 产 payload、describe
+// 按 Type 显示"eth",产出的包与摘要不一致,且一致性校验(如 FTP)按 Fields 类型分派
+// 也会错位。故同时校验 Type→Fields 映射,二者须一致才视为合法 payload 生产层。
+//
+// 白名单的 Fields 集合须与 builder.PayloadBytes(internal/builder/payload.go)的 switch
+// 保持一致;Type 名须与 decodeFields(internal/scenario/layer_decode.go)的 case 一致。
+func isPayloadProducingLayer(l Layer) bool {
+	switch l.Fields.(type) {
+	case *HTTPReqFields:
+		return l.Type == "http_request"
+	case *HTTPRespFields:
+		return l.Type == "http_response"
+	case *FTPRequestFields:
+		return l.Type == "ftp_request"
+	case *FTPResponseFields:
+		return l.Type == "ftp_response"
+	case *TelnetFields:
+		return l.Type == "telnet"
+	case *SMTPRequestFields:
+		return l.Type == "smtp_request"
+	case *SMTPResponseFields:
+		return l.Type == "smtp_response"
+	case *POP3RequestFields:
+		return l.Type == "pop3_request"
+	case *POP3ResponseFields:
+		return l.Type == "pop3_response"
+	case *EMLDataFields:
+		return l.Type == "eml_data"
+	case *PayloadFields:
+		return l.Type == "payload"
+	case PayloadHex:
+		return l.Type == "payload_hex"
+	default:
+		return false
+	}
 }
 
 // SplitStartAfter 把 start_after 引用拆成 (flow, msg):"flow名" → (flow, ""),

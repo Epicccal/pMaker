@@ -360,8 +360,8 @@ flows:
           - http_response: { status: 200, body: "..." }
 ```
 
-`from` 指方向(`src`/`dst`),消息体也是一个有序 `stack`;当前 flow message 仅支持一个 **payload 生产层**
-(`http_request` / `http_response` / `payload_hex` / `payload`)。反向消息会自动反转 eth/ipv4/tcp 的 src/dst/sport/dport.
+`from` 指方向(`src`/`dst`),消息体也是一个有序 `stack`;flow message 须 ≥1 个 **payload 生产层**
+(`http_request` / `http_response` / `payload_hex` / `payload` 等),按声明顺序拼接(standalone packet 同此规则)。反向消息会自动反转 eth/ipv4/tcp 的 src/dst/sport/dport.
 
 ### 分段与规避
 

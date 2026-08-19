@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -231,6 +232,125 @@ func TestFlowCloseRST(t *testing.T) {
 		if tc := tcpOf(p.Packet); tc != nil && contains(tc.Flags, "FIN") {
 			t.Fatalf("close:rst 不应生成 FIN,但包%d 含 FIN", i)
 		}
+	}
+}
+
+// TestFlowMessageMultiPayload 校验一条 message 装多个 payload 生产层时,
+// 各层按栈声明顺序拼接进同一个 TCP 段:两个 payload 层 "aaaa"+"bbbb" → 段内 "aaaabbbb",
+// seq 推进量 = 8(= 拼接后总字节,与 standalone packet 多 payload 层语义一致)。
+func TestFlowMessageMultiPayload(t *testing.T) {
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Flows: []scenario.FlowSpec{{
+			Name: "multi",
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 1000, ServerISN: 5000}},
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "handshake", Close: "none"}},
+			},
+			Messages: []scenario.Message{{
+				From: "src",
+				Stack: []scenario.Layer{
+					{Type: "payload", Fields: &scenario.PayloadFields{Payload: "aaaa"}},
+					{Type: "payload", Fields: &scenario.PayloadFields{Payload: "bbbb"}},
+				},
+			}},
+		}},
+	}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	planned, err := plan.Plan(s)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	pkts, err := builder.BuildPlanned(planned)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	tcps := readTCP(t, buf.Bytes())
+
+	// 找唯一的 PSH 数据段(client→server),断言 payload == "aaaabbbb"。
+	var dataSeg *layers.TCP
+	for _, tc := range tcps {
+		if tc.PSH && len(tc.Payload) > 0 && tc.SrcPort == 1111 {
+			dataSeg = tc
+			break
+		}
+	}
+	if dataSeg == nil {
+		t.Fatalf("未找到 client→server 的 PSH 数据段")
+	}
+	if string(dataSeg.Payload) != "aaaabbbb" {
+		t.Errorf("数据段 payload=%q,期望 \"aaaabbbb\"(两个 payload 层按栈序拼接)", string(dataSeg.Payload))
+	}
+	// 只应有一个 client→server 数据段(未设 mss,整条不切)。
+	count := 0
+	for _, tc := range tcps {
+		if tc.PSH && len(tc.Payload) > 0 && tc.SrcPort == 1111 {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("client→server 数据段数=%d,期望 1(拼接后整段不切)", count)
+	}
+}
+
+// TestFlowMessagePayloadEmptyStack 走完整链路钉 messagePayload 对空 stack 报错:
+// Validate 已拦空 stack,这里通过解析 YAML 让 message.stack 为空触发 messagePayload 守护
+// (Validate 不在测试链路,直接走 plan.Plan → flow.Expand → messagePayload)。
+func TestFlowMessagePayloadEmptyStack(t *testing.T) {
+	// 构造一个 stack 为空的 message:不经过 Validate,直接喂 plan.Plan。
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Flows: []scenario.FlowSpec{{
+			Name: "empty",
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 1000, ServerISN: 5000}},
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "none", Close: "none"}},
+			},
+			Messages: []scenario.Message{{From: "src", Stack: nil}},
+		}},
+	}
+	// plan.Plan 不跑 Validate,直接展开 flow;空 stack 在 messagePayload 守护处报错。
+	_, err := plan.Plan(s)
+	if err == nil || !strings.Contains(err.Error(), "至少一个 payload 生产层") {
+		t.Fatalf("空 message.stack 应报错,得到 %v", err)
+	}
+}
+
+// TestFlowMessagePayloadLayerError 钉 messagePayload 逐层取字节时,某层构建失败
+// 会带层索引上抛(如 PayloadHex 非法)。多 payload 层遍历路径(循环内 return err 分支)覆盖。
+func TestFlowMessagePayloadLayerError(t *testing.T) {
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Flows: []scenario.FlowSpec{{
+			Name: "badlayer",
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 1000, ServerISN: 5000}},
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "none", Close: "none"}},
+			},
+			Messages: []scenario.Message{{
+				From: "src",
+				Stack: []scenario.Layer{
+					{Type: "payload", Fields: &scenario.PayloadFields{Payload: "aaaa"}}, // stack[0] 正常
+					{Type: "payload_hex", Fields: scenario.PayloadHex("0xZZ")},          // stack[1] 非法 hex
+				},
+			}},
+		}},
+	}
+	_, err := plan.Plan(s)
+	if err == nil || !strings.Contains(err.Error(), "message.stack[1]") {
+		t.Fatalf("第二层构建失败应带层索引 message.stack[1] 上抛,得到 %v", err)
 	}
 }
 
