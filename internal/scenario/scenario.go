@@ -174,7 +174,7 @@ func validateFlow(f FlowSpec) error {
 		// message.stack 不混入非 payload 层。支持一个或多个 payload 生产层,按栈顺序拼接。
 		// 白名单须与 builder.PayloadBytes(internal/builder/payload.go)的 switch 保持一致。
 		for k, l := range m.Stack {
-			if !isPayloadProducingLayer(l.Fields) {
+			if !isPayloadProducingLayer(l) {
 				return fmt.Errorf("messages[%d].stack[%d] 不支持 %q(只允许 payload 生产层,非标内容走 payload/payload_hex)", j, k, l.Type)
 			}
 			// 逐层字段校验:与 standalone packet 的 validateLayer 等价。此前 message.stack
@@ -202,16 +202,43 @@ func validateFlow(f FlowSpec) error {
 	return nil
 }
 
-// isPayloadProducingLayer 判断某层的 Fields 是否为 payload 生产层。
-// 白名单须与 builder.PayloadBytes(internal/builder/payload.go)的 switch 保持一致:
-// 该 switch 支持的全部 Fields 类型即 payload 生产层集合,改动一处须同步另一处。
-func isPayloadProducingLayer(f any) bool {
-	switch f.(type) {
-	case *HTTPReqFields, *HTTPRespFields, *FTPRequestFields, *FTPResponseFields,
-		*TelnetFields, *SMTPRequestFields, *SMTPResponseFields,
-		*POP3RequestFields, *POP3ResponseFields, *EMLDataFields,
-		*PayloadFields, PayloadHex:
-		return true
+// isPayloadProducingLayer 判断一层是否为合法的 payload 生产层:Type 与 Fields 的
+// 类型映射必须一致,且 Fields 类型属于 payload 生产层集合。
+//
+// 仅判 Fields 类型会放过 Layer{Type: "eth", Fields: &PayloadFields{...}} 这种 Type 与
+// Fields 不匹配的状态——YAML 解码(decodeFields 按 Type 构造对应 Fields)不会产出,
+// 但 Layer 是导出类型,程序代码可直接构造。此时 builder 按 Fields 产 payload、describe
+// 按 Type 显示"eth",产出的包与摘要不一致,且一致性校验(如 FTP)按 Fields 类型分派
+// 也会错位。故同时校验 Type→Fields 映射,二者须一致才视为合法 payload 生产层。
+//
+// 白名单的 Fields 集合须与 builder.PayloadBytes(internal/builder/payload.go)的 switch
+// 保持一致;Type 名须与 decodeFields(internal/scenario/layer_decode.go)的 case 一致。
+func isPayloadProducingLayer(l Layer) bool {
+	switch l.Fields.(type) {
+	case *HTTPReqFields:
+		return l.Type == "http_request"
+	case *HTTPRespFields:
+		return l.Type == "http_response"
+	case *FTPRequestFields:
+		return l.Type == "ftp_request"
+	case *FTPResponseFields:
+		return l.Type == "ftp_response"
+	case *TelnetFields:
+		return l.Type == "telnet"
+	case *SMTPRequestFields:
+		return l.Type == "smtp_request"
+	case *SMTPResponseFields:
+		return l.Type == "smtp_response"
+	case *POP3RequestFields:
+		return l.Type == "pop3_request"
+	case *POP3ResponseFields:
+		return l.Type == "pop3_response"
+	case *EMLDataFields:
+		return l.Type == "eml_data"
+	case *PayloadFields:
+		return l.Type == "payload"
+	case PayloadHex:
+		return l.Type == "payload_hex"
 	default:
 		return false
 	}

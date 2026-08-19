@@ -538,6 +538,18 @@ func TestValidateMessageStackMultiPayload(t *testing.T) {
 	}}); err == nil || !strings.Contains(err.Error(), "messages[0].stack[1].ftp_response") {
 		t.Fatalf("非首层 ftp_response code 越界应被 validateLayer 拦截,得到 %v", err)
 	}
+
+	// Type 与 Fields 不匹配:Type="eth" 却挂 PayloadFields。YAML 解码不会产出此状态,
+	// 但 Layer 是导出类型,程序代码可直接构造。原实现只判 Fields 类型会放过它,导致
+	// builder 按 Fields 产 payload 而 describe 按 Type 显示 "eth" 的不一致。现应拒绝,
+	// 报错点名 Type "eth"(走"不支持"分支,因 isPayloadProducingLayer 校验映射不一致)。
+	if err := scenario.Validate(&scenario.Scenario{Flows: []scenario.FlowSpec{
+		flow(scenario.Message{From: "src", Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.PayloadFields{Payload: "aaaa"}},
+		}}),
+	}}); err == nil || !strings.Contains(err.Error(), "stack[0]") || !strings.Contains(err.Error(), "eth") {
+		t.Fatalf("Type=eth 挂 PayloadFields(类型不匹配)应被拒绝并点名 eth,得到 %v", err)
+	}
 }
 
 // TestStartAfterMessageLevelCycleRejected 验证事件粒度仍能拦住真正的跨流消息级环:
