@@ -457,6 +457,23 @@ func TestFTPConsistency_EPRTAddrNormalizationFlowSide(t *testing.T) {
 	}
 }
 
+// TestFTPConsistency_NonFirstLayer: 227 协商层放在 message.stack 的非首层(stack[1],
+// 前面垫一个 payload 层)。多 payload 生产层放开后,协商端点仍须被提取并参与一致性校验,
+// 否则假阴性。验证非首层的 227 与 data 流端口不一致仍告警。
+func TestFTPConsistency_NonFirstLayer(t *testing.T) {
+	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStack +
+		"    messages:\n      - from: dst\n        stack:\n" +
+		"          - payload: { payload: \"multiline preamble\\r\\n\" }\n" +
+		"          - ftp_response: { code: 227, message: \"Entering Passive Mode (10,0,0,21,195,80).\" }\n" +
+		"  - name: data\n    stack:\n" + dataStackWith("10.0.0.21", 49999) +
+		"    messages:\n      - from: dst\n        stack:\n          - payload: { payload: \"x\" }\n"
+	warnings := loadWarnings(t, "nonfirst.yaml", body)
+	if !containsWarning(warnings, "端口不一致") || !containsWarning(warnings, "10.0.0.21:50000") {
+		t.Fatalf("期望非首层 227 端口不一致告警,实际: %v", warnings)
+	}
+}
+
 // TestFTPConsistency_EPSVAddrNormalizationFlowSide: EPSV(229)不含地址,隐式取控制流
 // dst IP;控制流 dst 用完整展开、data 流 dst 用简写时,归一化后一致 → 无告警。
 // 验证 229 隐式地址比对时两侧都走了规范化。
