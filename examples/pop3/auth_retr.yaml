@@ -1,0 +1,106 @@
+# examples/pop3/auth_retr.yaml
+#
+# 一次完整 POP3 会话(RFC 1939),用结构化字段构造命令/响应,RETR 正文复用 eml_data 子结构:
+#   服务器问候(含 APOP 时间戳)→ USER/PASS → STAT → LIST(多行 lines)→ RETR(多行 eml 子结构)
+#   → DELE → QUIT。
+#
+# 覆盖点:
+#   - pop3_request 命令+args 扁平风格(command 原样大写输出);
+#   - pop3_response 单行(+OK message)、多行 lines(LIST 扫描列表,逐行 dot-stuff + 终止符);
+#   - pop3_response 多行 eml(RETR 返回 RFC 5322 正文,复用 eml_data 子结构,自动 dot-stuff + 终止符);
+#   - pop3_request/pop3_response 作为 flow message 的 payload 生产层,序列化为 TCP payload 字节。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: pop3-fetch
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.110", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 110, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器问候(单行,含 APOP 时间戳挑战)
+      - from: dst
+        stack:
+          - pop3_response:
+              status: "+OK"
+              message: "POP3 server ready <1896.697170952@mail.example>"
+
+      # USER / PASS 认证
+      - from: src
+        stack:
+          - pop3_request: { command: USER, args: "alice" }
+
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "User accepted" }
+
+      - from: src
+        stack:
+          - pop3_request: { command: PASS, args: "secret" }
+
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "Maildrop locked and ready" }
+
+      # STAT(单行响应:邮件数 总大小)
+      - from: src
+        stack:
+          - pop3_request: { command: STAT }
+
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "2 3200" }
+
+      # LIST 无参(多行 lines 响应:带说明文本的首行 + 扫描列表 + 终止符)
+      - from: src
+        stack:
+          - pop3_request: { command: LIST }
+
+      - from: dst
+        stack:
+          - pop3_response:
+              status: "+OK"
+              message: "2 messages (3200 octets)"
+              lines:
+                - "1 1200"
+                - "2 2000"
+
+      # RETR 1(多行 eml 子结构:首行带说明文本 + RFC 5322 正文,自动 dot-stuff + 终止符)
+      - from: src
+        stack:
+          - pop3_request: { command: RETR, args: "1" }
+
+      - from: dst
+        stack:
+          - pop3_response:
+              status: "+OK"
+              message: "message 1 follows"
+              eml:
+                headers:
+                  From: "alice@example.com"
+                  To: "bob@example.net"
+                  Subject: "Hello"
+                  Date: "Thu, 01 Jan 2024 00:00:00 +0000"
+                  Message-ID: "<abc@example.com>"
+                body: "Hi Bob,\r\nThis is a test message.\r\n.\r\nCheers,\r\nAlice\r\n"
+
+      # DELE 2(单行响应)
+      - from: src
+        stack:
+          - pop3_request: { command: DELE, args: "2" }
+
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "message 2 deleted" }
+
+      # QUIT(触发 UPDATE 状态,单行响应)
+      - from: src
+        stack:
+          - pop3_request: { command: QUIT }
+
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "bye" }

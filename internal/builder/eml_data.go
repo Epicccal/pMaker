@@ -8,26 +8,23 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-// serializeEMLData 把 RFC 5322 邮件内容序列化为 TCP payload 字节。协议无关：
-// SMTP DATA（RFC 5321）与 POP3 RETR（RFC 1939）使用行框架（dot-stuffing + 终止符），
-// IMAP FETCH（RFC 9051）使用长度前缀字面量（无 dot-stuffing/终止符），由开关适配。
+// serializeEMLData 把 RFC 5322 邮件内容序列化为 TCP payload 字节（**纯内容，不含成帧**）。
+// 协议无关的内容层：成帧（dot-stuffing + <CRLF>.<CRLF> 终止符）是传输协议的职责，由接入层
+// 强制（SMTP DATA / POP3 RETR 的接入层调用 ApplyDotStuffing + AppendDotTerminator；
+// IMAP FETCH 未来用长度前缀 {n}\r\n 包装），不在内容层暴露开关。缺 dot-stuffing / 缺终止符
+// 等畸形走 payload/payload_hex 原始字节兜底。
 //
 // 两种模式（互斥，由校验保证）：
-//   - 结构化模式（headers/body）：拼装 headers（按 YAML 声明顺序）+ 空行 + body，
-//     按 dot_stuff 做行首 dot-stuffing，按 dot_terminate 追加终止符 <CRLF>.<CRLF>。
-//   - 原始模式（raw/raw_hex）：裸透传字节，按 dot_stuff 决定是否 stuffing，
-//     按 dot_terminate 决定是否追加终止符。
-//
-// dot-stuffing（RFC 5321 §4.5.2 / RFC 1939 §3）：正文每行行首为 '.' 的行前面加一个 '.'，
-// 无论该行是否只有 '.'。终止符 <CRLF>.<CRLF> 是正文之后的独立追加，不参与 stuffing。
+//   - 结构化模式（headers/body）：拼装 headers（按 YAML 声明顺序）+ 空行 + body；
+//   - 原始模式（raw/raw_hex）：裸透传字节。
 //
 // 结构化模式空行处理：headers 与 body 之间无条件插空行 "\r\n"（头体分隔符）。
 // body 为空但 headers 非空时（合规空体邮件），产出 headers + 空行
 // （headers 末尾的 \r\n 即为空行）。结构化模式要求 headers 非空（校验保证），
 // 无头邮件等畸形请走 raw/raw_hex。
 //
-// 纯函数：可在层栈独立调用（SMTP/POP3），也可在 imap_response builder 中嵌套调用（IMAP）。
-// IMAP builder 调用前应自动覆写 dot_stuff/dot_terminate 为 off（见设计文档 §3.4/§10.3）。
+// 纯函数：可在层栈独立调用（SMTP/POP3 接入层负责成帧），也可在 imap_response builder
+// 中嵌套调用（IMAP 用长度前缀包装）。
 func serializeEMLData(f *scenario.EMLDataFields) ([]byte, error) {
 	var content []byte
 
@@ -69,29 +66,45 @@ func serializeEMLData(f *scenario.EMLDataFields) ([]byte, error) {
 		content = []byte(b.String())
 	}
 
-	// 4. dot_stuff 决策（缺省 on，off 为 opt-out）。
-	if f.DotStuff != "off" {
-		content = dotStuff(content)
-	}
-
-	// 5. dot_terminate 决策（缺省 on，off 为 opt-out）。
-	if f.DotTerminate != "off" {
-		// 终止符 <CRLF>.<CRLF>：若正文以 \r\n 结尾，追加 ".\r\n"；否则追加 "\r\n.\r\n"。
-		if bytes.HasSuffix(content, []byte("\r\n")) {
-			content = append(content, '.', '\r', '\n')
-		} else {
-			content = append(content, '\r', '\n', '.', '\r', '\n')
-		}
-	}
-
 	return content, nil
 }
 
-// dotStuff 对正文做 RFC 5321 §4.5.2 / RFC 1939 §3 的透明性处理：
+// serializeEMLDataFramed 把 eml_data standalone 层序列化为带成帧的完整 SMTP DATA 正文字节：
+// serializeEMLData（纯内容）→ ApplyDotStuffing → AppendDotTerminator。
+// serializeStack 与 PayloadBytes 都调用此函数，确保两条路径字节一致（flow 展开器
+// 按 PayloadBytes 的长度切段，不一致会导致静默的分段长度错误）。
+func serializeEMLDataFramed(f *scenario.EMLDataFields) ([]byte, error) {
+	b, err := serializeEMLData(f)
+	if err != nil {
+		return nil, err
+	}
+	return AppendDotTerminator(ApplyDotStuffing(b)), nil
+}
+
+// ApplyDotStuffing 对正文做 RFC 5321 §4.5.2 / RFC 1939 §3 的透明性处理：
 // 每行行首为 '.' 的行前面加一个 '.'，无论该行是否只有 '.'。
 // 按 \r\n 分行处理（保留 \r\n），首行特殊处理（无前导 \r\n）。
 // 结构化模式的 body 已由 normalizeCRLF 归一化为 \r\n，故行边界一致；
 // raw 模式不归一化，裸 \n 开头的 '.' 不做 stuffing（构造非标换行畸形，行为可接受）。
+//
+// 供接入层（SMTP/POP3）在拿到 serializeEMLData 的纯内容后强制成帧时调用。
+func ApplyDotStuffing(content []byte) []byte {
+	return dotStuff(content)
+}
+
+// AppendDotTerminator 追加 RFC 5321 §4.5.2 / RFC 1939 §3 的终止符 <CRLF>.<CRLF>：
+// 若正文以 \r\n 结尾，追加 ".\r\n"；否则追加 "\r\n.\r\n"。
+//
+// 供接入层（SMTP/POP3）在拿到 serializeEMLData 的纯内容（已 ApplyDotStuffing）后
+// 强制成帧时调用。
+func AppendDotTerminator(content []byte) []byte {
+	if bytes.HasSuffix(content, []byte("\r\n")) {
+		return append(content, '.', '\r', '\n')
+	}
+	return append(content, '\r', '\n', '.', '\r', '\n')
+}
+
+// dotStuff 是 ApplyDotStuffing 的内部实现（保留原名供包内 lines 分支等复用）。
 func dotStuff(content []byte) []byte {
 	out := make([]byte, 0, len(content)+8)
 	atLineStart := true

@@ -1,0 +1,98 @@
+# examples/pop3/auth_sasl.yaml
+#
+# POP3 SASL 认证流程(RFC 1734 / RFC 4954),演示 AUTH PLAIN 的服务器续行挑战
+# 与客户端 base64 响应(均用结构化 pop3_request/pop3_response 字段构造):
+#
+#   CAPA(协商 SASL 机制)→ AUTH PLAIN → "+ <base64-server-challenge>" 续行
+#   → 客户端 base64 凭证 → +OK 认证成功 → QUIT。
+#
+# 覆盖点:
+#   - pop3_response status="+"(RFC 1734/4954 SASL 续行挑战,单字符 + 而非 +OK,
+#     message 字段承载 base64 挑战,结构化路径即可,无需退到 payload_hex);
+#   - pop3_request AUTH 命令(args=PLAIN 机制)发起认证;
+#   - 客户端 SASL 续行响应是一行裸 base64(RFC 1734 §3:AUTH 后续往返为
+#     "a line containing a BASE64 encoded string",不带命令前缀),pop3_request
+#     的 command 恒输出、无法产生裸 base64 行,故走 payload 原始字节通道
+#     (与项目"非结构化值走原始字节兜底"哲学一致,如 malformed.yaml 私有命令的处理);
+#   - CAPA 多行响应(首行带说明文本 + 能力列表,含 SASL)。
+#
+# 说明:RFC 1734 §2/§3 规定 SASL 续行挑战是单字符 "+" 开头的服务器响应
+# ("+ <base64>\r\n" 或裸 "+\r\n"),区别于 RFC 1939 的 +OK/-ERR。本示例用
+# status: "+" + message: <base64> 表达这一形态。客户端的 SASL 续行响应按
+# RFC 1734 §3 是一行裸 base64(无命令前缀),pop3_request 无法表达,故用
+# payload 层承载裸 base64 编码凭证。
+#
+# 流量验证关注点:POP3 解析器对 SASL 续行 "+" 的识别、base64 挑战/响应的
+# 往返、AUTH 机制协商(CAPA 中的 SASL 能力)。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: pop3-auth-sasl
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.110", ttl: 64 }
+      - tcp:  { sport: 49156, dport: 110, client_isn: 4000, server_isn: 8000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器问候
+      - from: dst
+        stack:
+          - pop3_response:
+              status: "+OK"
+              message: "POP3 server ready <1896.697170952@mail.example>"
+
+      # CAPA 询问能力(含 SASL PLAIN)
+      - from: src
+        stack:
+          - pop3_request: { command: CAPA }
+
+      - from: dst
+        stack:
+          - pop3_response:
+              status: "+OK"
+              message: "Capability list follows"
+              lines:
+                - "TOP"
+                - "USER"
+                - "SASL PLAIN LOGIN CRAM-MD5"
+                - "RESP-CODES"
+                - "PIPELINING"
+                - "UIDL"
+                - "STLS"
+
+      # AUTH PLAIN 客户端发起
+      - from: src
+        stack:
+          - pop3_request: { command: AUTH, args: "PLAIN" }
+
+      # 服务器 SASL 续行挑战(RFC 1734/4954:单字符 + 开头,非 +OK)
+      # challenge = base64("\0alice\0secret") = "AGFsaWNlAHNlY3JldA=="
+      - from: dst
+        stack:
+          - pop3_response:
+              status: "+"
+              message: "AGFsaWNlAHNlY3JldA=="
+
+      # 客户端 SASL 续行响应:一行裸 base64(RFC 1734 §3:AUTH 后续往返为
+      # "a line containing a BASE64 encoded string",不带命令前缀)。
+      # pop3_request 的 command 恒输出、无法产生裸 base64 行,故走 payload 通道。
+      # creds = base64("\0alice\0secret") = "AGFsaWNlAHNlY3JldA=="
+      - from: src
+        stack:
+          - payload: { payload: "AGFsaWNlAHNlY3JldA==\r\n" }
+
+      # 认证成功
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "authentication successful" }
+
+      # QUIT
+      - from: src
+        stack:
+          - pop3_request: { command: QUIT }
+
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "bye" }

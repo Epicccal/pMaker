@@ -7,7 +7,7 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-// 本文件覆盖 smtp_request.go 的 SMTP 信封 verb / 响应码合法基线校验,
+// 本文件覆盖 smtp_command.go 的 SMTP 信封 verb / 响应码合法基线校验,
 // 对齐 ftp_command_test.go 的风格:已知 verb(大小写不敏感)、合法响应码(200-559)、
 // 未知值报错并引导 payload / payload_hex。并覆盖 verb 参数要求(EHLO 必带/QUIT 禁带)、
 // MAIL/RCPT 信封字段约束(from 三态、to 非空、禁 args、params 仅 MAIL/RCPT)。

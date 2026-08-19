@@ -24,8 +24,20 @@ func PayloadBytes(l scenario.Layer) ([]byte, error) {
 		return serializeSMTPReq(f), nil
 	case *scenario.SMTPResponseFields:
 		return serializeSMTPResp(f), nil
+	case *scenario.POP3RequestFields:
+		return serializePOP3Req(f), nil
+	case *scenario.POP3ResponseFields:
+		b, err := serializePOP3Resp(f)
+		if err != nil {
+			return nil, fmt.Errorf("pop3_response: %w", err)
+		}
+		return b, nil
 	case *scenario.EMLDataFields:
-		return serializeEMLData(f)
+		b, err := serializeEMLDataFramed(f)
+		if err != nil {
+			return nil, fmt.Errorf("eml_data: %w", err)
+		}
+		return b, nil
 	case *scenario.PayloadFields:
 		return payloadBytes(f)
 	case scenario.PayloadHex:

@@ -59,7 +59,7 @@ boundary 必须与父层 `Content-Type` 头里的 `boundary=` 参数一致(一�
   - `quoted-printable`:`mime/quotedprintable`;
   - `none`/`7bit`/`8bit`/`binary`:RFC 2045 §6 恒等编码(identity),原样透传 —— 这四者仅声明 body 字节性质(7bit 限 ASCII 短行、8bit 允许高位字节、binary 任意字节流),**不做任何变换**,与 `none` 行为一致。
 - **不做 CRLF 归一化**:`body`(含 `@file` 注入的文本/二进制)与 `body_hex` 均保留原始字节(对齐 HTTP body 现状)。`@file` 可注入二进制附件(图片、压缩包),归一化会破坏文件字节;换行正确性交给用户。
-- EML 下 multipart 字节作为 content,其后仍按 `dot_stuff`/`dot_terminate` 处理(作用顺序:编码 → 拼装 → stuff → terminate)。
+- EML 下 multipart 字节作为 content,`serializeEMLData` 产纯内容(编码 → 拼装),成帧(stuff + terminate)由接入层强制(见 `eml_data` schema)。
 
 ## 互斥
 

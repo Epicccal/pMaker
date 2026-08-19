@@ -15,46 +15,36 @@ import (
 // SMTP verb 原样输出(不强制大写),保留 helo/MAIL/Mail 等大小写构造能力
 // (RFC 5321 §2.4 命令大小写不敏感,是合规测试点);结构化路径只规范 FROM/TO 关键字与 <> 包裹。
 
-// knownSMTPVerbs 是 SMTP 已知 verb 表(RFC 5321 核心 + RFC 821 历史 + 常见扩展),
-// 统一大写存储,匹配时大小写不敏感。私有 verb 不在表内,需走 payload/payload_hex。
-var knownSMTPVerbs = map[string]struct{}{
+// smtpVerbs 是 SMTP 已知 verb 表(单源):键 = 大写 verb,值 = 该 verb 的 args 要求策略
+// (required/forbidden/optional/struct)。成员关系即「已知 verb」,args 有/无按策略校验。
+// 单表而非「已知表 + args 规则表」两张表:加 verb 只在此一处,不存在「加了一处忘了另一处、
+// 新 verb 被 map 缺键零值静默当作某策略」的路径 —— map 字面量每键必须显式给值。
+// 私有 verb 不在表内,需走 payload/payload_hex。
+// 文法依据见 RFC 5321 §4.1 / RFC 4954 / RFC 3030 / RFC 1985 / RFC 2645。
+var smtpVerbs = map[string]smtpArgsPolicy{
 	// RFC 5321 核心
-	"HELO": {}, "EHLO": {}, "MAIL": {}, "RCPT": {}, "DATA": {},
-	"RSET": {}, "VRFY": {}, "EXPN": {}, "HELP": {}, "NOOP": {}, "QUIT": {},
+	"HELO": smtpArgsRequired,
+	"EHLO": smtpArgsRequired,
+	"MAIL": smtpArgsStruct, // 走结构化 from/to+params,不在此判 args
+	"RCPT": smtpArgsStruct,
+	"DATA": smtpArgsForbidden,
+	"RSET": smtpArgsForbidden,
+	"QUIT": smtpArgsForbidden,
+	"VRFY": smtpArgsRequired,
+	"EXPN": smtpArgsRequired,
+	"HELP": smtpArgsOptional,
+	"NOOP": smtpArgsOptional,
 	// RFC 821 历史(deprecated 但保留以构造兼容/遗留流量)
-	"TURN": {}, "SEND": {}, "SOML": {}, "SAML": {},
+	"TURN": smtpArgsForbidden,
+	"SEND": smtpArgsRequired,
+	"SOML": smtpArgsRequired,
+	"SAML": smtpArgsRequired,
 	// 常见扩展 verb
-	"AUTH":     {}, // RFC 4954
-	"STARTTLS": {}, // RFC 3207
-	"BDAT":     {}, // RFC 3030 CHUNKING
-	"ETRN":     {}, // RFC 1985
-	"ATRN":     {}, // RFC 2645 ODMR
-}
-
-// smtpArgsRule 是 verb 的 args 要求:required(必带)/ forbidden(禁带)/ optional(可选)。
-// 只校验 args 的有/无,不校验 args 内容的合法性(args 内容校验留后续语义级阶段)。
-// 文法依据见 §4「verb 参数要求」表(RFC 5321 §4.1 / RFC 4954 / RFC 3030 / RFC 1985 / RFC 2645)。
-var smtpArgsRule = map[string]smtpArgsPolicy{
-	"EHLO":     smtpArgsRequired,
-	"HELO":     smtpArgsRequired,
-	"MAIL":     smtpArgsStruct, // 走结构化 from/to+params,不在此判 args
-	"RCPT":     smtpArgsStruct,
-	"DATA":     smtpArgsForbidden,
-	"RSET":     smtpArgsForbidden,
-	"QUIT":     smtpArgsForbidden,
-	"STARTTLS": smtpArgsForbidden,
-	"VRFY":     smtpArgsRequired,
-	"EXPN":     smtpArgsRequired,
-	"HELP":     smtpArgsOptional,
-	"NOOP":     smtpArgsOptional,
-	"AUTH":     smtpArgsRequired,
-	"BDAT":     smtpArgsRequired,
-	"ETRN":     smtpArgsRequired,
-	"ATRN":     smtpArgsOptional,
-	"TURN":     smtpArgsForbidden,
-	"SEND":     smtpArgsRequired,
-	"SOML":     smtpArgsRequired,
-	"SAML":     smtpArgsRequired,
+	"AUTH":     smtpArgsRequired,  // RFC 4954
+	"STARTTLS": smtpArgsForbidden, // RFC 3207
+	"BDAT":     smtpArgsRequired,  // RFC 3030 CHUNKING
+	"ETRN":     smtpArgsRequired,  // RFC 1985
+	"ATRN":     smtpArgsOptional,  // RFC 2645 ODMR
 }
 
 type smtpArgsPolicy int
@@ -74,7 +64,7 @@ func validateSMTPVerb(v string) (string, error) {
 		return "", fmt.Errorf("需要 verb")
 	}
 	uv := strings.ToUpper(v)
-	if _, ok := knownSMTPVerbs[uv]; !ok {
+	if _, ok := smtpVerbs[uv]; !ok {
 		return "", fmt.Errorf("未知 SMTP verb %q(支持 RFC 5321 核心 HELO/EHLO/MAIL/RCPT/DATA/…与常见扩展 AUTH/STARTTLS/BDAT 等;非标或私有 verb 请用 payload / payload_hex)", v)
 	}
 	return uv, nil
@@ -110,7 +100,7 @@ func validateSMTPResponseCode(code int) error {
 //   - MAIL/RCPT(结构化路径):MAIL 须配 from(指针三态:nil 报错/""→<>/"addr"→<addr>),禁 to/args;
 //     RCPT 须配 to(非空),禁 from/args;params 可选。
 //   - 非 MAIL/RCPT verb(args 普通参数路径):禁 from/to;params 仅对 MAIL/RCPT 有效(给非 MAIL/RCPT 报错);
-//     args 按 verbArgsRule 校验有/无(required/forbidden/optional)。
+//     args 按 smtpVerbs 中该 verb 的策略校验有/无(required/forbidden/optional)。
 //
 // 只判合法性,不解析 args / params 内容(避免过度约束畸形构造;内容语义校验属后续阶段)。
 func validateSMTPRequestFields(f *SMTPRequestFields) error {
@@ -153,8 +143,8 @@ func validateSMTPRequestFields(f *SMTPRequestFields) error {
 		if f.Params.Len() > 0 {
 			return fmt.Errorf("params 仅对 MAIL/RCPT 有效")
 		}
-		// args 有/无按 verbArgsRule 校验。
-		switch smtpArgsRule[uv] {
+		// args 有/无按 smtpVerbs 中该 verb 的策略校验。
+		switch smtpVerbs[uv] {
 		case smtpArgsRequired:
 			if f.Args == "" {
 				return fmt.Errorf("%s 需要 args(如 EHLO 需要域名)", f.Verb)
@@ -165,6 +155,13 @@ func validateSMTPRequestFields(f *SMTPRequestFields) error {
 			}
 		case smtpArgsOptional:
 			// 有/无均合规(NOOP/HELP/ATRN)。
+		case smtpArgsStruct:
+			// smtpArgsStruct 的 verb 走结构化信封路径,应由外层 switch uv 的
+			// case "MAIL", "RCPT" 分支处理并 return,不该落到这里。落到这里说明
+			// smtpVerbs 里新增了 smtpArgsStruct verb 但忘了在外层加 case ——
+			// 此时 from/to/params/args 全部未按结构化路径校验,静默放行会产出
+			// 未经校验的包。显式报错把这个遗漏暴露在校验阶段。
+			return fmt.Errorf("内部错误:verb %s 标记为结构化信封路径(smtpArgsStruct),但未在 validateSMTPRequestFields 的外层 switch 中处理", f.Verb)
 		}
 		return nil
 	}

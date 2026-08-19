@@ -9,9 +9,16 @@ import (
 	"github.com/Epicccal/pMaker/internal/writer"
 )
 
-// 本文件覆盖 eml_data 应用层序列化：结构化/原始模式、dot-stuffing、终止符、头注入、
-// 空头/空体边界，断言字节符合 RFC 5322 / RFC 5321 §4.5.2。走 PayloadBytes 与 serializeStack
-// 同一序列化路径，确保行为一致。
+// 本文件覆盖 eml_data 应用层序列化。eml_data 是协议无关的**内容层**：serializeEMLData
+// 只产 RFC 5322 内容字节（headers+空行+body 或 raw），成帧（dot-stuffing + <CRLF>.<CRLF>
+// 终止符）由接入层强制。eml_data standalone 层 = SMTP DATA 正文，经 PayloadBytes /
+// serializeStack 序列化时接入层强制成帧（ApplyDotStuffing + AppendDotTerminator）。
+//
+// 故：
+//   - 内容构造测试（headers 顺序、空体、重复头、CRLF 归一化、raw 透传、头注入）走
+//     PayloadBytes，断言完整成帧输出（内容 + dot-stuff + 终止符）；
+//   - 成帧助手 ApplyDotStuffing / AppendDotTerminator 单独测；
+//   - 精确字节裸透传（无成帧）不归 eml_data，走 payload/payload_hex（见 payload 测试）。
 
 func TestSerializeEMLData_Structured(t *testing.T) {
 	f := &scenario.EMLDataFields{
@@ -22,7 +29,8 @@ func TestSerializeEMLData_Structured(t *testing.T) {
 		},
 		Body: "This is the email body.\r\nSecond line.\r\n",
 	}
-	// headers 按 YAML 声明顺序：From/To/Subject
+	// headers 按 YAML 声明顺序：From/To/Subject；body 无行首 . → dot-stuff 无变化；
+	// 接入层追加终止符 .\r\n（SMTP DATA 成帧）。
 	want := "From: alice@example.com\r\n" +
 		"To: bob@example.net\r\n" +
 		"Subject: Hello\r\n" +
@@ -40,12 +48,12 @@ func TestSerializeEMLData_Structured(t *testing.T) {
 }
 
 func TestSerializeEMLData_Raw(t *testing.T) {
+	// raw 模式：内容字节裸透传（不拼头体、不归一化），接入层强制成帧。
+	// raw 含行首 . 行 → ApplyDotStuffing stuff 成 ..，再追加终止符。
 	f := &scenario.EMLDataFields{
-		Raw:          "From: a\r\nTo: b\r\n\r\nbody\r\n.\r\n",
-		DotStuff:     "off",
-		DotTerminate: "off",
+		Raw: "From: a\r\nTo: b\r\n\r\n.dotline\r\n",
 	}
-	want := "From: a\r\nTo: b\r\n\r\nbody\r\n.\r\n"
+	want := "From: a\r\nTo: b\r\n\r\n..dotline\r\n.\r\n"
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
 		t.Fatalf("PayloadBytes: %v", err)
@@ -56,12 +64,11 @@ func TestSerializeEMLData_Raw(t *testing.T) {
 }
 
 func TestSerializeEMLData_RawHex(t *testing.T) {
+	// raw_hex：hex 内容字节 → 接入层成帧（无 \r\n 结尾 → 追加 \r\n.\r\n）。
 	f := &scenario.EMLDataFields{
-		RawHex:       "0x466f6f", // "Foo"
-		DotTerminate: "off",
-		DotStuff:     "off",
+		RawHex: "0x466f6f", // "Foo"
 	}
-	want := "Foo"
+	want := "Foo\r\n.\r\n"
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
 		t.Fatalf("PayloadBytes: %v", err)
@@ -71,8 +78,8 @@ func TestSerializeEMLData_RawHex(t *testing.T) {
 	}
 }
 
-func TestSerializeEMLData_DotStuff_On(t *testing.T) {
-	// dot_stuff 缺省 on：body 行首 . → ..
+func TestSerializeEMLData_DotStuff_AppliedToFramedBody(t *testing.T) {
+	// 内容 body 行首 . → 接入层 ApplyDotStuffing stuff 成 ..（SMTP 传输透明性）。
 	f := &scenario.EMLDataFields{
 		Headers: scenario.HeaderMap{{Key: "Subject", Value: "t"}},
 		Body:    ".hidden dot\r\nnormal line\r\n",
@@ -87,31 +94,12 @@ func TestSerializeEMLData_DotStuff_On(t *testing.T) {
 	}
 }
 
-func TestSerializeEMLData_DotStuff_Off(t *testing.T) {
-	// dot_stuff=off：body 行首 . 不变（畸形）
-	f := &scenario.EMLDataFields{
-		Headers:  scenario.HeaderMap{{Key: "Subject", Value: "t"}},
-		Body:     ".hidden dot\r\nnormal line\r\n",
-		DotStuff: "off",
-	}
-	want := "Subject: t\r\n\r\n.hidden dot\r\nnormal line\r\n.\r\n"
-	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
-	if err != nil {
-		t.Fatalf("PayloadBytes: %v", err)
-	}
-	if !bytes.Equal(got, []byte(want)) {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
 func TestSerializeEMLData_DotStuff_DotOnlyLine(t *testing.T) {
-	// body 行只有 . → stuffing 产出 .. （非终止符）
+	// body 行只有 . → stuffing 产出 .. （非终止符），再追加终止符 .\r\n。
 	f := &scenario.EMLDataFields{
-		Headers:  scenario.HeaderMap{{Key: "Subject", Value: "t"}},
-		Body:     ".\r\nafter\r\n",
-		DotStuff: "on",
+		Headers: scenario.HeaderMap{{Key: "Subject", Value: "t"}},
+		Body:    ".\r\nafter\r\n",
 	}
-	// 结构化模式：headers + "\r\n" + body；dot_stuff 后 body 行首 . → ..；终止符 .\r\n
 	want := "Subject: t\r\n\r\n..\r\nafter\r\n.\r\n"
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
@@ -122,33 +110,16 @@ func TestSerializeEMLData_DotStuff_DotOnlyLine(t *testing.T) {
 	}
 }
 
-func TestSerializeEMLData_DotTerminate_Off(t *testing.T) {
-	f := &scenario.EMLDataFields{
-		Headers:      scenario.HeaderMap{{Key: "Subject", Value: "no term"}},
-		Body:         "body\r\n",
-		DotTerminate: "off",
-	}
-	want := "Subject: no term\r\n\r\nbody\r\n"
-	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
-	if err != nil {
-		t.Fatalf("PayloadBytes: %v", err)
-	}
-	if !bytes.Equal(got, []byte(want)) {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
 func TestSerializeEMLData_HeaderInjection(t *testing.T) {
-	// headers 值含 \r\n 裸透传不转义（头注入畸形）
+	// headers 值含 \r\n 裸透传不转义（头注入畸形）；无行首 . → dot-stuff 无变化；
+	// 接入层追加终止符。
 	f := &scenario.EMLDataFields{
 		Headers: scenario.HeaderMap{
 			{Key: "X-Custom", Value: "value\r\nInjected: header"},
 		},
-		Body:         "body\r\n",
-		DotTerminate: "off",
-		DotStuff:     "off",
+		Body: "body\r\n",
 	}
-	want := "X-Custom: value\r\nInjected: header\r\n\r\nbody\r\n"
+	want := "X-Custom: value\r\nInjected: header\r\n\r\nbody\r\n.\r\n"
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
 		t.Fatalf("PayloadBytes: %v", err)
@@ -159,11 +130,10 @@ func TestSerializeEMLData_HeaderInjection(t *testing.T) {
 }
 
 func TestSerializeEMLData_BodyEmpty_HeadersOnly(t *testing.T) {
-	// body 为空 + headers 非空 → headers + 空行（headers 末尾 \r\n 即空行）+ 终止符
+	// body 为空 + headers 非空 → headers + 空行（headers 末尾 \r\n 即空行）+ 终止符。
 	f := &scenario.EMLDataFields{
 		Headers: scenario.HeaderMap{{Key: "Subject", Value: "empty body"}},
 	}
-	// headers 输出 "Subject: empty body\r\n"，再插空行 "\r\n"，body 空，终止符 .\r\n
 	want := "Subject: empty body\r\n\r\n.\r\n"
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
@@ -183,15 +153,14 @@ func TestSerializeEMLData_DuplicateHeaders(t *testing.T) {
 			{Key: "Received", Value: "from mx2 by mx3"},
 			{Key: "From", Value: "a@b"},
 		},
-		Body:         "body\r\n",
-		DotTerminate: "off",
-		DotStuff:     "off",
+		Body: "body\r\n",
 	}
 	want := "Received: from mx1 by mx2\r\n" +
 		"Received: from mx2 by mx3\r\n" +
 		"From: a@b\r\n" +
 		"\r\n" +
-		"body\r\n"
+		"body\r\n" +
+		".\r\n"
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
 		t.Fatalf("PayloadBytes: %v", err)
@@ -202,13 +171,11 @@ func TestSerializeEMLData_DuplicateHeaders(t *testing.T) {
 }
 
 func TestSerializeEMLData_ConsecutiveBlankLines(t *testing.T) {
-	// body 含连续空行 → dot-stuffing 不影响空行（行首非 .）
+	// body 含连续空行 → dot-stuffing 不影响空行（行首非 .）；接入层追加终止符。
 	f := &scenario.EMLDataFields{
-		Headers:  scenario.HeaderMap{{Key: "Subject", Value: "t"}},
-		Body:     "line1\r\n\r\n\r\nline2\r\n",
-		DotStuff: "on",
+		Headers: scenario.HeaderMap{{Key: "Subject", Value: "t"}},
+		Body:    "line1\r\n\r\n\r\nline2\r\n",
 	}
-	// 结构化：headers + "\r\n" + body；dot-stuffing 不改空行；终止符 .\r\n
 	want := "Subject: t\r\n\r\nline1\r\n\r\n\r\nline2\r\n.\r\n"
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
@@ -219,76 +186,51 @@ func TestSerializeEMLData_ConsecutiveBlankLines(t *testing.T) {
 	}
 }
 
-func TestSerializeEMLData_RawEndsWithCRLF_TerminateOn(t *testing.T) {
-	// raw 以 \r\n 结尾 + dot_terminate=on → 追加 .\r\n（去重，不双 \r\n）
-	f := &scenario.EMLDataFields{
-		Raw:      "From: a\r\n\r\nbody\r\n",
-		DotStuff: "off",
+// ---- 成帧助手 ApplyDotStuffing / AppendDotTerminator（接入层维度）----
+
+func TestApplyDotStuffing(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"行首 . → ..", "Subject: t\r\n\r\n.hidden\r\nnormal\r\n", "Subject: t\r\n\r\n..hidden\r\nnormal\r\n"},
+		{"行只有 . → ..", ".\r\nafter\r\n", "..\r\nafter\r\n"},
+		{"无行首 . 不变", "line1\r\nline2\r\n", "line1\r\nline2\r\n"},
+		{"首行行首 . 也 stuff", ".first\r\n", "..first\r\n"},
+		{"裸 \\n 非 \\r\\n 边界不 stuff", "x\n.hidden\n", "x\n.hidden\n"},
 	}
-	want := "From: a\r\n\r\nbody\r\n.\r\n"
-	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
-	if err != nil {
-		t.Fatalf("PayloadBytes: %v", err)
-	}
-	if !bytes.Equal(got, []byte(want)) {
-		t.Errorf("got %q, want %q", got, want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := builder.ApplyDotStuffing([]byte(c.in))
+			if !bytes.Equal(got, []byte(c.want)) {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 
-func TestSerializeEMLData_RawNoCRLF_TerminateOn(t *testing.T) {
-	// raw 不以 \r\n 结尾 + dot_terminate=on → 追加 \r\n.\r\n
-	f := &scenario.EMLDataFields{
-		Raw:      "raw bytes no crlf",
-		DotStuff: "off",
+func TestAppendDotTerminator(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"以 \\r\\n 结尾 → 追加 .\\r\\n", "body\r\n", "body\r\n.\r\n"},
+		{"不以 \\r\\n 结尾 → 追加 \\r\\n.\\r\\n", "raw bytes", "raw bytes\r\n.\r\n"},
+		{"空内容 → 追加 \\r\\n.\\r\\n", "", "\r\n.\r\n"},
 	}
-	want := "raw bytes no crlf\r\n.\r\n"
-	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
-	if err != nil {
-		t.Fatalf("PayloadBytes: %v", err)
-	}
-	if !bytes.Equal(got, []byte(want)) {
-		t.Errorf("got %q, want %q", got, want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := builder.AppendDotTerminator([]byte(c.in))
+			if !bytes.Equal(got, []byte(c.want)) {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 
-// TestParseBackEMLData 构造一个最小 eth/ipv4/tcp + eml_data 包，回读断言 TCP payload
-// 为结构化 EML 字节（含终止符），证明 eml_data 经 serializeStack 序列化为 gopacket.Payload。
-func TestParseBackEMLData(t *testing.T) {
-	s := &scenario.Scenario{
-		LinkType: "ethernet",
-		Packets: []scenario.Packet{{
-			Stack: []scenario.Layer{
-				{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
-				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.25", TTL: u8ptr(64)}},
-				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 49152, DPort: 25, Flags: []string{"PSH", "ACK"}}},
-				{Type: "eml_data", Fields: &scenario.EMLDataFields{
-					Headers: scenario.HeaderMap{{Key: "Subject", Value: "hi"}},
-					Body:    "body\r\n",
-				}},
-			},
-		}},
-	}
-	if err := scenario.Validate(s); err != nil {
-		t.Fatalf("validate: %v", err)
-	}
-	pkts, err := buildPackets(s)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	var buf bytes.Buffer
-	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	read := readPackets(t, buf.Bytes())
-	if len(read) != 1 {
-		t.Fatalf("期望 1 个包，得到 %d", len(read))
-	}
-	p0 := read[0].ApplicationLayer()
-	want := "Subject: hi\r\n\r\nbody\r\n.\r\n"
-	if p0 == nil || string(p0.Payload()) != want {
-		t.Errorf("包0 EML=%q,期望 %q", p0, want)
-	}
-}
+// ---- CRLF 归一化（结构化模式内容生产职责）----
 
 // TestSerializeEMLData_BodyBareLF_Normalized 断言结构化模式把 body 的裸 \n
 // 归一化为 \r\n（模拟用户用 YAML `|` 块标量写入多行 body 的常见场景）。
@@ -299,7 +241,7 @@ func TestSerializeEMLData_BodyBareLF_Normalized(t *testing.T) {
 		Body: "first line\n... and more\n",
 	}
 	// 归一化后 body → "first line\r\n... and more\r\n"，
-	// dot_stuff=on 把行首 . → ..，再追加终止符
+	// 接入层 ApplyDotStuffing 把行首 . → ..（"... and more" → ".... and more"），再追加终止符。
 	want := "From: a@b\r\n\r\nfirst line\r\n.... and more\r\n.\r\n"
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
@@ -314,13 +256,11 @@ func TestSerializeEMLData_BodyBareLF_Normalized(t *testing.T) {
 // 已有的 \r\n 不动（不会变成 \r\r\n）。
 func TestSerializeEMLData_BodyMixedLF_Normalized(t *testing.T) {
 	f := &scenario.EMLDataFields{
-		Headers:      scenario.HeaderMap{{Key: "From", Value: "a@b"}},
-		Body:         "line1\r\nline2\nline3\r\n",
-		DotTerminate: "off",
-		DotStuff:     "off",
+		Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}},
+		Body:    "line1\r\nline2\nline3\r\n",
 	}
-	// 第二行裸 \n → \r\n，其余 \r\n 不动
-	want := "From: a@b\r\n\r\nline1\r\nline2\r\nline3\r\n"
+	// 第二行裸 \n → \r\n，其余 \r\n 不动；无行首 .；接入层追加终止符。
+	want := "From: a@b\r\n\r\nline1\r\nline2\r\nline3\r\n.\r\n"
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
 		t.Fatalf("PayloadBytes: %v", err)
@@ -333,13 +273,11 @@ func TestSerializeEMLData_BodyMixedLF_Normalized(t *testing.T) {
 // TestSerializeEMLData_BodyLeadingBareLF_Normalized 断言 body 以裸 \n 开头时也归一化。
 func TestSerializeEMLData_BodyLeadingBareLF_Normalized(t *testing.T) {
 	f := &scenario.EMLDataFields{
-		Headers:      scenario.HeaderMap{{Key: "From", Value: "a@b"}},
-		Body:         "\nbody\n",
-		DotTerminate: "off",
-		DotStuff:     "off",
+		Headers: scenario.HeaderMap{{Key: "From", Value: "a@b"}},
+		Body:    "\nbody\n",
 	}
-	// 开头裸 \n → \r\n，末尾裸 \n → \r\n
-	want := "From: a@b\r\n\r\n\r\nbody\r\n"
+	// 开头裸 \n → \r\n，末尾裸 \n → \r\n；无行首 .；接入层追加终止符。
+	want := "From: a@b\r\n\r\n\r\nbody\r\n.\r\n"
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
 		t.Fatalf("PayloadBytes: %v", err)
@@ -350,29 +288,29 @@ func TestSerializeEMLData_BodyLeadingBareLF_Normalized(t *testing.T) {
 }
 
 // TestSerializeEMLData_RawBareLF_NotNormalized 断言 raw 模式不归一化裸 \n
-// （raw 保留精确字节，构造非标换行畸形）。
+// （raw 保留精确字节，构造非标换行畸形）；成帧仍由接入层追加。
 func TestSerializeEMLData_RawBareLF_NotNormalized(t *testing.T) {
 	f := &scenario.EMLDataFields{
-		Raw:          "first line\n... and more\n",
-		DotStuff:     "off",
-		DotTerminate: "off",
+		Raw: "first line\n... and more\n",
 	}
-	// raw 模式：裸 \n 原样保留，不归一化
-	want := "first line\n... and more\n"
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
 		t.Fatalf("PayloadBytes: %v", err)
 	}
-	if !bytes.Equal(got, []byte(want)) {
-		t.Errorf("got %q, want %q", got, want)
+	// raw 模式：裸 \n 原样保留，不归一化（裸 \n 非 \r\n 边界，dot-stuff 不触）。
+	if !bytes.Contains(got, []byte("first line\n... and more\n")) {
+		t.Errorf("raw 裸 \\n 应原样保留, got %q", got)
+	}
+	// 接入层成帧：raw 不以 \r\n 结尾 → 追加 \r\n.\r\n。
+	if !bytes.HasSuffix(got, []byte("\r\n.\r\n")) {
+		t.Errorf("raw 应由接入层追加终止符 \\r\\n.\\r\\n, got %q", got)
 	}
 }
 
 // ---- multipart 经 eml_data 层的端到端序列化 ----
-// 单元级 multipart+EML 序列化(boundary/dot-stuff/终止符)见 multipart_test.go 的
-// TestSerializeMultipart_EMLMultipart / TestSerializeMultipart_EMLDotStuffOnPartBody。
-// 此处补 eml_data builder 的分派路径:multipart 取代字面 body、Content-Type 顶层头、
-// multipart + dot_terminate=off(无终止符)、multipart + dot_stuff=off(不 stuff)。
+// 单元级 multipart 序列化(boundary/CTE/part 编码)见 multipart_test.go。此处补 eml_data
+// builder 的分派路径:multipart 取代字面 body、Content-Type 顶层头、multipart + 成帧
+// (dot-stuff 作用于编码后整段 content,boundary 行 -- 开头不受影响)。
 
 // TestSerializeEMLData_MultipartReplaceBody 断言 eml_data 设 multipart 时 body 取自
 // serializeMultipart(取代字面 body),顶层头 + 空行 + multipart 字节 + 终止符。
@@ -411,40 +349,9 @@ func TestSerializeEMLData_MultipartReplaceBody(t *testing.T) {
 	}
 }
 
-// TestSerializeEMLData_MultipartDotTerminateOff 断言 multipart 邮件也能用 dot_terminate=off
-// 去掉终止符(IMAP 场景或畸形),multipart 字节原样输出不再追加 .\r\n。
-func TestSerializeEMLData_MultipartDotTerminateOff(t *testing.T) {
-	f := &scenario.EMLDataFields{
-		Headers: scenario.HeaderMap{
-			{Key: "From", Value: "a@b"},
-			{Key: "Content-Type", Value: "multipart/mixed; boundary=bnd"},
-		},
-		Multipart: &scenario.MultipartBody{
-			Boundary: "bnd",
-			Parts:    []scenario.MultipartPart{{Body: "x"}},
-		},
-		DotStuff:     "off",
-		DotTerminate: "off",
-	}
-	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
-	if err != nil {
-		t.Fatalf("PayloadBytes: %v", err)
-	}
-	want := "From: a@b\r\n" +
-		"Content-Type: multipart/mixed; boundary=bnd\r\n" +
-		"\r\n" +
-		"--bnd\r\n" +
-		"\r\n" +
-		"x\r\n" +
-		"--bnd--\r\n"
-	if !bytes.Equal(got, []byte(want)) {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-// TestSerializeEMLData_MultipartDotStuffOff 断言 dot_stuff=off 时 part body 行首 . 不被 stuff
-// (构造 SMTP 传输透明性畸形),boundary 行 -- 开头本就不受影响。
-func TestSerializeEMLData_MultipartDotStuffOff(t *testing.T) {
+// TestSerializeEMLData_MultipartDotStuffOnPartBody 断言 dot-stuff 作用于编码后的整段
+// multipart content:part body 行首 . → ..（SMTP 传输透明性），boundary 行 -- 开头不受影响。
+func TestSerializeEMLData_MultipartDotStuffOnPartBody(t *testing.T) {
 	f := &scenario.EMLDataFields{
 		Headers: scenario.HeaderMap{
 			{Key: "From", Value: "a@b"},
@@ -454,19 +361,63 @@ func TestSerializeEMLData_MultipartDotStuffOff(t *testing.T) {
 			Boundary: "bnd",
 			Parts:    []scenario.MultipartPart{{Body: ".secret\r\n"}},
 		},
-		DotStuff:     "off",
-		DotTerminate: "off",
 	}
 	got, err := builder.PayloadBytes(scenario.Layer{Type: "eml_data", Fields: f})
 	if err != nil {
 		t.Fatalf("PayloadBytes: %v", err)
 	}
-	// dot_stuff=off:part body 行首 . 原样保留(未被 stuff 成 ..)。
-	if !bytes.Contains(got, []byte("\r\n.secret\r\n")) {
-		t.Errorf("dot_stuff=off 应保留 part body 行首 .,got %q", got)
+	// 接入层 ApplyDotStuffing:part body 行首 . → ..（被 stuff）。
+	if !bytes.Contains(got, []byte("\r\n..secret\r\n")) {
+		t.Errorf("dot-stuff 应把 part body 行首 . stuff 成 .., got %q", got)
 	}
-	if bytes.Contains(got, []byte("\r\n..secret\r\n")) {
-		t.Errorf("dot_stuff=off 不应 stuff 行首 .,got %q", got)
+	if bytes.Contains(got, []byte("\r\n.secret\r\n")) {
+		t.Errorf("不应保留未 stuff 的行首 . , got %q", got)
+	}
+	// 接入层追加终止符。
+	if !bytes.HasSuffix(got, []byte(".\r\n")) {
+		t.Errorf("multipart 邮件应由接入层追加终止符 .\\r\\n, got %q", got)
+	}
+}
+
+// ---- 端到端回读 ----
+
+// TestParseBackEMLData 构造一个最小 eth/ipv4/tcp + eml_data 包，回读断言 TCP payload
+// 为结构化 EML 内容 + SMTP 成帧（含终止符），证明 eml_data 经 serializeStack 序列化
+// 为 gopacket.Payload 且接入层强制成帧生效。
+func TestParseBackEMLData(t *testing.T) {
+	s := &scenario.Scenario{
+		LinkType: "ethernet",
+		Packets: []scenario.Packet{{
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.25", TTL: u8ptr(64)}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 49152, DPort: 25, Flags: []string{"PSH", "ACK"}}},
+				{Type: "eml_data", Fields: &scenario.EMLDataFields{
+					Headers: scenario.HeaderMap{{Key: "Subject", Value: "hi"}},
+					Body:    "body\r\n",
+				}},
+			},
+		}},
+	}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	pkts, err := buildPackets(s)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	read := readPackets(t, buf.Bytes())
+	if len(read) != 1 {
+		t.Fatalf("期望 1 个包，得到 %d", len(read))
+	}
+	p0 := read[0].ApplicationLayer()
+	want := "Subject: hi\r\n\r\nbody\r\n.\r\n"
+	if p0 == nil || string(p0.Payload()) != want {
+		t.Errorf("包0 EML=%q,期望 %q", p0, want)
 	}
 }
 
@@ -525,7 +476,7 @@ func TestParseBackEMLData_MultipartE2E(t *testing.T) {
 			t.Errorf("payload 不含 %q, got %q", want, app.Payload())
 		}
 	}
-	// SMTP 终止符 .\r\n 应在末尾(dot_terminate 默认 on)。
+	// SMTP 终止符 .\r\n 应在末尾（接入层强制成帧）。
 	if !bytes.HasSuffix(app.Payload(), []byte(".\r\n")) {
 		t.Errorf("payload 应以 SMTP 终止符 .\\r\\n 结尾, got %q", app.Payload())
 	}

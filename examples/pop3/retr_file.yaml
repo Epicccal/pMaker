@@ -1,0 +1,78 @@
+# examples/pop3/retr_file.yaml
+#
+# POP3 下载(收取)一封真实邮件:RETR 响应正文由 @file 占位符从 assets/sample.eml 注入。
+#   问候 → USER/PASS → STAT → RETR 1(多行 eml,整封邮件)→ QUIT
+#
+# 覆盖点:
+#   - @file(assets/sample.eml) 把外部 .eml 文件原始字节注入 pop3_response.eml 子结构;
+#   - eml 原始模式(raw):整封邮件(headers + multipart body)裸透传、不归一化换行,
+#     保留文件精确字节(与 smtp/eml_file.yaml 同一份 sample.eml,上传/下载对称);
+#   - 接入层(POP3 RETR)强制成帧:自动 dot-stuffing + <CRLF>.<CRLF> 终止符;
+#   - 106KB 正文经 mss 1460 自动分段,验证大邮件的 TCP 分段与 seq 推导。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: pop3-download
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.110", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 110, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器问候
+      - from: dst
+        stack:
+          - pop3_response:
+              status: "+OK"
+              message: "POP3 server ready <9527.1755506491@mail.qq.com>"
+
+      # USER / PASS 认证
+      - from: src
+        stack:
+          - pop3_request: { command: USER, args: "userB@qq.com" }
+
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "User accepted" }
+
+      - from: src
+        stack:
+          - pop3_request: { command: PASS, args: "secret" }
+
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "Maildrop locked and ready" }
+
+      # STAT:1 封邮件,106458 字节
+      - from: src
+        stack:
+          - pop3_request: { command: STAT }
+
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "1 106458" }
+
+      # ★ RETR 1:整封邮件由 @file 注入(raw 模式:字节精确,不归一化换行)
+      #   接入层自动 dot-stuffing + 追加 <CRLF>.<CRLF> 终止符
+      - from: src
+        stack:
+          - pop3_request: { command: RETR, args: "1" }
+
+      - from: dst
+        stack:
+          - pop3_response:
+              status: "+OK"
+              message: "106458 octets"
+              eml:
+                raw: "@file(assets/sample.eml)"
+
+      # QUIT
+      - from: src
+        stack:
+          - pop3_request: { command: QUIT }
+
+      - from: dst
+        stack:
+          - pop3_response: { status: "+OK", message: "bye" }

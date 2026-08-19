@@ -76,7 +76,7 @@ flows:
 | L2 | `eth`、`vlan` | `pmaker://schema/eth`、`pmaker://schema/vlan` |
 | L3 | `ipv4`、`ipv6`、`gre` | `pmaker://schema/ipv4`、`pmaker://schema/ipv6`、`pmaker://schema/gre` |
 | L4 | `tcp`、`udp`、`tcp_session`(仅 flow) | `pmaker://schema/tcp`、`pmaker://schema/udp` |
-| 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`eml_data` | 对应 `pmaker://schema/<层名>` |
+| 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`eml_data` | 对应 `pmaker://schema/<层名>` |
 | 兜底 | `payload`、`payload_hex` | `pmaker://schema/payload` |
 
 ## 子结构(非层,嵌在层内)
@@ -86,6 +86,7 @@ flows:
 | 子结构 | 嵌入位置 | schema |
 |--------|----------|--------|
 | `multipart` | `http_request`/`http_response`/`eml_data` 的 `multipart` 字段(MIME multipart body,非层) | `pmaker://schema/multipart` |
+| `eml`(复用 `eml_data` 子结构) | `pop3_response` 的 `eml` 字段(RETR/TOP 正文);SMTP DATA 正文则用独立 `eml_data` 层。二者共用同一子结构,成帧由各自接入层追加 | `pmaker://schema/eml_data` |
 
 ## 通用约定
 

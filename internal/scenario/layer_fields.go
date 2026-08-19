@@ -168,7 +168,7 @@ type (
 	}
 
 	// SMTPRequestFields 是一条 SMTP 信封命令。MAIL/RCPT 走结构化信封路径(from/to + params);
-	// 其余 verb(EHLO/AUTH/BDAT/…)用 args 携带普通参数(verb 仍走 knownSMTPVerbs 校验)。
+	// 其余 verb(EHLO/AUTH/BDAT/…)用 args 携带普通参数(verb 仍走 smtpVerbs 校验)。
 	// 私有/非标 verb、MAIL/RCPT 的结构性畸形(缺 <>、非标空格、FROM/TO 大小写非标、缺冒号)不走 args,
 	// 而是走 payload/payload_hex 原始字节兜底。
 	//
@@ -193,20 +193,65 @@ type (
 		Lines   []string `yaml:"lines"`   // 多行续行: code-text / code final(RFC 5321 每行带 code- 前缀)
 	}
 
-	// EMLDataFields 是一封 RFC 5322 邮件内容(headers + body)，协议无关。
-	// 一个 eml_data 层 = 一封完整邮件内容，序列化为 TCP payload 字节。
+	// POP3RequestFields 是一条 POP3 客户端命令(RFC 1939),序列化为 TCP payload 字节
+	// "COMMAND[ args]\r\n"。字段对齐 ftp_request 的扁平 {command, args} 风格:POP3 命令
+	// 无 SMTP MAIL/RCPT 那种结构化信封,统一走 command + args。
 	//
-	// 协议复用：RFC 5322 内容是 SMTP/POP3/IMAP 的共同核心。SMTP DATA（RFC 5321）
-	// 与 POP3 RETR（RFC 1939）使用行框架（dot-stuffing + <CRLF>.<CRLF> 终止符），
-	// IMAP FETCH（RFC 9051）使用长度前缀字面量（{n}\r\n + bytes，无 dot-stuffing/终止符）。
-	// eml_data 通过 dot_stuff / dot_terminate 开关适配三种协议：SMTP/POP3 用 on（默认），
-	// IMAP FETCH 由 imap_response builder 自动覆写为 off（IMAP 的 {n} 长度前缀由 builder 负责包装）。
+	// command 原样输出(不强制大写),保留 user/retr 等小写构造能力(RFC 1939 §3 命令
+	// 大小写不敏感,是合规测试点);非标/私有命令走 payload/payload_hex。
+	POP3RequestFields struct {
+		Command string `yaml:"command"` // RFC 1939 核心(USER/PASS/APOP/STAT/LIST/RETR/DELE/NOOP/RSET/TOP/UIDL/QUIT)+ 扩展(CAPA/STLS/AUTH);非标/私有命令走 payload/payload_hex
+		Args    string `yaml:"args"`    // 命令参数(如 USER 的邮箱名、RETR 的 msg#、TOP 的 "msg# n"、APOP 的 "name digest");有/无按 pop3Commands 策略校验
+	}
+
+	// POP3ResponseFields 是一条 POP3 服务器响应(RFC 1939)。单行 "+OK/-ERR [text]\r\n",
+	// 或多行(status 行 + 正文行 + <CRLF>.<CRLF> 终止符);SASL 续行挑战为 "+ [base64]\r\n"
+	// (RFC 1734/4954,单字符 + 而非 +OK)。
+	//
+	// status 原样输出(不强制大写),保留 +ok/-err 等大小写构造能力;非标状态指示符
+	// (非 +OK/-ERR/+)走 payload/payload_hex。
+	//
+	// message 是状态行附带文本,可与多行正文(lines/eml)组合,也可单独(单行响应):
+	//   - message 单独非空(无 lines/eml):单行 "+OK message\r\n"(SASL 续行则为
+	//     "+ <base64>\r\n",message 承载 base64 挑战)。
+	//   - message + lines/eml:多行响应首行带说明文本(RFC 1939 §3 合法形态,如 LIST 的
+	//     "+OK 2 messages (320 octets)"、CAPA 的 "+OK Capability list follows"),
+	//     形如 "+OK text\r\n<正文>\r\n.\r\n"。
+	//   - message 为空 + lines/eml:裸 status 行 + 多行正文("+OK\r\n<正文>\r\n.\r\n")。
+	//   - lines/eml 二者互斥(多行正文二选一);message 与二者均可组合。
+	//   - message/lines/eml 至少其一非空(裸 status 行走 payload/payload_hex)。
+	//
+	// lines:多行普通行列表(LIST/UIDL 扫描列表、CAPA 能力列表),逐行 dot-stuff +
+	//   追加 <CRLF>.<CRLF> 终止符(与 eml_data 同一 dot-stuff 规则)。
+	// eml:多行 RFC 5322 邮件内容(RETR/TOP 返回的正文),复用 EMLDataFields 子结构
+	//   (builder.serializeEMLData 只产纯 RFC 5322 内容、不含成帧;dot-stuff + 终止符
+	//   由 POP3 接入层 serializePOP3Resp 在其返回后强制追加,与 lines 分支同一职责)。
+	//   与 lines 互斥。
+	POP3ResponseFields struct {
+		Status  string         `yaml:"status"`  // +OK / -ERR / +(大小写不敏感,原样输出);+ 为 RFC 1734/4954 SASL 续行挑战;非标状态指示符走 payload/payload_hex
+		Message string         `yaml:"message"` // 状态行附带文本:单独非空=单行响应(SASL 续行则承载 base64 挑战);与 lines/eml 组合=多行首行带说明文本(RFC 1939 §3)
+		Lines   []string       `yaml:"lines"`   // 多行普通行(LIST/UIDL/CAPA…);逐行 dot-stuff + 终止符;与 eml 互斥
+		EML     *EMLDataFields `yaml:"eml"`     // 多行 RFC 5322 正文(RETR/TOP);复用 eml_data 子结构(其只产纯内容,dot-stuff + 终止符由 POP3 接入层追加);与 lines 互斥
+	}
+
+	// EMLDataFields 是一封 RFC 5322 邮件内容(headers + body)，协议无关的**内容层**。
+	// 一个 eml_data 层 = 一封完整邮件内容，序列化为 TCP payload 字节（纯 RFC 5322 内容，
+	// 不含成帧）。
+	//
+	// 协议复用：RFC 5322 内容是 SMTP/POP3/IMAP 的共同核心。成帧（framing）是传输协议的
+	// 职责，由接入层强制，不在内容层暴露开关：
+	//   - SMTP DATA（RFC 5321 §4.5.2）/ POP3 RETR（RFC 1939 §3）：接入层（builder 的
+	//     eml_data standalone 分支 / pop3_response 的 eml 分支）强制 dot-stuffing +
+	//     追加 <CRLF>.<CRLF> 终止符，无 opt-out；缺 dot-stuffing/缺终止符等畸形走
+	//     payload/payload_hex 原始字节兜底。
+	//   - IMAP FETCH（RFC 9051）：未来由 imap_response builder 用长度前缀 {n}\r\n 包装
+	//     纯内容字节（无需 dot-stuffing/终止符），同样不操作内容层字段。
 	//
 	// 两种模式（互斥，由校验保证）：
 	//   - 结构化模式：headers + body（headers 必填，body 可空＝合规空体邮件），
-	//     builder 自动拼装头体、dot-stuffing、终止符；
-	//   - 原始模式：raw 字段直接透传整个正文字节（含/不含终止符由 dot_terminate 控制），
-	//     用于构造无法用结构化字段表达的畸形正文（如无头、缺头、非法头、缺空行、非标换行）。
+	//     builder 自动拼装头体（+ 空行）；成帧由接入层追加。
+	//   - 原始模式：raw 字段直接透传整个内容字节（不含成帧），用于构造无法用结构化
+	//     字段表达的畸形正文（如无头、缺头、非法头、缺空行、非标换行）；成帧仍由接入层追加。
 	//
 	// headers 保留 YAML 声明顺序输出、支持重复头(如多个 Received、RFC 5322 §3.6
 	// Received 链按序排列)与有序头。headers 值裸透传不转义,值含
@@ -216,13 +261,11 @@ type (
 	// 抹平 YAML `|` 块标量等常用写法带入的裸 \n);raw 模式不归一化(保留精确字节,
 	// 构造非标换行畸形)。
 	EMLDataFields struct {
-		Headers      HeaderMap      `yaml:"headers"`       // 结构化模式：邮件头（RFC 5322），保留声明顺序、支持重复头
-		Body         string         `yaml:"body"`          // 结构化模式：邮件正文体（headers 与 body 间自动插空行 \r\n）
-		Multipart    *MultipartBody `yaml:"multipart"`     // 结构化模式：MIME multipart body(RFC 2046);与 body/raw 互斥;非层,嵌在本层内
-		Raw          string         `yaml:"raw"`           // 原始模式：整个正文字节裸透传（不拼头体、不做 dot-stuffing）
-		RawHex       string         `yaml:"raw_hex"`       // 原始模式（hex）：0x 前缀十六进制正文字节
-		DotStuff     string         `yaml:"dot_stuff"`     // on（缺省）/ off：行首 . → ..；结构化模式作用于整个 content（合规 header 的 folding 续行以 WSP 起始，不受影响；构造 header 区行首 . 的畸形用 raw）
-		DotTerminate string         `yaml:"dot_terminate"` // on（缺省）/ off：是否追加终止符 <CRLF>.<CRLF>
+		Headers   HeaderMap      `yaml:"headers"`   // 结构化模式：邮件头（RFC 5322），保留声明顺序、支持重复头
+		Body      string         `yaml:"body"`      // 结构化模式：邮件正文体（headers 与 body 间自动插空行 \r\n）
+		Multipart *MultipartBody `yaml:"multipart"` // 结构化模式：MIME multipart body(RFC 2046);与 body/raw 互斥;非层,嵌在本层内
+		Raw       string         `yaml:"raw"`       // 原始模式：整个内容字节裸透传（不拼头体、不含成帧；成帧由接入层追加）
+		RawHex    string         `yaml:"raw_hex"`   // 原始模式（hex）：0x 前缀十六进制内容字节
 	}
 
 	// MultipartBody 描述一个 MIME multipart 体(RFC 2046),作 HTTP 或 EML 的 body。

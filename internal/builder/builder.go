@@ -177,8 +177,16 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			serLayers = append(serLayers, gopacket.Payload(serializeSMTPReq(f)))
 		case *scenario.SMTPResponseFields:
 			serLayers = append(serLayers, gopacket.Payload(serializeSMTPResp(f)))
+		case *scenario.POP3RequestFields:
+			serLayers = append(serLayers, gopacket.Payload(serializePOP3Req(f)))
+		case *scenario.POP3ResponseFields:
+			b, err := serializePOP3Resp(f)
+			if err != nil {
+				return nil, fmt.Errorf("pop3_response: %w", err)
+			}
+			serLayers = append(serLayers, gopacket.Payload(b))
 		case *scenario.EMLDataFields:
-			b, err := serializeEMLData(f)
+			b, err := serializeEMLDataFramed(f)
 			if err != nil {
 				return nil, fmt.Errorf("eml_data: %w", err)
 			}
