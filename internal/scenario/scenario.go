@@ -177,6 +177,14 @@ func validateFlow(f FlowSpec) error {
 			if !isPayloadProducingLayer(l.Fields) {
 				return fmt.Errorf("messages[%d].stack[%d] 不支持 %q(只允许 payload 生产层,非标内容走 payload/payload_hex)", j, k, l.Type)
 			}
+			// 逐层字段校验:与 standalone packet 的 validateLayer 等价。此前 message.stack
+			// 恰好一层时也有白名单 type switch 校验,但跳过了 validateLayer 的字段级规则,
+			// 故 payload 同时配 payload+payload_hex(互斥)、ftp_response code 越界、
+			// telnet 二字节命令带 option 等无效配置会静默通过、推迟到 build 才报错。
+			// 多层后同样需要在 Validate 阶段尽早拦截,报错带 messages[%d].stack[%d].<type> 定位。
+			if err := validateLayer(l); err != nil {
+				return fmt.Errorf("messages[%d].stack[%d].%s: %w", j, k, l.Type, err)
+			}
 		}
 		// message_id 供跨流 start_after 引用,同一 flow 内必须唯一(否则引用歧义)。
 		if m.MessageID != "" {

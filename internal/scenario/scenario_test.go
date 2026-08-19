@@ -517,6 +517,27 @@ func TestValidateMessageStackMultiPayload(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("两个合法 payload 层应通过,得到 %v", err)
 	}
+
+	// 逐层字段校验:payload 同时配 payload+payload_hex(互斥)应被 validateLayer 拦截,
+	// 而非静默通过推迟到 build。报错定位带 messages[0].stack[0].payload。
+	if err := scenario.Validate(&scenario.Scenario{Flows: []scenario.FlowSpec{
+		flow(scenario.Message{From: "src", Stack: []scenario.Layer{
+			{Type: "payload", Fields: &scenario.PayloadFields{Payload: "aaaa", PayloadHex: "0x62626262"}},
+		}}),
+	}}); err == nil || !strings.Contains(err.Error(), "messages[0].stack[0].payload") ||
+		!strings.Contains(err.Error(), "只能配置一个") {
+		t.Fatalf("payload 同时配 payload+payload_hex 应被 validateLayer 拦截,得到 %v", err)
+	}
+
+	// 逐层字段校验(非首层):第二层 ftp_response code 越界也应被拦截,报错带 stack[1].ftp_response。
+	if err := scenario.Validate(&scenario.Scenario{Flows: []scenario.FlowSpec{
+		flow(scenario.Message{From: "src", Stack: []scenario.Layer{
+			{Type: "payload", Fields: &scenario.PayloadFields{Payload: "aaaa"}},
+			{Type: "ftp_response", Fields: &scenario.FTPResponseFields{Code: 99, Message: "x"}},
+		}}),
+	}}); err == nil || !strings.Contains(err.Error(), "messages[0].stack[1].ftp_response") {
+		t.Fatalf("非首层 ftp_response code 越界应被 validateLayer 拦截,得到 %v", err)
+	}
 }
 
 // TestStartAfterMessageLevelCycleRejected 验证事件粒度仍能拦住真正的跨流消息级环:
