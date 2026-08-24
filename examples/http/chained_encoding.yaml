@@ -1,0 +1,40 @@
+# examples/http/chained_encoding.yaml
+#
+# 链式编码(evasion):transfer_encoding: [gzip, chunked] 演示序列写法与按序应用。
+# 列表顺序 = fold 应用顺序(RFC 9110 §8.4 / RFC 9112 §6.1):先 gzip 压缩再 chunked 成帧。
+# content_encoding: [deflate, gzip] 同理 = gzip(deflate(body))。合规 chunked 应在末位,
+# 此处 chunked 在末位(合法);非末位或双 chunked 属异常编码栈,会触发 Warning 但照常出包。
+link_type: ethernet
+seed: 42
+
+flows:
+  - name: http-chained-encoding
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /chained
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              transfer_encoding: [gzip, chunked]
+              chunked:
+                size: 8
+              headers:
+                Server: nginx/1.24.0
+                Content-Type: text/plain
+                Transfer-Encoding: gzip, chunked
+              body: "chained-encoding-body-for-evasion-test"

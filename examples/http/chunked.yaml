@@ -1,0 +1,40 @@
+# examples/http/chunked.yaml
+#
+# 合规的 HTTP chunked transfer-encoding 响应:transfer_encoding: chunked +
+# chunked.size 切多块,演示外置 transfer_encoding 字段驱动成帧(body 不再裸透传)。
+# 块长自动十六进制,末尾自动追加终止块 0\r\n\r\n。
+link_type: ethernet
+seed: 42
+
+flows:
+  - name: http-chunked
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /stream
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                Accept: text/event-stream
+
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              transfer_encoding: chunked
+              chunked:
+                size: 8
+              headers:
+                Server: nginx/1.24.0
+                Content-Type: text/event-stream
+                Transfer-Encoding: chunked
+              body: "chunked-stream-body"
