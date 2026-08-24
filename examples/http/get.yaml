@@ -32,9 +32,10 @@ flows:
               version: HTTP/1.1
               status: 200
               reason: OK
+              auto_content_length: true
               headers:
                 Server: nginx/1.24.0
                 Content-Type: text/html; charset=utf-8
-                Content-Length: auto        # auto = 由 body 长度自动计算
+                Content-Length: 0        # 占位值,auto_content_length: true 会覆盖为 body 实际长度
               body: |
                 <html><body>Hello from pMaker</body></html>

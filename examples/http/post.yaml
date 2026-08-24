@@ -1,7 +1,7 @@
 # examples/http/post.yaml
 #
 # 一次完整的 HTTP/1.1 POST 请求 + 201 响应,跑在 TCP 会话之上(flow 场景)。
-# 演示带 body 的提交:Content-Length 由 auto 自动计算。
+# 演示带 body 的提交:Content-Length 由 auto_content_length: true 自动计算(头里写占位值 0)。
 link_type: ethernet
 seed: 42
 
@@ -19,11 +19,12 @@ flows:
               method: POST
               url: /api/login
               version: HTTP/1.1
+              auto_content_length: true
               headers:
                 Host: example.com
                 User-Agent: pMaker/0.1
                 Content-Type: application/json
-                Content-Length: auto
+                Content-Length: 0
               body: |
                 {"user":"alice","pass":"correct horse battery staple"}
 
@@ -33,10 +34,11 @@ flows:
               version: HTTP/1.1
               status: 201
               reason: Created
+              auto_content_length: true
               headers:
                 Server: nginx/1.24.0
                 Content-Type: application/json
-                Content-Length: auto
+                Content-Length: 0
                 Connection: keep-alive
               body: |
                 {"ok":true,"token":"abc123"}

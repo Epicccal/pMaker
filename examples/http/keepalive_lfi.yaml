@@ -32,10 +32,11 @@ flows:
               version: HTTP/1.1
               status: 404
               reason: Not Found
+              auto_content_length: true
               headers:
                 Server: nginx/1.24.0
                 Content-Type: text/plain; charset=utf-8
-                Content-Length: auto
+                Content-Length: 0
                 Connection: keep-alive
               body: |
                 404 not found
@@ -58,10 +59,11 @@ flows:
               version: HTTP/1.1
               status: 200
               reason: OK
+              auto_content_length: true
               headers:
                 Server: nginx/1.24.0
                 Content-Type: text/plain; charset=utf-8
-                Content-Length: auto
+                Content-Length: 0
                 Connection: close
               body: |
                 root:x:0:0:root:/root:/bin/bash

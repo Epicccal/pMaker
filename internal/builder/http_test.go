@@ -38,14 +38,15 @@ func TestParseBackHTTP(t *testing.T) {
 }
 
 // TestSerializeHTTP_MultipartResponse 断言 http_response 分派 multipart:状态行 + 头 +
-// multipart body;Content-Length: auto 取 multipart 实际长度(覆盖 serializeHTTPResp 路径,
+// multipart body;auto_content_length: true 取 multipart 实际长度(覆盖 serializeHTTPResp 路径,
 // 与 multipart_test.go 中覆盖 serializeHTTPReq 的用例互补)。
 func TestSerializeHTTP_MultipartResponse(t *testing.T) {
 	f := &scenario.HTTPRespFields{
-		Status: 206,
+		Status:            206,
+		AutoContentLength: true,
 		Headers: scenario.HeaderMap{
 			{Key: "Content-Type", Value: "multipart/byteranges; boundary=----=_pMaker_0001"},
-			{Key: "Content-Length", Value: "auto"},
+			{Key: "Content-Length", Value: "0"},
 		},
 		Multipart: &scenario.MultipartBody{
 			Boundary: "----=_pMaker_0001",

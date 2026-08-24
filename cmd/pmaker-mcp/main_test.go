@@ -99,7 +99,7 @@ flows:
           - http_request: { method: GET, url: /index.html, version: HTTP/1.1, headers: { Host: example.com } }
       - from: dst
         stack:
-          - http_response: { status: 200, reason: OK, headers: { Content-Length: auto }, body: "hi" }
+          - http_response: { status: 200, reason: OK, auto_content_length: true, headers: { Content-Length: 0 }, body: "hi" }
 `
 
 // ---------- generate_yaml ----------

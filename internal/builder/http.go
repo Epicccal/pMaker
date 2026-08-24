@@ -3,7 +3,6 @@ package builder
 import (
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
@@ -11,23 +10,25 @@ import (
 
 // serializeHTTPReq/Resp:把结构化 HTTP 序列化为 TCP payload 字节。
 // 头按 YAML 声明顺序输出(保留原序、支持重复头如多个 Set-Cookie)。
-// 若设了 multipart,则 body 取自 serializeMultipart 的字节(取代字面 body),
-// Content-Length: auto 按 multipart 实际长度计算。
+// body 经「生产(字面/multipart)-> content_encoding -> transfer_encoding 成帧」三步,
+// auto_content_length 算的是 content_encoding 之后、成帧之前的长度;true 时回填/覆盖
+// Content-Length 头值(缺则末尾追加)、false 时不动 Header。成帧不解析头、头不驱动成帧
+// (走私/evasion 靠头自由文本 + 外置参数关闭构造)。详见 http_coding.go。
 func serializeHTTPReq(f *scenario.HTTPReqFields) ([]byte, error) {
 	method := orDefault(f.Method, "GET")
 	url := orDefault(f.URL, "/")
 	ver := orDefault(f.Version, "HTTP/1.1")
 
-	body, err := httpBody(f.Body, f.Multipart)
+	bodyOut, hdrs, err := httpPayload(f.Body, f.Multipart, f.ContentEncoding, f.TransferEncoding, f.Chunked, f.Headers, f.AutoContentLength)
 	if err != nil {
 		return nil, err
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s %s\r\n", method, url, ver)
-	writeHeaders(&b, f.Headers, len(body))
+	writeHeaders(&b, hdrs)
 	b.WriteString("\r\n")
-	b.Write(body)
+	b.Write(bodyOut)
 	return []byte(b.String()), nil
 }
 
@@ -39,17 +40,46 @@ func serializeHTTPResp(f *scenario.HTTPRespFields) ([]byte, error) {
 	}
 	reason := orDefault(f.Reason, http.StatusText(status))
 
-	body, err := httpBody(f.Body, f.Multipart)
+	bodyOut, hdrs, err := httpPayload(f.Body, f.Multipart, f.ContentEncoding, f.TransferEncoding, f.Chunked, f.Headers, f.AutoContentLength)
 	if err != nil {
 		return nil, err
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %d %s\r\n", ver, status, reason)
-	writeHeaders(&b, f.Headers, len(body))
+	writeHeaders(&b, hdrs)
 	b.WriteString("\r\n")
-	b.Write(body)
+	b.Write(bodyOut)
 	return []byte(b.String()), nil
+}
+
+// httpPayload 是 http_request/http_response 共用的 body/headers 产出管线(两侧对称)。
+// 固定作用顺序:body 生产 -> CE -> CL 基准 -> TE 成帧 -> 自动 CL 回填。
+// 返回成帧后的 body 字节与(可能被自动 CL 覆盖的)headers。
+func httpPayload(body string, m *scenario.MultipartBody, ce, te scenario.CodingList, chunked *scenario.ChunkedOptions, headers scenario.HeaderMap, autoCL bool) ([]byte, scenario.HeaderMap, error) {
+	raw, err := httpBody(body, m)
+	if err != nil {
+		return nil, nil, err
+	}
+	repr, err := applyContentCodings(raw, ce)
+	if err != nil {
+		return nil, nil, err
+	}
+	clBasis := len(repr)
+	bodyOut, err := applyTransferCodings(repr, te, chunkedOpts(chunked))
+	if err != nil {
+		return nil, nil, err
+	}
+	hdrs := applyAutoContentLength(headers, autoCL, clBasis)
+	return bodyOut, hdrs, nil
+}
+
+// chunkedOpts 把可空 *ChunkedOptions 归一为零值 ChunkedOptions(nil 与 size=0 行为相同)。
+func chunkedOpts(c *scenario.ChunkedOptions) scenario.ChunkedOptions {
+	if c == nil {
+		return scenario.ChunkedOptions{}
+	}
+	return *c
 }
 
 // httpBody 取 HTTP 的 body 字节:设了 multipart 则序列化 multipart(取代字面 body),
@@ -61,14 +91,10 @@ func httpBody(body string, m *scenario.MultipartBody) ([]byte, error) {
 	return []byte(body), nil
 }
 
-// writeHeaders 按 HeaderMap 原序输出头。遇任意大小写的 Content-Length 且值为 "auto"
-// 时替换为 bodyLen;重复 Content-Length 的每个 auto 都替换为同一长度(合规用例不会重复
-// Content-Length;若用户故意写重复且想差异化,应改用具体值或 raw 兜底)。
-func writeHeaders(b *strings.Builder, h scenario.HeaderMap, bodyLen int) {
+// writeHeaders 按 HeaderMap 原序逐条原样输出头。Content-Length 不在此处理——自动 CL
+// 由 applyAutoContentLength 预处理后交给本函数。
+func writeHeaders(b *strings.Builder, h scenario.HeaderMap) {
 	h.Range(func(k, v string) {
-		if strings.EqualFold(k, "Content-Length") && v == "auto" {
-			v = strconv.Itoa(bodyLen)
-		}
 		fmt.Fprintf(b, "%s: %s\r\n", k, v)
 	})
 }

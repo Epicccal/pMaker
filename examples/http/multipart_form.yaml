@@ -2,7 +2,7 @@
 #
 # 一次完整的 HTTP/1.1 multipart/form-data 上传(POST)+ 200 响应,跑在 TCP 会话之上。
 # 演示结构化 multipart 子结构:一个文本字段 + 一个 @file 文件字段;boundary 显式声明
-# 且与 Content-Type 头里的 boundary= 对齐;Content-Length: auto 按 multipart 实际长度计算。
+# 且与 Content-Type 头里的 boundary= 对齐;Content-Length 由 auto_content_length: true 按 multipart 实际长度计算(头里写占位值 0)。
 #
 # 覆盖点:
 #   - multipart 子结构嵌在 http_request 内作 body(非独立层);
@@ -10,7 +10,7 @@
 #     文件字段(form-data; name="file"; filename="form_field.txt",Content-Type: text/plain);
 #   - @file(assets/form_field.txt) 注入文件内容到文件字段的 part body;
 #   - boundary 一致性(Content-Type 头 boundary= 与 multipart.boundary 一致,无告警);
-#   - Content-Length: auto 取 multipart 实际字节长度。
+#   - Content-Length 由 auto_content_length: true 取 multipart 实际字节长度。
 link_type: ethernet
 seed: 42
 base_time: "2024-01-01T00:00:00Z"
@@ -29,11 +29,12 @@ flows:
               method: POST
               url: /upload
               version: HTTP/1.1
+              auto_content_length: true
               headers:
                 Host: example.com
                 User-Agent: pMaker/0.1
                 Content-Type: "multipart/form-data; boundary=----=_pMaker_0001"
-                Content-Length: auto
+                Content-Length: 0
               multipart:
                 boundary: "----=_pMaker_0001"
                 parts:
@@ -51,9 +52,10 @@ flows:
               version: HTTP/1.1
               status: 200
               reason: OK
+              auto_content_length: true
               headers:
                 Server: nginx/1.24.0
                 Content-Type: application/json
-                Content-Length: auto
+                Content-Length: 0
                 Connection: keep-alive
               body: '{"ok":true}'
