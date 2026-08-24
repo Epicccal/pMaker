@@ -119,21 +119,30 @@ type (
 	}
 
 	HTTPReqFields struct {
-		Method    string         `yaml:"method"`
-		URL       string         `yaml:"url"`
-		Version   string         `yaml:"version"`
-		Headers   HeaderMap      `yaml:"headers"` // 保留 YAML 声明顺序、支持重复头(如多个 Set-Cookie)
-		Body      string         `yaml:"body"`
-		Multipart *MultipartBody `yaml:"multipart"` // MIME multipart body(RFC 2046);与 body/raw 互斥;非层,嵌在本层内
+		Method            string          `yaml:"method"`
+		URL               string          `yaml:"url"`
+		Version           string          `yaml:"version"`
+		Headers           HeaderMap       `yaml:"headers"` // 保留 YAML 声明顺序、支持重复头(如多个 Set-Cookie)
+		Body              string          `yaml:"body"`
+		Multipart         *MultipartBody  `yaml:"multipart"`           // MIME multipart body(RFC 2046);与 body/raw 互斥;非层,嵌在本层内
+		AutoContentLength bool            `yaml:"auto_content_length"` // true=回填/覆盖 Content-Length 值(缺则末尾追加);false(缺省)=不动 Header
+		ContentEncoding   CodingList      `yaml:"content_encoding"`    // 表示层编码,按序应用;标量或序列;元素 ∈ gzip/deflate/deflate_raw
+		TransferEncoding  CodingList      `yaml:"transfer_encoding"`   // 传输层编码/成帧,按序应用;标量或序列;元素 ∈ chunked/gzip/deflate/deflate_raw
+		Chunked           *ChunkedOptions `yaml:"chunked"`             // chunked 专属参数子结构;缺省 nil=整段一块;仅 transfer_encoding 含 chunked 时有效
 	}
 	HTTPRespFields struct {
-		Version   string         `yaml:"version"`
-		Status    int            `yaml:"status"`
-		Reason    string         `yaml:"reason"`
-		Headers   HeaderMap      `yaml:"headers"` // 保留 YAML 声明顺序、支持重复头(如多个 Set-Cookie)
-		Body      string         `yaml:"body"`
-		Multipart *MultipartBody `yaml:"multipart"` // MIME multipart body(RFC 2046);与 body 互斥;非层,嵌在本层内
+		Version           string          `yaml:"version"`
+		Status            int             `yaml:"status"`
+		Reason            string          `yaml:"reason"`
+		Headers           HeaderMap       `yaml:"headers"` // 保留 YAML 声明顺序、支持重复头(如多个 Set-Cookie)
+		Body              string          `yaml:"body"`
+		Multipart         *MultipartBody  `yaml:"multipart"`           // MIME multipart body(RFC 2046);与 body 互斥;非层,嵌在本层内
+		AutoContentLength bool            `yaml:"auto_content_length"` // true=回填/覆盖 Content-Length 值(缺则末尾追加);false(缺省)=不动 Header
+		ContentEncoding   CodingList      `yaml:"content_encoding"`    // 表示层编码,按序应用;标量或序列;元素 ∈ gzip/deflate/deflate_raw
+		TransferEncoding  CodingList      `yaml:"transfer_encoding"`   // 传输层编码/成帧,按序应用;标量或序列;元素 ∈ chunked/gzip/deflate/deflate_raw
+		Chunked           *ChunkedOptions `yaml:"chunked"`             // chunked 专属参数子结构;缺省 nil=整段一块;仅 transfer_encoding 含 chunked 时有效
 	}
+
 	// FTPRequestFields 是一条 FTP 控制连接命令:COMMAND[ arg]\r\n。
 	// command 原样输出(不强制大写),以便构造小写/非标命令等畸形用例。
 	FTPRequestFields struct {
@@ -266,6 +275,11 @@ type (
 		Multipart *MultipartBody `yaml:"multipart"` // 结构化模式：MIME multipart body(RFC 2046);与 body/raw 互斥;非层,嵌在本层内
 		Raw       string         `yaml:"raw"`       // 原始模式：整个内容字节裸透传（不拼头体、不含成帧；成帧由接入层追加）
 		RawHex    string         `yaml:"raw_hex"`   // 原始模式（hex）：0x 前缀十六进制内容字节
+	}
+
+	// ChunkedOptions 是 chunked 成帧的专属参数,仅在 transfer_encoding 含 chunked 时有效。
+	ChunkedOptions struct {
+		Size int `yaml:"size"` // 切块大小;0/缺省=整段一块;>0=按指定大小切分;<0=硬错
 	}
 
 	// MultipartBody 描述一个 MIME multipart 体(RFC 2046),作 HTTP 或 EML 的 body。
