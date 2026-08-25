@@ -34,7 +34,7 @@ BIN_MCP     := $(BIN_DIR)/pmaker-mcp
 
 # ===== 默认目标 =====
 
-.PHONY: all build pmaker mcp clean test test-v test-files race cover vet fmt lint quality run help
+.PHONY: all build pmaker mcp clean test test-v test-files race cover vet fmt lint quality run help FORCE
 
 all: build
 
@@ -49,7 +49,9 @@ $(BIN_MCP):     main_cmd := ./cmd/pmaker-mcp
 
 # 模式规则:任何 bin/<name> 都从对应变量指定的 main 包构建。
 # 因为 $(BIN_*) 各自绑定了 main_cmd,make 会按文件名匹配本规则。
-$(BIN_DIR)/%:
+# 依赖 FORCE:每次都重建,避免复用陈旧二进制(go build 自身会按内容缓存决定是否真重编)。
+FORCE:
+$(BIN_DIR)/%: FORCE
 	@mkdir -p $(BIN_DIR)
 	CGO_ENABLED=$(CGO_ENABLED) go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $@ $(main_cmd)
 
