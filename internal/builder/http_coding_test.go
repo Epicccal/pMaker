@@ -2,9 +2,12 @@ package builder_test
 
 import (
 	"bytes"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/andybalholm/brotli"
 
 	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/scenario"
@@ -42,7 +45,7 @@ func mustRespBytes(t *testing.T, f *scenario.HTTPRespFields) []byte {
 // compressDeterministic 表驱动:同一 body 两次压缩应逐字节相同。
 func TestCompressCoding_Deterministic(t *testing.T) {
 	body := []byte("Hello from pMaker! The quick brown fox jumps over the lazy dog. 1234567890")
-	for _, name := range []string{scenario.CodingGzip, scenario.CodingDeflate, scenario.CodingDeflateRaw} {
+	for _, name := range []string{scenario.CodingGzip, scenario.CodingDeflate, scenario.CodingDeflateRaw, scenario.CodingBr} {
 		c1, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{name})
 		if err != nil {
 			t.Fatalf("%s 第一次: %v", name, err)
@@ -91,6 +94,34 @@ func TestApplyTransferCodings_UnknownRejected(t *testing.T) {
 	_, err := builder.ApplyTransferCodingsForTest([]byte("x"), scenario.CodingList{"UNKNOWN"}, scenario.ChunkedOptions{})
 	if err == nil {
 		t.Error("TE 含未知 coding 应报错")
+	}
+}
+
+// br(Brotli)内容编码:round-trip(压缩→解压还原)+ 确定性(两次压缩逐字节相同)。
+func TestCompressCoding_Brotli(t *testing.T) {
+	body := []byte("Hello from pMaker brotli! The quick brown fox jumps over the lazy dog. 1234567890")
+
+	// 确定性:两次压缩逐字节相同。
+	c1, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{scenario.CodingBr})
+	if err != nil {
+		t.Fatalf("br 第一次: %v", err)
+	}
+	c2, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{scenario.CodingBr})
+	if err != nil {
+		t.Fatalf("br 第二次: %v", err)
+	}
+	if !bytes.Equal(c1, c2) {
+		t.Errorf("br 两次压缩结果不一致(确定性失败): len=%d vs %d", len(c1), len(c2))
+	}
+
+	// round-trip:用 andybalholm/brotli.NewReader 解压还原原文。
+	r := brotli.NewReader(bytes.NewReader(c1))
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("br 解压: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Errorf("br round-trip 不符: got %q, want %q", got, body)
 	}
 }
 

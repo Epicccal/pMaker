@@ -112,6 +112,8 @@ func TestValidateHTTPCodings_OK(t *testing.T) {
 		{}, // 全不设
 		{ContentEncoding: scenario.CodingList{"GZIP"}},
 		{ContentEncoding: scenario.CodingList{"DEFLATE", "GZIP"}}, // 链式
+		{ContentEncoding: scenario.CodingList{"BR"}},              // Brotli(仅 CE)
+		{ContentEncoding: scenario.CodingList{"BR", "GZIP"}},      // 链式含 br
 		{TransferEncoding: scenario.CodingList{"CHUNKED"}},
 		{TransferEncoding: scenario.CodingList{"CHUNKED", "GZIP"}},
 		{TransferEncoding: scenario.CodingList{"GZIP"}}, // 仅 TE=gzip(无 chunked 也合法)
@@ -148,6 +150,12 @@ func TestValidateHTTPCodings_RejectInvalidTE(t *testing.T) {
 		TransferEncoding: scenario.CodingList{"UNKNOWN"},
 	})); err == nil || !strings.Contains(err.Error(), "transfer_encoding") {
 		t.Errorf("TE=UNKNOWN 期望被拒,得到 %v", err)
+	}
+	// br 仅限 content_encoding,放进 transfer_encoding 应被拒(br 不是标准传输编码)。
+	if err := httpValidateScenario(mustHTTPRespLayer(t, &scenario.HTTPRespFields{
+		TransferEncoding: scenario.CodingList{"BR"},
+	})); err == nil || !strings.Contains(err.Error(), "transfer_encoding") {
+		t.Errorf("TE=BR 期望被拒(br 仅限 content_encoding),得到 %v", err)
 	}
 }
 

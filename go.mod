@@ -3,6 +3,7 @@ module github.com/Epicccal/pMaker
 go 1.25.5
 
 require (
+	github.com/andybalholm/brotli v1.2.2
 	github.com/gopacket/gopacket v1.7.0
 	github.com/mark3labs/mcp-go v0.57.0
 	gopkg.in/yaml.v3 v3.0.1
