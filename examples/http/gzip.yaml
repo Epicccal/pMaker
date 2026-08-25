@@ -1,12 +1,13 @@
-# examples/http/get.yaml
+# examples/http/gzip.yaml
 #
-# 一次完整的 HTTP/1.1 GET 请求 + 200 响应,跑在真实 TCP 会话之上(flow 场景)。
-# flow.stack 里的 src 表示 TCP SYN 发起方,dst 表示 SYN 接收方。
+# 合规的 HTTP gzip content-encoding 响应:content_encoding: gzip + auto_content_length: true。
+# auto_content_length 算的是 content_encoding 之后、成帧之前的长度(即压缩后字节长度),
+# 头里写占位 Content-Length: 0,开启 auto 后被原位覆盖为压缩后实际长度。
 link_type: ethernet
 seed: 42
 
 flows:
-  - name: http-get-200
+  - name: http-gzip
     stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
       - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
@@ -21,10 +22,7 @@ flows:
               version: HTTP/1.1
               headers:
                 Host: example.com
-                User-Agent: pMaker/0.1
-                Accept: "*/*"
-                Connection: keep-alive
-        # segment: { mss: 8 }   # 可选:把这条请求切成多个 TCP 段(实际分段大小,与通告 mss 无关)
+                Accept-Encoding: gzip
 
       - from: dst
         stack:
@@ -32,10 +30,12 @@ flows:
               version: HTTP/1.1
               status: 200
               reason: OK
+              content_encoding: gzip
               auto_content_length: true
               headers:
                 Server: nginx/1.24.0
                 Content-Type: text/html; charset=utf-8
-                Content-Length: 0        # 占位值,auto_content_length: true 会覆盖为 body 实际长度
+                Content-Encoding: gzip
+                Content-Length: 0
               body: |
-                <html><body>Hello from pMaker</body></html>
+                <html><body>Hello from pMaker gzip content encoding example</body></html>

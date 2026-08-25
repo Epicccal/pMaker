@@ -32,9 +32,10 @@ flows:
               version: HTTP/1.1
               status: 200
               reason: OK
+              auto_content_length: true
               headers:
                 Server: nginx/1.24.0
                 Content-Type: text/html; charset=utf-8
-                Content-Length: auto
+                Content-Length: 0
               body: |
                 <html><body>Hello from pMaker over IPv6</body></html>

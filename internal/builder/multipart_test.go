@@ -211,9 +211,10 @@ func TestSerializeMultipart_BodyHex(t *testing.T) {
 
 func TestSerializeMultipart_ContentLengthAuto(t *testing.T) {
 	f := &scenario.HTTPReqFields{
+		AutoContentLength: true,
 		Headers: scenario.HeaderMap{
 			{Key: "Content-Type", Value: "multipart/form-data; boundary=----=_pMaker_0001"},
-			{Key: "Content-Length", Value: "auto"},
+			{Key: "Content-Length", Value: "0"},
 		},
 		Multipart: &scenario.MultipartBody{
 			Boundary: "----=_pMaker_0001",
@@ -225,7 +226,7 @@ func TestSerializeMultipart_ContentLengthAuto(t *testing.T) {
 	wantBody := "------=_pMaker_0001\r\n\r\npayload\r\n------=_pMaker_0001--\r\n"
 	wantCL := "Content-Length: " + strconv.Itoa(len(wantBody))
 	if !bytes.Contains(got, []byte(wantCL)) {
-		t.Errorf("Content-Length: auto 未取 multipart 实际长度(%s),got %q", wantCL, got)
+		t.Errorf("auto_content_length 未取 multipart 实际长度(%s),got %q", wantCL, got)
 	}
 }
 

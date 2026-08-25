@@ -54,8 +54,9 @@ flows:
               version: HTTP/1.1
               status: 200
               reason: OK
+              auto_content_length: true
               headers:
-                Content-Length: auto
+                Content-Length: 0
                 Connection: keep-alive
               body: resp-a
 
@@ -97,7 +98,8 @@ flows:
               version: HTTP/1.1
               status: 200
               reason: OK
+              auto_content_length: true
               headers:
-                Content-Length: auto
+                Content-Length: 0
                 Connection: keep-alive
               body: resp-b

@@ -211,7 +211,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 
 - `multipart` 子结构嵌在 `http_request`/`http_response`/`eml_data` 内作 body(非独立层,不能入 `stack`),
   结构化构造 RFC 2046 multipart(含 `multipart/form-data` 上传、`multipart/mixed` 带附件)。boundary 必须与
-  父层 `Content-Type` 头的 `boundary=` 一致(一致性告警覆盖);`Content-Length: auto`(HTTP)按 multipart 实际字节长度计算。
+  父层 `Content-Type` 头的 `boundary=` 一致(一致性告警覆盖);HTTP 下自动 CL 由 `auto_content_length: true` 覆盖占位 `Content-Length` 头值(multipart 实际字节长度)。
 - 每 part:`headers`(`HeaderMap` 保序、可重复)+ `body`/`body_hex`(互斥,`body_hex` **不可用 `@file`**——
   hex 字段注入原始字节会破坏 hex 语义,二进制附件用 `body` + `@file`)+ `encoding`(none 缺省 /
   7bit/8bit/binary 恒等透传 / base64/quoted-printable 真变换;base64 按 RFC 2045 每 76 字符折行,确定性)。**不做 CRLF 归一化**:`@file` 可注入二进制附件,
@@ -229,6 +229,23 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - 序列化纯函数 `builder.serializeMultipart`(手工拼装,不引 `mime/multipart`,便于后续加畸形开关);
   校验 `scenario.validateMultipart` / `validateBoundary`(RFC 2046 §5.1.1 bchars 字符集、长度 1-70、空格不结尾);
   一致性 `scenario/multipart_consistency.go`;`@file` 反射遍历自动覆盖嵌套 part body(`file_placeholder.go` 零改动)。
+
+**HTTP 传输/内容编码专项(RFC 9110 §8.4 / RFC 9112 §6.1)**:
+
+- `http_request`/`http_response` 新增外置编码开关(非头部驱动):`content_encoding`(表示层)、
+  `transfer_encoding`(传输层/成帧)、`auto_content_length`(自动 CL)、`chunked`(分块参数)。
+  **设计立场:外部参数驱动编码/分帧,Header 是自由文本、不驱动分帧** —— 合规 chunked/gzip 是一等公民,
+  走私(CLA.TE/TE.CL)、evasion 靠「关掉外置开关 + 头里自由手写」构造,不为每种畸形单独加 opt-out(对齐「畸形包必须能绕过自动修正」)。
+- **固定应用顺序**:body 生产(字面/`multipart`)→ `content_encoding`(CE fold)→ CL 基准 → `transfer_encoding`(TE fold)→ 自动 CL。
+  `auto_content_length` 算的是 CE 之后、成帧之前的长度。自动 CL 唯一入口是 `auto_content_length: true`(原位覆盖占位 `Content-Length` 头值,或末尾追加);头里的 `Content-Length` 值原样上 wire,工具不识别任何特殊写法。
+- **CodingList**(`scenario/coding_list.go`):标量或序列写法(复用 HeaderMap 的 ScalarNode/SequenceNode 双分支解码),
+  解码时 `TrimSpace+ToUpper` 归一化,大小写不敏感。合法 CE ∈ `gzip`/`deflate`/`deflate_raw`,合法 TE ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`;
+  `chunked` 是传输编码,放进 `content_encoding` 报错。链式:列表顺序 = fold 顺序(`[A,B]`=`B(A(body))`)。
+- **互斥硬错**:`auto_content_length: true` 且 `transfer_encoding` 非空(framing 互斥,RFC 9112 §6.1);`auto_content_length: true` 且 ≥2 个 `Content-Length` 头(覆盖目标歧义)。`chunked` 子结构仅 `transfer_encoding` 含 `chunked` 时有效。
+- **确定性 gzip**:级别 `flate.BestSpeed`、MTIME 归零、不用 `time.Now()`(逐字节可复现)。chunked 分帧:块长十六进制、终止块 `0\r\n\r\n`、空 body 仅终止块;`chunked.size` 0/缺省=整段一块、>0=切分(<0 硬错,上限 1 MiB)。
+- **一致性告警**(软错,`scenario/http_consistency.go`,与 FTP 端口告警同一套 `Warnings`):CL+TE 冲突、TE/CE 头与列表不符或缺失、`chunked` 不在末位、多个 `chunked`;1xx/204 带 body、304 在 `auto_content_length: true` 时出 Warning(保留畸形构造能力)。HEAD 与 CONNECT 响应均不做特殊处理(响应层无请求方法上下文)。
+- 序列化纯函数 `builder.applyContentCodings` / `applyTransferCodings` / `chunkedFrame` / `applyAutoContentLength`(`builder/http_coding.go`);
+  校验 `scenario.validateHTTPCodings`(`http_fields.go`);管线入口 `serializeHTTPReq`/`Resp` 的 `httpPayload`(`builder/http.go`)。
 
 **已实现 flow**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
 HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。

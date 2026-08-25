@@ -10,9 +10,10 @@ boundary 必须与父层 `Content-Type` 头里的 `boundary=` 参数一致(一�
 - http_request:
     method: POST
     url: /upload
+    auto_content_length: true
     headers:
       Content-Type: "multipart/form-data; boundary=----=_pMaker_0001"
-      Content-Length: auto
+      Content-Length: 0          # 占位值,auto_content_length: true 会原位覆盖为 multipart 实际长度
     multipart:
       boundary: "----=_pMaker_0001"   # 空 → 确定性默认 "----=_pMaker_0001"
       parts:
@@ -53,7 +54,7 @@ boundary 必须与父层 `Content-Type` 头里的 `boundary=` 参数一致(一�
 --boundary--\r\n
 ```
 
-- `Content-Length: auto`(HTTP)按 multipart 实际字节长度计算。
+- `auto_content_length: true`(HTTP)按 multipart 实际字节长度计算(原位覆盖占位 `Content-Length` 头值,详见 `http_request`/`http_response` schema)。
 - 每 part body 先取字节(`body` 或 `body_hex`),再按 `encoding` 编码:
   - `base64`:`encoding/base64.StdEncoding`,按 RFC 2045 **每 76 字符折行**(`\r\n` 分隔,确定性);
   - `quoted-printable`:`mime/quotedprintable`;
