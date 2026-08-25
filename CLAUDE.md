@@ -237,7 +237,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   **设计立场:外部参数驱动编码/分帧,Header 是自由文本、不驱动分帧** —— 合规 chunked/gzip 是一等公民,
   走私(CLA.TE/TE.CL)、evasion 靠「关掉外置开关 + 头里自由手写」构造,不为每种畸形单独加 opt-out(对齐「畸形包必须能绕过自动修正」)。
 - **固定应用顺序**:body 生产(字面/`multipart`)→ `content_encoding`(CE fold)→ CL 基准 → `transfer_encoding`(TE fold)→ 自动 CL。
-  `auto_content_length` 算的是 CE 之后、成帧之前的长度。`Content-Length: auto` 哨兵**已废弃**(头里写 `auto` 现在是普通字符串,原样上 wire,不识别不告警);自动 CL 唯一入口是 `auto_content_length: true`(原位覆盖占位 `Content-Length` 头值,或末尾追加)。
+  `auto_content_length` 算的是 CE 之后、成帧之前的长度。自动 CL 唯一入口是 `auto_content_length: true`(原位覆盖占位 `Content-Length` 头值,或末尾追加);头里的 `Content-Length` 值原样上 wire,工具不识别任何特殊写法。
 - **CodingList**(`scenario/coding_list.go`):标量或序列写法(复用 HeaderMap 的 ScalarNode/SequenceNode 双分支解码),
   解码时 `TrimSpace+ToUpper` 归一化,大小写不敏感。合法 CE ∈ `gzip`/`deflate`/`deflate_raw`,合法 TE ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`;
   `chunked` 是传输编码,放进 `content_encoding` 报错。链式:列表顺序 = fold 顺序(`[A,B]`=`B(A(body))`)。

@@ -39,7 +39,7 @@
 | `method` | string | 否 | 缺省 GET |
 | `url` | string | 否 | 请求路径 |
 | `version` | string | 否 | 缺省 HTTP/1.1;非空需符合 `HTTP/x.y` 文法(如 `HTTP/1.0`/`HTTP/2`/`HTTP/3.0`),否则报错并引导 `payload`/`payload_hex` |
-| `headers` | map[string]string | 否 | 头部,保留声明顺序、支持重复头。头是用户自由文本,**不驱动成帧/编码**;头里的值(含字面 `auto`)原样上 wire |
+| `headers` | map[string]string | 否 | 头部,保留声明顺序、支持重复头。头是用户自由文本,**不驱动成帧/编码** |
 | `body` | string | 否 | 请求体;可用 `@file(...)` 注入文件内容;与 `multipart` 互斥 |
 | `multipart` | object | 否 | MIME multipart body(RFC 2046);`auto_content_length: true` 按其实际长度计算;与 `body` 互斥;详见 `pmaker://schema/multipart` |
 | `auto_content_length` | bool | 否 | `true`=回填/覆盖 `Content-Length` 头值(存在则原位覆盖、位置不变;缺则末尾追加);`false`(缺省)=不动 Header。算的是 `content_encoding` 之后、`transfer_encoding` 成帧之前的长度。**与 `transfer_encoding` 非空互斥(硬错)** |
@@ -55,7 +55,7 @@ HTTP body 经固定三步:**body 生产(字面/`multipart`)→ `content_encoding
 `auto_content_length` 算的是 `content_encoding` 之后、成帧之前的长度。
 成帧不解析头、头不驱动成帧 —— 走私(CLA.TE / TE.CL)、evasion 靠「关掉外置开关 + 头里自由手写」构造,不需为每种畸形单独加 opt-out。
 
-- **`Content-Length: auto` 哨兵已废弃**:头里写 `auto` 现在就是普通字符串,原样上 wire,工具不识别、不告警。自动 CL 的唯一入口是 `auto_content_length: true`。
+- **自动 CL 的唯一入口是 `auto_content_length: true`**(原位覆盖占位 `Content-Length` 头值,或末尾追加)。头里的 `Content-Length` 值原样上 wire,工具不识别任何特殊写法。
 - **互斥规则依据的是 HTTP framing 语义,不是"是否可以计算出字节长度"**:任何非空 `transfer_encoding` 的存在都令发送方不得发 CL(RFC 9112 §6.1),包括 `transfer_encoding: gzip` 这类最终 wire body 定长的情形 —— TE 一旦存在,framing 语义由 TE 接管,CL 并存会令中间代理歧义。需同时有 TE 和 CL 时(走私等畸形),设 `auto_content_length: false` 并在 `headers` 手写 CL。
 - **`transfer_encoding` 列表顺序 = fold 应用顺序**;`chunked` 应位于末位(RFC 9112),非末位或多个 `chunked` 触发 Warning,但工具仍按列表顺序机械 fold 产出字节,适用于 evasion 测试。
 

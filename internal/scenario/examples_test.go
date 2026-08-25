@@ -5,6 +5,7 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"flag"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -856,14 +857,14 @@ func gzipCompressedLenForTest(src []byte) (int, error) {
 	var buf bytes.Buffer
 	zw, err := gzip.NewWriterLevel(&buf, flate.BestSpeed)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("gzip NewWriterLevel: %w", err)
 	}
 	zw.ModTime = time.Time{}
 	if _, err := zw.Write(src); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("gzip write: %w", err)
 	}
 	if err := zw.Close(); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("gzip close: %w", err)
 	}
 	return buf.Len(), nil
 }

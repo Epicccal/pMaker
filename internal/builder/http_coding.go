@@ -13,28 +13,6 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-// --- 测试导出(仅供 builder_test 包,薄封装避免暴露内部实现细节) ---
-
-// ApplyContentCodingsForTest 是 applyContentCodings 的测试导出别名。
-func ApplyContentCodingsForTest(b []byte, list scenario.CodingList) ([]byte, error) {
-	return applyContentCodings(b, list)
-}
-
-// ApplyTransferCodingsForTest 是 applyTransferCodings 的测试导出别名。
-func ApplyTransferCodingsForTest(b []byte, list scenario.CodingList, opts scenario.ChunkedOptions) ([]byte, error) {
-	return applyTransferCodings(b, list, opts)
-}
-
-// ChunkedFrameForTest 是 chunkedFrame 的测试导出别名。
-func ChunkedFrameForTest(b []byte, size int) []byte {
-	return chunkedFrame(b, size)
-}
-
-// ApplyAutoContentLengthForTest 是 applyAutoContentLength 的测试导出别名。
-func ApplyAutoContentLengthForTest(h scenario.HeaderMap, on bool, n int) scenario.HeaderMap {
-	return applyAutoContentLength(h, on, n)
-}
-
 // 本文件实现 HTTP 的内容编码(CE)/传输编码(TE)成帧与自动 Content-Length,
 // 由 serializeHTTPReq/Resp 在 body 生产之后按固定顺序叠用。
 //
@@ -116,42 +94,42 @@ func compressCoding(b []byte, name string) ([]byte, error) {
 		var buf bytes.Buffer
 		w, err := gzip.NewWriterLevel(&buf, compressLevel)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gzip NewWriterLevel: %w", err)
 		}
 		// MTIME 显式置零(零值已是 0,这里写明意图,避免未来误改)。
 		w.ModTime = time.Time{}
 		// OS 字节:gzip.NewWriterLevel 默认 OS=255(unknown),跨平台稳定,不改。
 		if _, err := w.Write(b); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gzip write: %w", err)
 		}
 		if err := w.Close(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gzip close: %w", err)
 		}
 		return buf.Bytes(), nil
 	case scenario.CodingDeflate:
 		var buf bytes.Buffer
 		w, err := zlib.NewWriterLevel(&buf, compressLevel)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("deflate NewWriterLevel: %w", err)
 		}
 		if _, err := w.Write(b); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("deflate write: %w", err)
 		}
 		if err := w.Close(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("deflate close: %w", err)
 		}
 		return buf.Bytes(), nil
 	case scenario.CodingDeflateRaw:
 		var buf bytes.Buffer
 		w, err := flate.NewWriter(&buf, compressLevel)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("deflate_raw NewWriter: %w", err)
 		}
 		if _, err := w.Write(b); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("deflate_raw write: %w", err)
 		}
 		if err := w.Close(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("deflate_raw close: %w", err)
 		}
 		return buf.Bytes(), nil
 	default:
@@ -172,6 +150,7 @@ func chunkedFrame(b []byte, size int) []byte {
 	var out bytes.Buffer
 	if size <= 0 {
 		// 整段一块。空 body 不写数据块(只留终止块,合规输出 "0\r\n\r\n")。
+		// 一般情况下，size 不会小于0。
 		if len(b) > 0 {
 			writeChunk(&out, b)
 		}

@@ -25,7 +25,6 @@ func (h HeaderMap) Len() int { return len(h) }
 // Get 返回最后一个匹配 key 的值(对齐 map「后写覆盖」直觉;重复 key 取最后声明值)。
 // 匹配大小写不敏感:HTTP/SMTP header 名 RFC 层面大小写不敏感(RFC 7230 §3.2),
 // 与既有 writeHeaders 的 strings.EqualFold(k, "Content-Length") 行为一致。
-// 用户写 content-length: auto 时 Get("Content-Length") 仍能命中,auto 才会被替换为 body 长度。
 func (h HeaderMap) Get(key string) (string, bool) {
 	var lastVal string
 	var found bool

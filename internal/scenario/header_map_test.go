@@ -94,11 +94,11 @@ func TestHeaderMap_Get_LastValueCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestHeaderMap_Get_CaseInsensitive_AutoContentLength(t *testing.T) {
-	// 对齐 writeHeaders 的 auto 替换:用户写小写 content-length: auto 时
-	// Get("Content-Length") 必须命中,否则 auto 不被替换(隐蔽合规 bug)。
-	h := HeaderMap{{Key: "content-length", Value: "auto"}}
-	if v, ok := h.Get("Content-Length"); !ok || v != "auto" {
+func TestHeaderMap_Get_CaseInsensitive(t *testing.T) {
+	// header 名大小写不敏感:用户写小写 content-length 时
+	// Get("Content-Length") 必须命中(对齐 writeHeaders 的 EqualFold 行为)。
+	h := HeaderMap{{Key: "content-length", Value: "42"}}
+	if v, ok := h.Get("Content-Length"); !ok || v != "42" {
 		t.Errorf("大小写不敏感 Get 未命中: got %q(ok=%v)", v, ok)
 	}
 }

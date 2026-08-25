@@ -54,7 +54,7 @@ boundary 必须与父层 `Content-Type` 头里的 `boundary=` 参数一致(一�
 --boundary--\r\n
 ```
 
-- `auto_content_length: true`(HTTP)按 multipart 实际字节长度计算(原位覆盖占位 `Content-Length` 头值,详见 `http_request`/`http_response` schema)。`Content-Length: auto` 哨兵已废弃,头里写 `auto` 现在是普通字符串,原样上 wire,工具不识别、不告警。
+- `auto_content_length: true`(HTTP)按 multipart 实际字节长度计算(原位覆盖占位 `Content-Length` 头值,详见 `http_request`/`http_response` schema)。
 - 每 part body 先取字节(`body` 或 `body_hex`),再按 `encoding` 编码:
   - `base64`:`encoding/base64.StdEncoding`,按 RFC 2045 **每 76 字符折行**(`\r\n` 分隔,确定性);
   - `quoted-printable`:`mime/quotedprintable`;

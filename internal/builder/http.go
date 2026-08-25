@@ -21,7 +21,7 @@ func serializeHTTPReq(f *scenario.HTTPReqFields) ([]byte, error) {
 
 	bodyOut, hdrs, err := httpPayload(f.Body, f.Multipart, f.ContentEncoding, f.TransferEncoding, f.Chunked, f.Headers, f.AutoContentLength)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("http_request 序列化: %w", err)
 	}
 
 	var b strings.Builder
@@ -42,7 +42,7 @@ func serializeHTTPResp(f *scenario.HTTPRespFields) ([]byte, error) {
 
 	bodyOut, hdrs, err := httpPayload(f.Body, f.Multipart, f.ContentEncoding, f.TransferEncoding, f.Chunked, f.Headers, f.AutoContentLength)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("http_response 序列化: %w", err)
 	}
 
 	var b strings.Builder
@@ -59,17 +59,20 @@ func serializeHTTPResp(f *scenario.HTTPRespFields) ([]byte, error) {
 func httpPayload(body string, m *scenario.MultipartBody, ce, te scenario.CodingList, chunked *scenario.ChunkedOptions, headers scenario.HeaderMap, autoCL bool) ([]byte, scenario.HeaderMap, error) {
 	raw, err := httpBody(body, m)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("body 生产: %w", err)
 	}
 	repr, err := applyContentCodings(raw, ce)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("内容编码: %w", err)
 	}
 	clBasis := len(repr)
 	bodyOut, err := applyTransferCodings(repr, te, chunkedOpts(chunked))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("传输编码: %w", err)
 	}
+	// AutoContentLength 取的是 Content-Encoding 后的载荷长度（clBasis）
+	// Content-Length 与 Transfer-Encoding 互斥，即使 Transfer-Encoding 中
+	// 不包含 Chunked，也不会携带 Content-Length。
 	hdrs := applyAutoContentLength(headers, autoCL, clBasis)
 	return bodyOut, hdrs, nil
 }
