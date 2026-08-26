@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/andybalholm/brotli"
 )
 
 // 本文件实现 HTTP 的内容编码(CE)/传输编码(TE)成帧与自动 Content-Length,
@@ -34,7 +35,7 @@ import (
 const compressLevel = flate.BestSpeed
 
 // applyContentCodings 按 CE 列表顺序对 body 逐个 fold(表示层编码)。
-// 空列表 / IsNone -> 原样返回。穷尽 switch 仅允许 GZIP/DEFLATE/DEFLATE_RAW;
+// 空列表 / IsNone -> 原样返回。穷尽 switch 仅允许 GZIP/DEFLATE/DEFLATE_RAW/BR;
 // 落 default(如 CHUNKED)返回错误——CHUNKED 是传输编码,CE 含 chunked 已在 scenario
 // 校验阶段拦截,此处是 builder 层防线。fold 顺序 = 列表顺序:
 // content_encoding: [deflate, gzip] 构造 gzip(deflate(body))。
@@ -132,8 +133,20 @@ func compressCoding(b []byte, name string) ([]byte, error) {
 			return nil, fmt.Errorf("deflate_raw close: %w", err)
 		}
 		return buf.Bytes(), nil
+	case scenario.CodingBr:
+		var buf bytes.Buffer
+		// quality 固定 brotli.BestSpeed(0),与 gzip 侧 compressLevel=flate.BestSpeed 同理:
+		// 钉死级别消除不同版本/平台漂移,保证同输入→逐字节相同输出(golden 可比对)。
+		w := brotli.NewWriterLevel(&buf, brotli.BestSpeed)
+		if _, err := w.Write(b); err != nil {
+			return nil, fmt.Errorf("br write: %w", err)
+		}
+		if err := w.Close(); err != nil {
+			return nil, fmt.Errorf("br close: %w", err)
+		}
+		return buf.Bytes(), nil
 	default:
-		return nil, fmt.Errorf("不支持的压缩编码 %q(合法:gzip/deflate/deflate_raw)", name)
+		return nil, fmt.Errorf("不支持的压缩编码 %q(合法:gzip/deflate/deflate_raw/br)", name)
 	}
 }
 

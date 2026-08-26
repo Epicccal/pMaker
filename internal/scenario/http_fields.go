@@ -60,6 +60,7 @@ var validContentCodings = map[string]bool{
 	CodingGzip:       true,
 	CodingDeflate:    true,
 	CodingDeflateRaw: true,
+	CodingBr:         true,
 }
 
 // validTransferCodings 是 transfer_encoding 的合法元素集合(归一后大写形)。
@@ -123,7 +124,7 @@ func validateHTTPCodings(ce, te CodingList, chunked *ChunkedOptions, autoCL bool
 	// 逐元素枚举(归一后大写形)。
 	for _, c := range ceEff {
 		if !validContentCodings[c] {
-			return fmt.Errorf("content_encoding 元素 %q 非法(合法:gzip/deflate/deflate_raw;chunked 是传输编码不能放进 content_encoding;非标编码请用 payload / payload_hex)", c)
+			return fmt.Errorf("content_encoding 元素 %q 非法(合法:gzip/deflate/deflate_raw/br;chunked 是传输编码不能放进 content_encoding;非标编码请用 payload / payload_hex)", c)
 		}
 	}
 	for _, c := range teEff {
