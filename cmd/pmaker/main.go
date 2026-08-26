@@ -10,6 +10,7 @@ import (
 	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/plan"
 	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/summary"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
 
@@ -94,7 +95,7 @@ func cmdGen(args []string) int {
 func printGenerationSummary(path string, planned []scenario.PlannedPacket, count int) {
 	fmt.Printf("生成文件: %s\n", path)
 	fmt.Println("Pcap组成:")
-	for _, line := range scenario.FormatPacketSummaries(scenario.SummarizePlanned(planned)) {
+	for _, line := range summary.FormatPacketSummaries(summary.SummarizePlanned(planned)) {
 		fmt.Println(line)
 	}
 	fmt.Printf("已生成 %d 个包\n", count)
