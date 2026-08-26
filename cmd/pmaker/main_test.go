@@ -113,3 +113,32 @@ packets:
 		t.Error("非法场景不应写输出文件")
 	}
 }
+
+// TestCmdBadFlagReturnsUsageCode 非法 flag 应返回 2 而非终止进程。
+// 子命令 FlagSet 若用 flag.ExitOnError,这里会 os.Exit(2) 直接杀掉测试二进制。
+func TestCmdBadFlagReturnsUsageCode(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func([]string) int
+	}{
+		{"gen", cmdGen},
+		{"validate", cmdValidate},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if rc := c.run([]string{"-nosuchflag"}); rc != 2 {
+				t.Errorf("非法 flag 应返回 2,得到 %d", rc)
+			}
+		})
+	}
+}
+
+// TestCmdHelpFlagReturnsZero -h 由 flag 打印用法后返回 ErrHelp,视为正常退出。
+func TestCmdHelpFlagReturnsZero(t *testing.T) {
+	if rc := cmdGen([]string{"-h"}); rc != 0 {
+		t.Errorf("gen -h 应返回 0,得到 %d", rc)
+	}
+	if rc := cmdValidate([]string{"-h"}); rc != 0 {
+		t.Errorf("validate -h 应返回 0,得到 %d", rc)
+	}
+}
