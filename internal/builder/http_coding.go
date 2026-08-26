@@ -155,7 +155,7 @@ func compressCoding(b []byte, name string) ([]byte, error) {
 //   - size>0:按 size 切分,每块长自动十六进制;
 //   - 始终追加合法终止块 "0\r\n\r\n"。
 //
-// size<0 在 scenario 校验阶段已是硬错(http_fields.go),不应到达 builder;此处 size<=0 分支
+// size<0 在 scenario 校验阶段已是硬错(http_validate.go),不应到达 builder;此处 size<=0 分支
 // 把负数一并归入「整段一块」仅作 defense-in-depth 兜底,非契约行为,不应被测试当作等价语义固化。
 //
 // 块格式:"%x\r\n" + data + "\r\n"(块长十六进制)。空 body 合规输出 "0\r\n\r\n"(仅终止块)。
