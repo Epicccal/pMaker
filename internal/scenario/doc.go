@@ -16,7 +16,7 @@
 //   - layer_fields.go:       各协议层的字段结构体(*Fields)与子结构(MultipartBody/MultipartPart)。
 //   - layer_decode.go:       Layer.UnmarshalYAML 与按类型分发解码、未知字段校验。
 //   - header_map.go:         HeaderMap 有序键值集合(保序、可重复键,供 HTTP/EML/SMTP 等头部使用)。
-//   - http_fields.go:        HTTP 请求/响应字段结构与校验。
+//   - http_validate.go:     HTTP 请求/响应字段结构与校验。
 //   - scenario.go:           Load / Validate / Warnings 等对外入口与语义校验。
 //   - start_after_graph.go:  start_after 依赖图(校验与 plan 算时共用)。
 //   - file_placeholder.go:   @file(...) 占位符替换,反射遍历 Scenario 全部 string 字段。
@@ -28,5 +28,6 @@
 //   - eml_data.go:           RFC 5322 正文层校验(协议无关,SMTP/POP3/IMAP 共用)。
 //   - multipart.go:          MIME multipart 校验 + boundary 校验(RFC 2046)。
 //   - multipart_consistency.go: multipart boundary/CTE 一致性告警。
-//   - describe.go:           包/PlannedPacket 摘要(供 CLI 输出)。
+//   - summary_layers.go:    摘要展示用的层名白名单(SummaryLayerNames,schema 元信息,
+//     供 internal/summary 与 flow 包调用)。
 package scenario

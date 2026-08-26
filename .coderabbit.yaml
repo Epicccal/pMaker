@@ -67,13 +67,13 @@ reviews:
            stderr 并非零码退出。配置校验尽早失败,报错带字段路径(用户多为非开发者)。
         6. 依赖克制:标准库能做的不引第三方;新增依赖前确认是否真需要。
         7. 测试:表驱动,新协议/新字段要有对应 golden pcap,关键路径跑 -race。
-           golden pcap 就近放 internal/<pkg>/testdata/<协议>/,不在仓库根建 testdata/。
+           golden pcap 就近放 internal/golden/testdata/<协议>/,不在仓库根建 testdata/。
 
     # scenario 层:YAML schema 与校验
     - path: "internal/scenario/**"
       instructions: |
         scenario 包负责 YAML schema、解析与校验。检查:
-        - 新增字段/层是否同步更新了 layer_decode.go 的解码分发与 describe.go 的摘要;
+        - 新增字段/层是否同步更新了 layer_decode.go 的解码分发与 summary_layers.go 的摘要层名白名单;
         - 未知字段校验是否覆盖(未知字段应在解析阶段被拒,而非静默忽略);
         - @file(...) 占位符的 baseDir 语义是否正确(CLI=scenario 文件所在目录,MCP=workdir);
         - 时间编排:Offset 字段只接受非负时长,负值在解析阶段即失败;base_time 仅绝对时刻。

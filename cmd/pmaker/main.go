@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/plan"
 	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/summary"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
 
@@ -48,12 +50,30 @@ func usage() {
 `)
 }
 
+// parseFlags 解析子命令 flag,返回 (退出码, 是否继续执行)。
+// 子命令 FlagSet 一律用 ContinueOnError 而非 ExitOnError:后者在 flag 出错时直接
+// os.Exit(2),会把进程内调用 cmdGen/cmdValidate 的单测二进制一起带走(与
+// cmd/pmaker-mcp 的 run 同一考量)。-h/-help 时 flag 已打印用法并返回 ErrHelp,
+// 视为正常退出(退出码 0);其余解析错误 flag 已打印到 stderr,返回用法错误码 2。
+func parseFlags(fs *flag.FlagSet, args []string) (int, bool) {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0, false
+		}
+		return 2, false
+	}
+	return 0, true
+}
+
 // cmdGen 串接:Load -> Validate -> plan.Plan(汇流+排序)-> BuildPlanned -> Write。
 func cmdGen(args []string) int {
-	fs := flag.NewFlagSet("gen", flag.ExitOnError)
+	fs := flag.NewFlagSet("gen", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
 	in := fs.String("f", "", "输入场景文件 (YAML)")
 	out := fs.String("o", "", "输出 pcap 文件")
-	_ = fs.Parse(args)
+	if rc, ok := parseFlags(fs, args); !ok {
+		return rc
+	}
 
 	if *in == "" || *out == "" {
 		fmt.Fprintln(os.Stderr, "gen: 需要 -f <scenario> 与 -o <out.pcap>")
@@ -94,7 +114,7 @@ func cmdGen(args []string) int {
 func printGenerationSummary(path string, planned []scenario.PlannedPacket, count int) {
 	fmt.Printf("生成文件: %s\n", path)
 	fmt.Println("Pcap组成:")
-	for _, line := range scenario.FormatPacketSummaries(scenario.SummarizePlanned(planned)) {
+	for _, line := range summary.FormatPacketSummaries(summary.SummarizePlanned(planned)) {
 		fmt.Println(line)
 	}
 	fmt.Printf("已生成 %d 个包\n", count)
@@ -102,9 +122,12 @@ func printGenerationSummary(path string, planned []scenario.PlannedPacket, count
 
 // cmdValidate 串接:Load + 校验。
 func cmdValidate(args []string) int {
-	fs := flag.NewFlagSet("validate", flag.ExitOnError)
+	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
 	in := fs.String("f", "", "输入场景文件 (YAML)")
-	_ = fs.Parse(args)
+	if rc, ok := parseFlags(fs, args); !ok {
+		return rc
+	}
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "validate: 需要 -f <scenario>")

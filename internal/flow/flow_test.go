@@ -16,6 +16,7 @@ import (
 	"github.com/Epicccal/pMaker/internal/flow"
 	"github.com/Epicccal/pMaker/internal/plan"
 	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/summary"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
 
@@ -372,7 +373,7 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 		}
 	}
 
-	summaries := scenario.SummarizePackets(s.Packets)
+	summaries := summary.SummarizePackets(s.Packets)
 	if len(summaries) < 6 {
 		t.Fatalf("摘要数量=%d,期望至少 6", len(summaries))
 	}
@@ -381,7 +382,7 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 		6: "[6] 10.0.0.10:49152 <- 10.0.0.80:80  eth/ipv4/tcp/http",
 	}
 	for n, w := range want {
-		if line := scenario.FormatPacketSummary(n, summaries[n-1]); line != w {
+		if line := summary.FormatPacketSummary(n, summaries[n-1]); line != w {
 			t.Errorf("第%d行=%q,期望 %q", n, line, w)
 		}
 	}

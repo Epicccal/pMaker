@@ -1,18 +1,43 @@
-package builder_test
+package golden_test
 
 import (
 	"bytes"
 	"net"
 	"testing"
 
+	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 
+	"github.com/Epicccal/pMaker/internal/builder"
+	"github.com/Epicccal/pMaker/internal/plan"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
 
 // 本文件覆盖封装/隧道:IPv6+UDP 回读、QinQ+GRE 解码、GRE 承载内层 IPv6,
 // 验证 next-proto 自动串接与多层 checksum 就近绑定。
+// 整体迁自 internal/builder/tunnel_test.go —— 它 import writer、调全链路读 examples,
+// 是端到端测试,不是 builder 单测,故归 golden 包(见 doc.go 判据)。
+
+// countLayers 统计包中某层类型的出现次数(用于 QinQ 双层 Dot1Q、GRE 内外双层 IPv4 断言)。
+func countLayers(pkt gopacket.Packet, lt gopacket.LayerType) int {
+	n := 0
+	for _, l := range pkt.Layers() {
+		if l.LayerType() == lt {
+			n++
+		}
+	}
+	return n
+}
+
+// buildPackets 跑 plan.Plan + builder.BuildPlanned,返回字节包与错误(不 Fatal、不校验)。
+func buildPackets(s *scenario.Scenario) ([]builder.OutPacket, error) {
+	planned, err := plan.Plan(s)
+	if err != nil {
+		return nil, err
+	}
+	return builder.BuildPlanned(planned)
+}
 
 // TestParseBackIPv6 构造 IPv6/UDP 包并回读,验证 IPv6 层字段、next-header 串接与 checksum 绑定。
 func TestParseBackIPv6(t *testing.T) {
@@ -27,9 +52,6 @@ func TestParseBackIPv6(t *testing.T) {
 				{Type: "payload", Fields: &scenario.PayloadFields{Payload: "v6probe"}},
 			},
 		}},
-	}
-	if err := scenario.Validate(s); err != nil {
-		t.Fatalf("validate: %v", err)
 	}
 	pkts, err := buildPackets(s)
 	if err != nil {
@@ -73,7 +95,7 @@ func TestParseBackIPv6(t *testing.T) {
 
 // TestParseBackQinQGRE 回读 qinq_gre,验证封装链正确解码(证明 next-proto 串接)。
 func TestParseBackQinQGRE(t *testing.T) {
-	data, _ := genPcap(t, "../../examples/tunnel/qinq_gre.yaml")
+	data := generatePcap(t, "../../examples/tunnel/qinq_gre.yaml")
 	pkts := readPackets(t, data)
 	if len(pkts) != 3 {
 		t.Fatalf("期望 3 个包,得到 %d", len(pkts))

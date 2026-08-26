@@ -82,16 +82,6 @@ func readPcapPackets(t *testing.T, data []byte) []gopacket.Packet {
 	return out
 }
 
-func countLayers(pkt gopacket.Packet, lt gopacket.LayerType) int {
-	n := 0
-	for _, l := range pkt.Layers() {
-		if l.LayerType() == lt {
-			n++
-		}
-	}
-	return n
-}
-
 // buildScenarioPcap 跑 scenario -> plan -> builder -> writer,返回 pcap 字节。
 func buildScenarioPcap(t *testing.T, s *scenario.Scenario) []byte {
 	t.Helper()
