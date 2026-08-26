@@ -1,0 +1,239 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+)
+
+// ---------- resources: 把语法知识带内喂给模型 ----------
+
+// resourceRegistrar 是 MCPServer 与 mcptest.Server 共有的注册接口,
+// 让 registerResources 可同时用于生产 server 与测试 server。
+type resourceRegistrar interface {
+	AddResource(resource mcp.Resource, handler server.ResourceHandlerFunc)
+	AddResourceTemplate(template mcp.ResourceTemplate, handler server.ResourceTemplateHandlerFunc)
+}
+
+// registerResources 注册 4 个 resource(2 个固定 + 2 个 template)。
+// 内容全部来自文件(embed 的 schema 目录 / workdir 的 examples 目录),
+// 加协议只需新增 schema/<proto>.md 或 examples/<proto>/*.yaml,Go 代码零改动。
+func (c config) registerResources(srv resourceRegistrar) {
+	// pmaker://schema —— 语法总览(读 embed 的 overview.md)。
+	srv.AddResource(schemaOverviewResource(), c.handleSchemaOverview)
+	// pmaker://schema/{layer} —— 单协议字段速查(embed)。
+	srv.AddResourceTemplate(schemaLayerTemplate(), c.handleSchemaLayer)
+	// pmaker://examples —— 示例清单(动态扫 workdir/examples)。
+	srv.AddResource(examplesListResource(), c.handleExamplesList)
+	// pmaker://examples/{protocol}/{name} —— 单个示例正文(YAML 原文)。
+	srv.AddResourceTemplate(exampleFileTemplate(), c.handleExampleFile)
+}
+
+func schemaOverviewResource() mcp.Resource {
+	return mcp.NewResource("pmaker://schema", "pMaker 场景语法总览",
+		mcp.WithMIMEType(schemaMIME),
+	)
+}
+
+func schemaLayerTemplate() mcp.ResourceTemplate {
+	return mcp.NewResourceTemplate("pmaker://schema/{layer}", "pMaker 单层语法",
+		mcp.WithTemplateDescription("某协议层(eth/ipv4/tcp/dns/…)的字段速查"),
+		mcp.WithTemplateMIMEType(schemaMIME),
+	)
+}
+
+func examplesListResource() mcp.Resource {
+	return mcp.NewResource("pmaker://examples", "pMaker 示例清单",
+		mcp.WithMIMEType("text/plain"),
+	)
+}
+
+func exampleFileTemplate() mcp.ResourceTemplate {
+	return mcp.NewResourceTemplate("pmaker://examples/{protocol}/{name}", "pMaker 单个示例",
+		mcp.WithTemplateDescription("某协议下一个示例场景的 YAML 原文"),
+		mcp.WithTemplateMIMEType("text/yaml"),
+	)
+}
+
+// handleSchemaOverview 返回 embed 的 overview.md。
+func (c config) handleSchemaOverview(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	data, err := schemaFS.ReadFile("resources/schema/overview.md")
+	if err != nil {
+		return nil, fmt.Errorf("读取 overview: %w", err)
+	}
+	return []mcp.ResourceContents{mcp.TextResourceContents{
+		URI:      req.Params.URI,
+		MIMEType: schemaMIME,
+		Text:     string(data),
+	}}, nil
+}
+
+// handleSchemaLayer 按 {layer} 参数读 embed 的 schema/<layer>.md。
+func (c config) handleSchemaLayer(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	layer := templateArg(req, "layer")
+	if layer == "" {
+		return nil, fmt.Errorf("缺少 {layer} 参数")
+	}
+	if !isSafeName(layer) {
+		return nil, fmt.Errorf("未知层名 %q", layer)
+	}
+	data, err := schemaFS.ReadFile("resources/schema/" + layer + ".md")
+	if err != nil {
+		available := listEmbeddedLayers()
+		return nil, fmt.Errorf("未知层 %q,可用:%s", layer, strings.Join(available, ", "))
+	}
+	return []mcp.ResourceContents{mcp.TextResourceContents{
+		URI:      req.Params.URI,
+		MIMEType: schemaMIME,
+		Text:     string(data),
+	}}, nil
+}
+
+// handleExamplesList 扫描 workdir/examples/<协议>/*.yaml,返回清单(协议、文件名、描述)。
+func (c config) handleExamplesList(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	root := filepath.Join(c.workdir, "examples")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return []mcp.ResourceContents{mcp.TextResourceContents{
+			URI:      req.Params.URI,
+			MIMEType: "text/plain",
+			Text:     "(workdir 下无 examples 目录)\n",
+		}}, nil
+	}
+	var lines []string
+	var protos []string
+	for _, e := range entries {
+		if e.IsDir() {
+			protos = append(protos, e.Name())
+		}
+	}
+	sort.Strings(protos)
+	for _, proto := range protos {
+		files, err := os.ReadDir(filepath.Join(root, proto))
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".yaml") {
+				continue
+			}
+			desc := exampleDescription(filepath.Join(root, proto, f.Name()))
+			lines = append(lines, fmt.Sprintf("%s/%s\t%s", proto, f.Name(), desc))
+		}
+	}
+	text := "(无示例)\n"
+	if len(lines) > 0 {
+		text = strings.Join(lines, "\n") + "\n"
+	}
+	return []mcp.ResourceContents{mcp.TextResourceContents{
+		URI:      req.Params.URI,
+		MIMEType: "text/plain",
+		Text:     text,
+	}}, nil
+}
+
+// handleExampleFile 按 {protocol}/{name} 读 workdir/examples 下对应 YAML 原文。
+func (c config) handleExampleFile(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	proto := templateArg(req, "protocol")
+	name := templateArg(req, "name")
+	// 强制 .yaml 后缀,与 handleExamplesList(只列 .yaml)对齐:
+	// 否则无后缀名(如 README)会通过 isSafeName 被当作示例读出,与 resource 语义不符。
+	if !strings.HasSuffix(name, ".yaml") {
+		return nil, fmt.Errorf("示例名必须以 .yaml 结尾: %q", name)
+	}
+	if !isSafeName(proto) || !isSafeName(strings.TrimSuffix(name, ".yaml")) {
+		return nil, fmt.Errorf("非法协议或示例名: %q/%q", proto, name)
+	}
+	path := filepath.Join(c.workdir, "examples", proto, name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("读取示例 %s/%s: %w", proto, name, err)
+	}
+	return []mcp.ResourceContents{mcp.TextResourceContents{
+		URI:      req.Params.URI,
+		MIMEType: "text/yaml",
+		Text:     string(data),
+	}}, nil
+}
+
+// templateArg 从 resource template 的 URI 参数里取值。
+// mcp-go 把 URI 模板匹配后的参数放进 req.Params.Arguments(map[string]any),
+// 值为 []string(每段一个),取第一个即可。
+func templateArg(req mcp.ReadResourceRequest, key string) string {
+	args := req.Params.Arguments
+	if args == nil {
+		return ""
+	}
+	v, ok := args[key]
+	if !ok {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		return val
+	case []string:
+		if len(val) > 0 {
+			return val[0]
+		}
+	}
+	return ""
+}
+
+// isSafeName 校验层名/协议名/示例名:仅字母数字下划线与连字符,防路径穿越。
+func isSafeName(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// listEmbeddedLayers 列出 embed 里 schema/ 下可用的层名(去 .md 后缀),按字典序。
+func listEmbeddedLayers() []string {
+	entries, err := fs.ReadDir(schemaFS, "resources/schema")
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := strings.TrimSuffix(e.Name(), ".md")
+		if n != "" && n != "overview" {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// exampleDescription 读取示例 YAML 的首行注释(# …)作描述;无则返回空串。
+func exampleDescription(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if rest, ok := strings.CutPrefix(trimmed, "#"); ok {
+			return strings.TrimSpace(rest)
+		}
+		return ""
+	}
+	return ""
+}
