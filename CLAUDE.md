@@ -42,10 +42,12 @@ internal/
   flow/              # 有状态流:TCP 握手、seq/ack 递推(只产 stack 包,不含时间)
   plan/              # 时间编排:packets + flows 汇流成 PlannedPacket,按 Time 排序
   writer/            # pcap 输出、LinkType(时间戳取自 builder.OutPacket.Time)
+  summary/           # 包摘要展示模型与终端排版(从 scenario 抽出;scenario 只留层名白名单 SummaryLayerNames)
+  golden/            # 端到端 golden pcap 测试包:逐字节比对 examples 生成的 pcap(归属判据见 internal/golden/doc.go)
 examples/            # 可直接运行的示例场景 YAML,按协议分目录:examples/<协议>/<name>.yaml
 ```
 
-golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`internal/scenario/testdata/<协议>/<name>.pcap`
+golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`internal/golden/testdata/<协议>/<name>.pcap`
 (Go 测试工作目录为包目录,测试以相对路径 `testdata/...` 读取)。**不要**在仓库根再建 `testdata/`。
 
 **不要过早创建 `pkg/`。** 目前是 CLI 工具、无外部导入方;只有出现真实的外部消费者时,才把稳定接口提升到 `pkg/`(YAGNI)。
@@ -247,7 +249,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   均不用 `time.Now()`(逐字节可复现)。chunked 分帧:块长十六进制、终止块 `0\r\n\r\n`、空 body 仅终止块;`chunked.size` 0/缺省=整段一块、>0=切分(<0 硬错,上限 1 MiB)。
 - **一致性告警**(软错,`scenario/http_consistency.go`,与 FTP 端口告警同一套 `Warnings`):CL+TE 冲突、TE/CE 头与列表不符或缺失、`chunked` 不在末位、多个 `chunked`;1xx/204 带 body、304 在 `auto_content_length: true` 时出 Warning(保留畸形构造能力)。HEAD 与 CONNECT 响应均不做特殊处理(响应层无请求方法上下文)。
 - 序列化纯函数 `builder.applyContentCodings` / `applyTransferCodings` / `chunkedFrame` / `applyAutoContentLength`(`builder/http_coding.go`);
-  校验 `scenario.validateHTTPCodings`(`http_fields.go`);管线入口 `serializeHTTPReq`/`Resp` 的 `httpPayload`(`builder/http.go`)。
+  校验 `scenario.validateHTTPCodings`(`http_validate.go`);管线入口 `serializeHTTPReq`/`Resp` 的 `httpPayload`(`builder/http.go`)。
 
 **已实现 flow**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
 HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
@@ -272,7 +274,7 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 > - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields + `MultipartBody`/`MultipartPart` 子结构)、
 >   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Parse/Load/Validate/Warnings)、`start_after_graph.go`、
 >   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_command.go`(SMTP verb/响应码校验)、`pop3_command.go`(POP3 命令/状态校验)、`eml_data.go`(RFC 5322 正文校验)、`multipart.go`(RFC 2046 multipart 校验 + boundary 校验)、`multipart_consistency.go`(boundary/CTE 一致性告警)、
->   `describe.go`(包/PlannedPacket 摘要)、`file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
+>   `http_validate.go`(HTTP 字段校验)、`summary_layers.go`(摘要层名白名单,供 internal/summary 与 flow 调用)、`file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
 >
 > 测试按「一一对应 + 公共辅助集中」组织,详见下文「测试文件命名规约」。
 
@@ -517,7 +519,7 @@ go test -race ./...
 go test -cover ./...
 
 # 重新生成 golden 基准(约定用 -update)
-go test ./internal/scenario -run TestExamplesGolden -update
+go test ./internal/golden -run TestExamplesGolden -update
 
 # 质量门禁(提交前必跑)
 gofmt -l .        # 应无输出
@@ -604,7 +606,7 @@ packets:
 
 ## 测试策略
 
-1. **Golden pcap 比对**:`internal/scenario/testdata/<协议>/<name>.pcap` 逐字节比对(依赖确定性输出);用 `-update` 重生。
+1. **Golden pcap 比对**:`internal/golden/testdata/<协议>/<name>.pcap` 逐字节比对(依赖确定性输出);用 `-update` 重生。
 2. **回读校验**:生成的 pcap 能被 gopacket 正确解析(规范包场景)。
 3. **可选集成**:若环境有 `tshark`,可用 `tshark -r out.pcap` 交叉验证协议解析(集成测试,非必需依赖)。
 
@@ -613,11 +615,15 @@ packets:
 1. **一一对应**:`xxx.go` ↔ `xxx_test.go`;不写看不出归属的 `load_test.go` / `payload_hex_test.go` 这类名字。
    已拆分的示例:`scenario/time.go` ↔ `scenario/time_test.go`、`builder/dns.go` ↔ `builder/dns_test.go`、
    `builder/dns_enum.go`(纯枚举映射,无对应测试文件时与 dns_test 共测)、`plan/plan.go` ↔ `plan/plan_test.go`。
+   单个源文件的测试过大时,可按 `<源文件名>_<主题>_test.go` 拆分
+   (如 `plan_message_test.go` / `plan_start_after_test.go`),前缀保持与源文件一致。
 2. **公共测试辅助单独放 `helpers_test.go`**:跨多个测试文件复用的 `genPcap` / `buildPackets` / `readPackets` /
    `mustAbs` / `mustOffset` / 栈构造器等集中在 `helpers_test.go`,不要在每个测试文件里复制。
    (若需被非 `_test` 文件引用则命名为 `testing.go`。)
-3. **集成 / golden 测试可保留跨文件命名**(如 `examples_test.go`、`ftp_interleave_test.go`),
-   但需在文件注释顶部写明覆盖范围。
+3. **集成 / golden 测试可保留跨文件命名**(如 `golden/http_test.go`、`plan/ftp_interleave_test.go`),
+   但需在文件注释顶部写明覆盖范围。端到端 golden 测试统一落在 `internal/golden` 包
+   (比对 `testdata/*.pcap` 或跨 ≥3 个包断言最终 pcap 字节);拿 examples 当输入、
+   只断言本包行为的单测留在各包自己的 `_test.go`。
 
 ## 新增一个协议的步骤(清单)
 

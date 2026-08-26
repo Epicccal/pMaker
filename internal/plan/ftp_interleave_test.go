@@ -9,6 +9,11 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
+// 本文件覆盖跨流 start_after 的时间编排(两段式 scheduler),典型为 FTP 控制通道 ↔ 数据通道
+// 的消息级双向交错:数据 flow start_after=控制流.150、控制流 226 start_after=数据流。
+// 断言经 plan.Plan 汇流后各包 Time 的相对顺序(150 < data < 226),flow 层的 seq/ack 推导
+// 与包序不含时间,由 flow_test.go 覆盖。
+
 // planFlow 构造一条 open/close 均为 none 的 flow(便于在测试里精确定位时间),
 // 整流 start_after=sa,若干消息。sport 区分多流同 Time 包。
 func planFlow(name string, sport uint16, sa string, msgs ...scenario.Message) scenario.FlowSpec {

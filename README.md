@@ -200,7 +200,7 @@ CGO_ENABLED=0 go build -o bin/pmaker-mcp ./cmd/pmaker-mcp
 
 ```bash
 go test ./...
-go test ./internal/scenario -run TestExamplesGolden -update   # 重生 golden pcap
+go test ./internal/golden -run TestExamplesGolden -update   # 重生 golden pcap
 ```
 
 ## 许可证

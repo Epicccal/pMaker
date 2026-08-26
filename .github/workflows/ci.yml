@@ -76,7 +76,7 @@ jobs:
         # -race 要求 CGO,因此此处不禁用 CGO;本仓库构建产物本身保持 CGO_ENABLED=0,
         # 但测试阶段开 race 检测属于质量门禁,不参与发布构建。
         run: |
-          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+          go test -race -coverpkg=./internal/...,./cmd/... -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: 上传覆盖率到 Codecov
         uses: codecov/codecov-action@v7
