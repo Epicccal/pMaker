@@ -35,7 +35,7 @@ import (
 const compressLevel = flate.BestSpeed
 
 // applyContentCodings 按 CE 列表顺序对 body 逐个 fold(表示层编码)。
-// 空列表 / IsNone -> 原样返回。穷尽 switch 仅允许 GZIP/DEFLATE/DEFLATE_RAW;
+// 空列表 / IsNone -> 原样返回。穷尽 switch 仅允许 GZIP/DEFLATE/DEFLATE_RAW/BR;
 // 落 default(如 CHUNKED)返回错误——CHUNKED 是传输编码,CE 含 chunked 已在 scenario
 // 校验阶段拦截,此处是 builder 层防线。fold 顺序 = 列表顺序:
 // content_encoding: [deflate, gzip] 构造 gzip(deflate(body))。

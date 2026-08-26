@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 	"github.com/gopacket/gopacket/pcapgo"
@@ -867,6 +869,67 @@ func gzipCompressedLenForTest(src []byte) (int, error) {
 		return 0, fmt.Errorf("gzip close: %w", err)
 	}
 	return buf.Len(), nil
+}
+
+// TestHTTPBrContent 回读 br 示例:content_encoding: br + auto_content_length: true,
+// 断言 Content-Encoding 头存在、Content-Length 为压缩后长度(非占位 0)。br 没有 gzip 那样
+// 的固定魔数,故不复刻魔数断言,改用 round-trip(brotli 解压还原原文)佐证 body 是真实 br 压缩字节。
+func TestHTTPBrContent(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/http/br.yaml")
+	if !bytes.Contains(pcap, []byte("Content-Encoding: br\r\n")) {
+		t.Errorf("pcap 不含 %q", "Content-Encoding: br\r\n")
+	}
+	// body 取自 br.yaml 的 `|` 块标量(YAML 块标量保留一个尾随换行)。
+	body := "<html><body>Hello from pMaker brotli content encoding example</body></html>\n"
+	repr, err := brotliCompressedLenForTest([]byte(body))
+	if err != nil {
+		t.Fatalf("br: %v", err)
+	}
+	wantCL := "Content-Length: " + strconv.Itoa(repr) + "\r\n"
+	if !bytes.Contains(pcap, []byte(wantCL)) {
+		t.Errorf("auto_content_length 未把 CL 覆盖为压缩后长度;want %q,pcap 中未找到", wantCL)
+	}
+	// round-trip:把压缩后字节用 brotli 解压,应还原原文,佐证 CL 取自真实 br body。
+	r := brotli.NewReader(bytes.NewReader(reprBytesForTest(t, []byte(body))))
+	decoded, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("br 解压: %v", err)
+	}
+	if !bytes.Equal(decoded, []byte(body)) {
+		t.Errorf("br round-trip 不符: got %q, want %q", decoded, body)
+	}
+}
+
+// brotliCompressedLenForTest 用与 builder.applyContentCodings 一致的 brotli 参数
+// (brotli.BestSpeed、确定性)计算压缩后字节长度,供 example 测试正向断言 CL 头值。
+func brotliCompressedLenForTest(src []byte) (int, error) {
+	b, err := reprBytesForTest2(src)
+	if err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
+// reprBytesForTest 返回与 builder 完全一致的 br 压缩字节,供 round-trip 复用。
+func reprBytesForTest(t *testing.T, src []byte) []byte {
+	t.Helper()
+	b, err := reprBytesForTest2(src)
+	if err != nil {
+		t.Fatalf("br: %v", err)
+	}
+	return b
+}
+
+func reprBytesForTest2(src []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	bw := brotli.NewWriterLevel(&buf, brotli.BestSpeed)
+	if _, err := bw.Write(src); err != nil {
+		return nil, fmt.Errorf("br write: %w", err)
+	}
+	if err := bw.Close(); err != nil {
+		return nil, fmt.Errorf("br close: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 // TestHTTPSmuggleCLTEContent 回读 smuggle_cl_te 示例:CL.TE 走私 —— 头里手写

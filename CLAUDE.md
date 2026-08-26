@@ -239,10 +239,12 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - **固定应用顺序**:body 生产(字面/`multipart`)→ `content_encoding`(CE fold)→ CL 基准 → `transfer_encoding`(TE fold)→ 自动 CL。
   `auto_content_length` 算的是 CE 之后、成帧之前的长度。自动 CL 唯一入口是 `auto_content_length: true`(原位覆盖占位 `Content-Length` 头值,或末尾追加);头里的 `Content-Length` 值原样上 wire,工具不识别任何特殊写法。
 - **CodingList**(`scenario/coding_list.go`):标量或序列写法(复用 HeaderMap 的 ScalarNode/SequenceNode 双分支解码),
-  解码时 `TrimSpace+ToUpper` 归一化,大小写不敏感。合法 CE ∈ `gzip`/`deflate`/`deflate_raw`,合法 TE ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`;
-  `chunked` 是传输编码,放进 `content_encoding` 报错。链式:列表顺序 = fold 顺序(`[A,B]`=`B(A(body))`)。
+  解码时 `TrimSpace+ToUpper` 归一化,大小写不敏感。合法 CE ∈ `gzip`/`deflate`/`deflate_raw`/`br`,合法 TE ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`;
+  `chunked` 是传输编码,放进 `content_encoding` 报错;`br`(Brotli,RFC 7932)仅限 `content_encoding`(表示层),
+  不是标准传输编码,放进 `transfer_encoding` 走 default 硬错。链式:列表顺序 = fold 顺序(`[A,B]`=`B(A(body))`)。
 - **互斥硬错**:`auto_content_length: true` 且 `transfer_encoding` 非空(framing 互斥,RFC 9112 §6.1);`auto_content_length: true` 且 ≥2 个 `Content-Length` 头(覆盖目标歧义)。`chunked` 子结构仅 `transfer_encoding` 含 `chunked` 时有效。
-- **确定性 gzip**:级别 `flate.BestSpeed`、MTIME 归零、不用 `time.Now()`(逐字节可复现)。chunked 分帧:块长十六进制、终止块 `0\r\n\r\n`、空 body 仅终止块;`chunked.size` 0/缺省=整段一块、>0=切分(<0 硬错,上限 1 MiB)。
+- **确定性压缩**:gzip/deflate/deflate_raw 级别 `flate.BestSpeed`、MTIME 归零;`br` 级别 `brotli.BestSpeed`(quality=0)。
+  均不用 `time.Now()`(逐字节可复现)。chunked 分帧:块长十六进制、终止块 `0\r\n\r\n`、空 body 仅终止块;`chunked.size` 0/缺省=整段一块、>0=切分(<0 硬错,上限 1 MiB)。
 - **一致性告警**(软错,`scenario/http_consistency.go`,与 FTP 端口告警同一套 `Warnings`):CL+TE 冲突、TE/CE 头与列表不符或缺失、`chunked` 不在末位、多个 `chunked`;1xx/204 带 body、304 在 `auto_content_length: true` 时出 Warning(保留畸形构造能力)。HEAD 与 CONNECT 响应均不做特殊处理(响应层无请求方法上下文)。
 - 序列化纯函数 `builder.applyContentCodings` / `applyTransferCodings` / `chunkedFrame` / `applyAutoContentLength`(`builder/http_coding.go`);
   校验 `scenario.validateHTTPCodings`(`http_fields.go`);管线入口 `serializeHTTPReq`/`Resp` 的 `httpPayload`(`builder/http.go`)。

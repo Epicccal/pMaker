@@ -353,6 +353,42 @@ func TestSerializeHTTPResp_AutoCLWithDeflateCodings(t *testing.T) {
 	}
 }
 
+// 端到端:auto=true + br(Brotli)-> CL == 压缩后长度。
+// 覆盖 httpPayload 管线对 br 内容编码的端到端正确性:占位 Content-Length: 0 应被
+// applyAutoContentLength 原位覆盖为 brotli 压缩后字节长度(CE 之后、TE 之前的基准)。
+// br 此前仅在 TestCompressCoding_Brotli 测了纯函数(确定性 + round-trip),未覆盖
+// auto_content_length 的端到端路径。
+func TestSerializeHTTPResp_AutoCLWithBr(t *testing.T) {
+	body := "Hello from pMaker brotli content length end-to-end test payload"
+	f := &scenario.HTTPRespFields{
+		Status:            200,
+		AutoContentLength: true,
+		ContentEncoding:   scenario.CodingList{scenario.CodingBr},
+		Headers: scenario.HeaderMap{
+			{Key: "Content-Length", Value: "0"}, // 占位,应被原位覆盖
+		},
+		Body: body,
+	}
+	got := mustRespBytes(t, f)
+	repr, err := builder.ApplyContentCodingsForTest([]byte(body), scenario.CodingList{scenario.CodingBr})
+	if err != nil {
+		t.Fatalf("br: %v", err)
+	}
+	wantCL := "Content-Length: " + strconv.Itoa(len(repr))
+	if !bytes.Contains(got, []byte(wantCL)) {
+		t.Errorf("br: CL 应为压缩后长度 %s, got %q", wantCL, got)
+	}
+	// round-trip 兜底:压缩后字节能解压回原文,证明 autoCL 取的是真实 br body 的长度。
+	r := brotli.NewReader(bytes.NewReader(repr))
+	decoded, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("br 解压: %v", err)
+	}
+	if !bytes.Equal(decoded, []byte(body)) {
+		t.Errorf("br round-trip 不符: got %q, want %q", decoded, body)
+	}
+}
+
 // 端到端:chunked + size 切多块。
 func TestSerializeHTTPResp_Chunked(t *testing.T) {
 	f := &scenario.HTTPRespFields{
