@@ -39,24 +39,6 @@ func buildPackets(s *scenario.Scenario) ([]builder.OutPacket, error) {
 	return builder.BuildPlanned(planned)
 }
 
-// buildScenarioPcap 跑 scenario.Validate → plan.Plan → builder.BuildPlanned → writer.WriteTo,
-// 对手工构造的 Scenario 出包(隧道用例多用此路径,而非走 examples 文件)。
-func buildScenarioPcap(t *testing.T, s *scenario.Scenario) []byte {
-	t.Helper()
-	if err := scenario.Validate(s); err != nil {
-		t.Fatalf("validate: %v", err)
-	}
-	pkts, err := buildPackets(s)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	var buf bytes.Buffer
-	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	return buf.Bytes()
-}
-
 // TestParseBackIPv6 构造 IPv6/UDP 包并回读,验证 IPv6 层字段、next-header 串接与 checksum 绑定。
 func TestParseBackIPv6(t *testing.T) {
 	hopLimit := uint8(64)
