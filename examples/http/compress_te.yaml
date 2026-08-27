@@ -1,0 +1,46 @@
+# examples/http/compress_te.yaml
+#
+# 合规的 HTTP compress transfer-encoding 响应:transfer_encoding: [compress, chunked]。
+# 列表 [compress, chunked] 构造 chunked(compress(body)):body 先经 UNIX compress(.Z)
+# 压缩,再 chunked 成帧。transfer_encoding 非空时不得带 auto_content_length(framing
+# 互斥,硬错),且 headers 不写 Content-Length(否则命中 CL+TE 走私告警)。
+# Transfer-Encoding 头文本 "compress, chunked" 与列表一致,避免一致性告警。
+#
+# compress 能进 TE 是相对 br(仅限 CE)的净新增能力面;现代客户端支持度低,
+# 中间设备/IDS 解码支持往往不完整,是经典 evasion 测试面。
+link_type: ethernet
+seed: 42
+
+flows:
+  - name: http-compress-te
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /index.html
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                Accept-Encoding: compress
+
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              transfer_encoding: [compress, chunked]
+              chunked:
+                size: 0
+              headers:
+                Server: nginx/1.24.0
+                Content-Type: text/html; charset=utf-8
+                Transfer-Encoding: compress, chunked
+              body: |
+                <html><body>Hello from pMaker compress transfer encoding example</body></html>
