@@ -35,7 +35,7 @@ import (
 const compressLevel = flate.BestSpeed
 
 // applyContentCodings 按 CE 列表顺序对 body 逐个 fold(表示层编码)。
-// 空列表 / IsNone -> 原样返回。穷尽 switch 仅允许 GZIP/DEFLATE/DEFLATE_RAW/BR;
+// 空列表 / IsNone -> 原样返回。穷尽 switch 仅允许 GZIP/DEFLATE/DEFLATE_RAW/BR/COMPRESS;
 // 落 default(如 CHUNKED)返回错误——CHUNKED 是传输编码,CE 含 chunked 已在 scenario
 // 校验阶段拦截,此处是 builder 层防线。fold 顺序 = 列表顺序:
 // content_encoding: [deflate, gzip] 构造 gzip(deflate(body))。
@@ -55,7 +55,7 @@ func applyContentCodings(b []byte, list scenario.CodingList) ([]byte, error) {
 }
 
 // applyTransferCodings 按 TE 列表顺序对 body 逐个 fold(传输层编码/成帧)。
-// 空列表 / IsNone -> 原样返回。穷尽 switch 允许 GZIP/DEFLATE/DEFLATE_RAW/CHUNKED;
+// 空列表 / IsNone -> 原样返回。穷尽 switch 允许 GZIP/DEFLATE/DEFLATE_RAW/COMPRESS/CHUNKED;
 // CHUNKED -> chunkedFrame(b, opts.Size);其余 -> compressCoding。
 // fold 顺序 = 列表顺序,天然支持链式([gzip, chunked] = 先 gzip 后 chunked 成帧)与
 // 异常栈([chunked, gzip]、双 chunked——builder 机械按序 fold,合规性由校验/告警判,
@@ -70,13 +70,13 @@ func applyTransferCodings(b []byte, list scenario.CodingList, opts scenario.Chun
 		switch name {
 		case scenario.CodingChunked:
 			b = chunkedFrame(b, opts.Size)
-		case scenario.CodingGzip, scenario.CodingDeflate, scenario.CodingDeflateRaw:
+		case scenario.CodingGzip, scenario.CodingDeflate, scenario.CodingDeflateRaw, scenario.CodingCompress:
 			b, err = compressCoding(b, name)
 			if err != nil {
 				return nil, fmt.Errorf("transfer_encoding %q: %w", name, err)
 			}
 		default:
-			return nil, fmt.Errorf("transfer_encoding %q 非法(合法:chunked/gzip/deflate/deflate_raw)", name)
+			return nil, fmt.Errorf("transfer_encoding %q 非法(合法:chunked/gzip/deflate/deflate_raw/compress)", name)
 		}
 	}
 	return b, nil
@@ -85,10 +85,12 @@ func applyTransferCodings(b []byte, list scenario.CodingList, opts scenario.Chun
 // compressCoding 对 body 做单次压缩编码,返回确定性字节。
 //   - gzip:compress/gzip(RFC 1952),MTIME 置零、OS 字节稳定;
 //   - deflate:compress/zlib(RFC 1950,zlib wrapper);
-//   - deflate_raw:compress/flate(RFC 1951,raw deflate 无 wrapper)。
+//   - deflate_raw:compress/flate(RFC 1951,raw deflate 无 wrapper);
+//   - compress:自实现 UNIX compress(.Z) LZW(RFC 9110 §8.4.1.1,见 compress_lzw.go)。
 //
-// 确定性:用 NewWriterLevel 钉固定压缩级别;gzip 头 MTIME 须为零值、OS 字节稳定。
-// 实现时实测两次输出逐字节相同再定 golden(CLAUDE.md 确定性硬约束)。
+// 确定性:用 NewWriterLevel 钉固定压缩级别;gzip 头 MTIME 须为零值、OS 字节稳定;
+// compress 钉死 maxbits=16 + block mode、码表冻结不发清除码。实现时实测两次输出逐字节
+// 相同再定 golden(CLAUDE.md 确定性硬约束)。
 func compressCoding(b []byte, name string) ([]byte, error) {
 	switch name {
 	case scenario.CodingGzip:
@@ -145,8 +147,10 @@ func compressCoding(b []byte, name string) ([]byte, error) {
 			return nil, fmt.Errorf("br close: %w", err)
 		}
 		return buf.Bytes(), nil
+	case scenario.CodingCompress:
+		return compressLZW(b)
 	default:
-		return nil, fmt.Errorf("不支持的压缩编码 %q(合法:gzip/deflate/deflate_raw/br)", name)
+		return nil, fmt.Errorf("不支持的压缩编码 %q(合法:gzip/deflate/deflate_raw/br/compress)", name)
 	}
 }
 

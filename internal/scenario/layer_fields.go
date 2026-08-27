@@ -126,8 +126,8 @@ type (
 		Body              string          `yaml:"body"`
 		Multipart         *MultipartBody  `yaml:"multipart"`           // MIME multipart body(RFC 2046);与 body/raw 互斥;非层,嵌在本层内
 		AutoContentLength bool            `yaml:"auto_content_length"` // true=回填/覆盖 Content-Length 值(缺则末尾追加);false(缺省)=不动 Header
-		ContentEncoding   CodingList      `yaml:"content_encoding"`    // 表示层编码,按序应用;标量或序列;元素 ∈ gzip/deflate/deflate_raw
-		TransferEncoding  CodingList      `yaml:"transfer_encoding"`   // 传输层编码/成帧,按序应用;标量或序列;元素 ∈ chunked/gzip/deflate/deflate_raw
+		ContentEncoding   CodingList      `yaml:"content_encoding"`    // 表示层编码,按序应用;标量或序列;元素 ∈ gzip/deflate/deflate_raw/br/compress
+		TransferEncoding  CodingList      `yaml:"transfer_encoding"`   // 传输层编码/成帧,按序应用;标量或序列;元素 ∈ chunked/gzip/deflate/deflate_raw/compress
 		Chunked           *ChunkedOptions `yaml:"chunked"`             // chunked 专属参数子结构;缺省 nil=整段一块;仅 transfer_encoding 含 chunked 时有效
 	}
 	HTTPRespFields struct {
@@ -138,8 +138,8 @@ type (
 		Body              string          `yaml:"body"`
 		Multipart         *MultipartBody  `yaml:"multipart"`           // MIME multipart body(RFC 2046);与 body 互斥;非层,嵌在本层内
 		AutoContentLength bool            `yaml:"auto_content_length"` // true=回填/覆盖 Content-Length 值(缺则末尾追加);false(缺省)=不动 Header
-		ContentEncoding   CodingList      `yaml:"content_encoding"`    // 表示层编码,按序应用;标量或序列;元素 ∈ gzip/deflate/deflate_raw
-		TransferEncoding  CodingList      `yaml:"transfer_encoding"`   // 传输层编码/成帧,按序应用;标量或序列;元素 ∈ chunked/gzip/deflate/deflate_raw
+		ContentEncoding   CodingList      `yaml:"content_encoding"`    // 表示层编码,按序应用;标量或序列;元素 ∈ gzip/deflate/deflate_raw/br/compress
+		TransferEncoding  CodingList      `yaml:"transfer_encoding"`   // 传输层编码/成帧,按序应用;标量或序列;元素 ∈ chunked/gzip/deflate/deflate_raw/compress
 		Chunked           *ChunkedOptions `yaml:"chunked"`             // chunked 专属参数子结构;缺省 nil=整段一块;仅 transfer_encoding 含 chunked 时有效
 	}
 
