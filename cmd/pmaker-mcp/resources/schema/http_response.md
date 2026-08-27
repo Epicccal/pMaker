@@ -42,6 +42,21 @@ HTTP body 经固定三步:**body 生产(字面/`multipart`)→ `content_encoding
 - **互斥规则依据的是 HTTP framing 语义,不是"是否可以计算出字节长度"**:任何非空 `transfer_encoding` 的存在都令发送方不得发 CL(RFC 9112 §6.1),包括 `transfer_encoding: gzip` 这类最终 wire body 定长的情形 —— TE 一旦存在,framing 语义由 TE 接管,CL 并存会令中间代理歧义。需同时有 TE 和 CL 时(走私等畸形),设 `auto_content_length: false` 并在 `headers` 手写 CL。
 - **`transfer_encoding` 列表顺序 = fold 应用顺序**;`chunked` 应位于末位(RFC 9112),非末位或多个 `chunked` 触发 Warning,但工具仍按列表顺序机械 fold 产出字节,适用于 evasion 测试。
 
+### 内容协商(编写场景时的约定,非工具行为)
+
+RFC 9110 §12.5.3:服务器只应在客户端 `Accept-Encoding` 声明接受某内容编码时,才用该编码回响应。
+工具**不做跨层推断**(响应层拿不到请求层的任何信息,`auto_content_length` 那条"响应层无请求方法上下文"
+是同一个限制的另一面),因此协商一致性由**编写场景的人/模型**保证:
+
+- 本层设了 `content_encoding` 时,同场景对应请求的 `headers` 应带 `Accept-Encoding` 并包含该编码
+  (`br` → `Accept-Encoding: gzip, br`;`gzip`/`deflate` 同理),否则抓包在真实网络中不成立
+  —— 未协商却回 `Content-Encoding: br` 属于服务器行为异常。链式编码(如 `[deflate, gzip]`)
+  应让请求声明其中**最终对外可见的那层**(列表末位,即最后 fold 上去的编码)。
+- **故意不协商是合法测试点**,工具不拦、不告警、不改写:验证客户端/中间设备如何处理未协商的编码响应、
+  或构造 `Accept-Encoding: identity` 却仍压缩的响应,都直接省略/写错请求侧头部即可。
+- 一致性告警只覆盖**本层内部**(`content_encoding` 列表与本层 `Content-Encoding` 头是否相符),
+  **不检查请求-响应之间的协商**;`warnings` 里没有告警不代表协商正确。
+
 ### 校验
 
 - `version` 非空时需符合 `HTTP/x.y` 文法(大小写敏感,`HTTP` 为大写;允许 `HTTP/2` 这类无 minor 写法);非标值报错并引导改用 `payload`/`payload_hex`。

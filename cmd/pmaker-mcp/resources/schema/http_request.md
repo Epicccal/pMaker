@@ -12,6 +12,7 @@
       size: 8
     headers:
       Host: example.com
+      Accept-Encoding: gzip, br      # 声明可接受的响应编码;响应侧用 content_encoding 时应与此协商一致
       Content-Type: application/json
       Content-Encoding: gzip
       Transfer-Encoding: chunked
@@ -58,6 +59,20 @@ HTTP body 经固定三步:**body 生产(字面/`multipart`)→ `content_encoding
 - **自动 CL 的唯一入口是 `auto_content_length: true`**(原位覆盖占位 `Content-Length` 头值,或末尾追加)。头里的 `Content-Length` 值原样上 wire,工具不识别任何特殊写法。
 - **互斥规则依据的是 HTTP framing 语义,不是"是否可以计算出字节长度"**:任何非空 `transfer_encoding` 的存在都令发送方不得发 CL(RFC 9112 §6.1),包括 `transfer_encoding: gzip` 这类最终 wire body 定长的情形 —— TE 一旦存在,framing 语义由 TE 接管,CL 并存会令中间代理歧义。需同时有 TE 和 CL 时(走私等畸形),设 `auto_content_length: false` 并在 `headers` 手写 CL。
 - **`transfer_encoding` 列表顺序 = fold 应用顺序**;`chunked` 应位于末位(RFC 9112),非末位或多个 `chunked` 触发 Warning,但工具仍按列表顺序机械 fold 产出字节,适用于 evasion 测试。
+
+### 内容协商(编写场景时的约定,非工具行为)
+
+RFC 9110 §12.5.3:服务器用某种内容编码回响应,前提是客户端在 `Accept-Encoding` 里声明接受该编码。
+工具**不做跨层推断**(层与层互不相识,请求层不知道响应层写了什么,反之亦然),因此协商一致性由**编写场景的人/模型**保证:
+
+- 同一场景里若响应侧设了 `content_encoding`(如 `br`/`gzip`/`deflate`),请求侧 `headers` 应带上
+  `Accept-Encoding` 并包含该编码(如 `Accept-Encoding: gzip, br`),否则抓包在真实网络中不成立
+  —— 未协商却收到 `Content-Encoding: br` 属于服务器行为异常。
+- **故意不协商是合法测试点**:验证客户端/中间设备如何处理未协商的编码响应时,就该省略 `Accept-Encoding`
+  或让它与响应编码不符。工具不拦、不告警、不补头,请求侧 `headers` 始终原样上 wire。
+- `Accept-Encoding` 只是普通请求头(自由文本),**不驱动本层任何编码/成帧行为**;它不会影响
+  `content_encoding` / `transfer_encoding` / `auto_content_length` 的计算。请求自身 body 的编码由
+  `content_encoding` 决定,与 `Accept-Encoding` 无关。
 
 ### 校验
 
