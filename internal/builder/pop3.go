@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/util/dotframe"
 )
 
 // serializePOP3Req 把一条 POP3 客户端命令序列化为 TCP payload 字节:COMMAND[ args]\r\n。
@@ -53,7 +54,7 @@ func serializePOP3Resp(f *scenario.POP3ResponseFields) ([]byte, error) {
 		//    RFC 1939 §3:多行响应的正文行做 dot-stuffing(行首 . → ..),
 		//    以 <CRLF>.<CRLF> 终止。逐行 join 后整段 stuffing 与 eml_data 一致。
 		content := []byte(strings.Join(f.Lines, "\r\n"))
-		b.Write(AppendDotTerminator(ApplyDotStuffing(content)))
+		b.Write(dotframe.AppendDotTerminator(dotframe.ApplyDotStuffing(content)))
 		return b.Bytes(), nil
 	}
 
@@ -64,7 +65,7 @@ func serializePOP3Resp(f *scenario.POP3ResponseFields) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	eml = AppendDotTerminator(ApplyDotStuffing(eml))
+	eml = dotframe.AppendDotTerminator(dotframe.ApplyDotStuffing(eml))
 	b.Write(eml)
 	return b.Bytes(), nil
 }

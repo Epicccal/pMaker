@@ -1,16 +1,16 @@
 package builder
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/util/dotframe"
 )
 
 // serializeEMLData 把 RFC 5322 邮件内容序列化为 TCP payload 字节（**纯内容，不含成帧**）。
 // 协议无关的内容层：成帧（dot-stuffing + <CRLF>.<CRLF> 终止符）是传输协议的职责，由接入层
-// 强制（SMTP DATA / POP3 RETR 的接入层调用 ApplyDotStuffing + AppendDotTerminator；
+// 强制（SMTP DATA / POP3 RETR 的接入层调用 dotframe.ApplyDotStuffing + AppendDotTerminator；
 // IMAP FETCH 未来用长度前缀 {n}\r\n 包装），不在内容层暴露开关。缺 dot-stuffing / 缺终止符
 // 等畸形走 payload/payload_hex 原始字节兜底。
 //
@@ -70,7 +70,7 @@ func serializeEMLData(f *scenario.EMLDataFields) ([]byte, error) {
 }
 
 // serializeEMLDataFramed 把 eml_data standalone 层序列化为带成帧的完整 SMTP DATA 正文字节：
-// serializeEMLData（纯内容）→ ApplyDotStuffing → AppendDotTerminator。
+// serializeEMLData（纯内容）→ dotframe.ApplyDotStuffing → dotframe.AppendDotTerminator。
 // serializeStack 与 PayloadBytes 都调用此函数，确保两条路径字节一致（flow 展开器
 // 按 PayloadBytes 的长度切段，不一致会导致静默的分段长度错误）。
 func serializeEMLDataFramed(f *scenario.EMLDataFields) ([]byte, error) {
@@ -78,50 +78,7 @@ func serializeEMLDataFramed(f *scenario.EMLDataFields) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return AppendDotTerminator(ApplyDotStuffing(b)), nil
-}
-
-// ApplyDotStuffing 对正文做 RFC 5321 §4.5.2 / RFC 1939 §3 的透明性处理：
-// 每行行首为 '.' 的行前面加一个 '.'，无论该行是否只有 '.'。
-// 按 \r\n 分行处理（保留 \r\n），首行特殊处理（无前导 \r\n）。
-// 结构化模式的 body 已由 normalizeCRLF 归一化为 \r\n，故行边界一致；
-// raw 模式不归一化，裸 \n 开头的 '.' 不做 stuffing（构造非标换行畸形，行为可接受）。
-//
-// 供接入层（SMTP/POP3）在拿到 serializeEMLData 的纯内容后强制成帧时调用。
-func ApplyDotStuffing(content []byte) []byte {
-	return dotStuff(content)
-}
-
-// AppendDotTerminator 追加 RFC 5321 §4.5.2 / RFC 1939 §3 的终止符 <CRLF>.<CRLF>：
-// 若正文以 \r\n 结尾，追加 ".\r\n"；否则追加 "\r\n.\r\n"。
-//
-// 供接入层（SMTP/POP3）在拿到 serializeEMLData 的纯内容（已 ApplyDotStuffing）后
-// 强制成帧时调用。
-func AppendDotTerminator(content []byte) []byte {
-	if bytes.HasSuffix(content, []byte("\r\n")) {
-		return append(content, '.', '\r', '\n')
-	}
-	return append(content, '\r', '\n', '.', '\r', '\n')
-}
-
-// dotStuff 是 ApplyDotStuffing 的内部实现（保留原名供包内 lines 分支等复用）。
-func dotStuff(content []byte) []byte {
-	out := make([]byte, 0, len(content)+8)
-	atLineStart := true
-	for i := 0; i < len(content); i++ {
-		c := content[i]
-		if atLineStart && c == '.' {
-			out = append(out, '.')
-		}
-		out = append(out, c)
-		// 更新行起始状态：遇到 \r\n 后下一字节为新行起点。
-		if c == '\n' && i > 0 && content[i-1] == '\r' {
-			atLineStart = true
-		} else {
-			atLineStart = false
-		}
-	}
-	return out
+	return dotframe.AppendDotTerminator(dotframe.ApplyDotStuffing(b)), nil
 }
 
 // normalizeCRLF 把字符串里的裸 \n（前一字符不是 \r）归一化为 \r\n。
