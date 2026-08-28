@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/andybalholm/brotli"
+
+	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/util/compress"
 )
 
 // 本文件实现 HTTP 的内容编码(CE)/传输编码(TE)成帧与自动 Content-Length,
@@ -148,7 +150,7 @@ func compressCoding(b []byte, name string) ([]byte, error) {
 		}
 		return buf.Bytes(), nil
 	case scenario.CodingCompress:
-		return compressLZW(b)
+		return compress.EncodeLZW(b)
 	default:
 		return nil, fmt.Errorf("不支持的压缩编码 %q(合法:gzip/deflate/deflate_raw/br/compress)", name)
 	}
