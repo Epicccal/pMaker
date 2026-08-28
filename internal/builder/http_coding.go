@@ -13,6 +13,7 @@ import (
 	"github.com/andybalholm/brotli"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/util/chunked"
 	"github.com/Epicccal/pMaker/internal/util/compress"
 )
 
@@ -58,7 +59,7 @@ func applyContentCodings(b []byte, list scenario.CodingList) ([]byte, error) {
 
 // applyTransferCodings 按 TE 列表顺序对 body 逐个 fold(传输层编码/成帧)。
 // 空列表 / IsNone -> 原样返回。穷尽 switch 允许 GZIP/DEFLATE/DEFLATE_RAW/COMPRESS/CHUNKED;
-// CHUNKED -> chunkedFrame(b, opts.Size);其余 -> compressCoding。
+// CHUNKED -> chunked.Frame(b, opts.Size);其余 -> compressCoding。
 // fold 顺序 = 列表顺序,天然支持链式([gzip, chunked] = 先 gzip 后 chunked 成帧)与
 // 异常栈([chunked, gzip]、双 chunked——builder 机械按序 fold,合规性由校验/告警判,
 // 构造能力不设限)。签名携带 ChunkedOptions 避免函数体隐式捕获字段。
@@ -71,7 +72,7 @@ func applyTransferCodings(b []byte, list scenario.CodingList, opts scenario.Chun
 	for _, name := range effective {
 		switch name {
 		case scenario.CodingChunked:
-			b = chunkedFrame(b, opts.Size)
+			b = chunked.Frame(b, opts.Size)
 		case scenario.CodingGzip, scenario.CodingDeflate, scenario.CodingDeflateRaw, scenario.CodingCompress:
 			b, err = compressCoding(b, name)
 			if err != nil {
@@ -154,42 +155,6 @@ func compressCoding(b []byte, name string) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("不支持的压缩编码 %q(合法:gzip/deflate/deflate_raw/br/compress)", name)
 	}
-}
-
-// chunkedFrame 把 body 按 size 切块做 HTTP chunked transfer-encoding 成帧(RFC 9112 §7.1)。
-//   - size==0:整个 body 作为一个 chunk(契约行为);
-//   - size>0:按 size 切分,每块长自动十六进制;
-//   - 始终追加合法终止块 "0\r\n\r\n"。
-//
-// size<0 在 scenario 校验阶段已是硬错(http_validate.go),不应到达 builder;此处 size<=0 分支
-// 把负数一并归入「整段一块」仅作 defense-in-depth 兜底,非契约行为,不应被测试当作等价语义固化。
-//
-// 块格式:"%x\r\n" + data + "\r\n"(块长十六进制)。空 body 合规输出 "0\r\n\r\n"(仅终止块)。
-func chunkedFrame(b []byte, size int) []byte {
-	var out bytes.Buffer
-	if size <= 0 {
-		// 整段一块。空 body 不写数据块(只留终止块,合规输出 "0\r\n\r\n")。
-		// 一般情况下，size 不会小于0。
-		if len(b) > 0 {
-			writeChunk(&out, b)
-		}
-	} else {
-		for i := 0; i < len(b); i += size {
-			end := min(i+size, len(b))
-			writeChunk(&out, b[i:end])
-		}
-	}
-	// 终止块。
-	out.WriteString("0\r\n\r\n")
-	return out.Bytes()
-}
-
-// writeChunk 写一个 chunk:"%x\r\n" + data + "\r\n"。
-func writeChunk(out *bytes.Buffer, data []byte) {
-	out.WriteString(strconv.FormatInt(int64(len(data)), 16))
-	out.WriteString("\r\n")
-	out.Write(data)
-	out.WriteString("\r\n")
 }
 
 // applyAutoContentLength 按开关回填/覆盖 Content-Length 头值。

@@ -12,12 +12,12 @@ import (
 // 本文件覆盖 eml_data 应用层序列化。eml_data 是协议无关的**内容层**：serializeEMLData
 // 只产 RFC 5322 内容字节（headers+空行+body 或 raw），成帧（dot-stuffing + <CRLF>.<CRLF>
 // 终止符）由接入层强制。eml_data standalone 层 = SMTP DATA 正文，经 PayloadBytes /
-// serializeStack 序列化时接入层强制成帧（ApplyDotStuffing + AppendDotTerminator）。
+// serializeStack 序列化时接入层强制成帧（dotframe.ApplyDotStuffing + dotframe.AppendDotTerminator）。
 //
 // 故：
 //   - 内容构造测试（headers 顺序、空体、重复头、CRLF 归一化、raw 透传、头注入）走
 //     PayloadBytes，断言完整成帧输出（内容 + dot-stuff + 终止符）；
-//   - 成帧助手 ApplyDotStuffing / AppendDotTerminator 单独测；
+//   - 成帧助手 ApplyDotStuffing / AppendDotTerminator 原语单元测试见 internal/util/dotframe；
 //   - 精确字节裸透传（无成帧）不归 eml_data，走 payload/payload_hex（见 payload 测试）。
 
 func TestSerializeEMLData_Structured(t *testing.T) {
@@ -183,50 +183,6 @@ func TestSerializeEMLData_ConsecutiveBlankLines(t *testing.T) {
 	}
 	if !bytes.Equal(got, []byte(want)) {
 		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-// ---- 成帧助手 ApplyDotStuffing / AppendDotTerminator（接入层维度）----
-
-func TestApplyDotStuffing(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"行首 . → ..", "Subject: t\r\n\r\n.hidden\r\nnormal\r\n", "Subject: t\r\n\r\n..hidden\r\nnormal\r\n"},
-		{"行只有 . → ..", ".\r\nafter\r\n", "..\r\nafter\r\n"},
-		{"无行首 . 不变", "line1\r\nline2\r\n", "line1\r\nline2\r\n"},
-		{"首行行首 . 也 stuff", ".first\r\n", "..first\r\n"},
-		{"裸 \\n 非 \\r\\n 边界不 stuff", "x\n.hidden\n", "x\n.hidden\n"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := builder.ApplyDotStuffing([]byte(c.in))
-			if !bytes.Equal(got, []byte(c.want)) {
-				t.Errorf("got %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-
-func TestAppendDotTerminator(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"以 \\r\\n 结尾 → 追加 .\\r\\n", "body\r\n", "body\r\n.\r\n"},
-		{"不以 \\r\\n 结尾 → 追加 \\r\\n.\\r\\n", "raw bytes", "raw bytes\r\n.\r\n"},
-		{"空内容 → 追加 \\r\\n.\\r\\n", "", "\r\n.\r\n"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := builder.AppendDotTerminator([]byte(c.in))
-			if !bytes.Equal(got, []byte(c.want)) {
-				t.Errorf("got %q, want %q", got, c.want)
-			}
-		})
 	}
 }
 
