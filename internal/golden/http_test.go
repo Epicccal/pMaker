@@ -2,8 +2,6 @@ package golden_test
 
 import (
 	"bytes"
-	"compress/flate"
-	"compress/gzip"
 	"fmt"
 	"io"
 	"strconv"
@@ -12,6 +10,9 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/gopacket/gopacket/pcapgo"
+	"github.com/klauspost/compress/flate"
+	"github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/scenario"
@@ -285,5 +286,49 @@ func TestHTTPCompressTEContent(t *testing.T) {
 		if !bytes.Contains(pcap, want) {
 			t.Errorf("pcap 不含 %q", want)
 		}
+	}
+}
+
+// TestHTTPZstdContent 回读 zstd 示例:content_encoding: zstd + auto_content_length: true,
+// 断言 Content-Encoding 头存在、Content-Length 为压缩后长度(非占位 0)。zstd(RFC 8478)
+// 无固定魔数(帧魔数 0x28 0xB5 0x2F 0xFD 在帧头中,但单段定位不如 round-trip 可靠),
+// 改用 round-trip(zstd 解压还原原文)佐证 body 是真实 zstd 压缩字节,形态对齐
+// TestHTTPCompressContent(经 builder.PayloadBytes 公开入口重算压缩字节 + 自带解码器 round-trip)。
+func TestHTTPZstdContent(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/http/zstd.yaml")
+	if !bytes.Contains(pcap, []byte("Content-Encoding: zstd\r\n")) {
+		t.Errorf("pcap 不含 %q", "Content-Encoding: zstd\r\n")
+	}
+	// body 取自 zstd.yaml 的 `|` 块标量(YAML 块标量保留一个尾随换行)。
+	body := "<html><body>Hello from pMaker zstd content encoding example</body></html>\n"
+	// 经 builder 公开入口重算压缩后字节(与示例同一序列化路径,确保一致)。
+	respBytes, err := builder.PayloadBytes(scenario.Layer{
+		Type:   "http_response",
+		Fields: &scenario.HTTPRespFields{Status: 200, ContentEncoding: scenario.CodingList{scenario.CodingZstd}, AutoContentLength: true, Headers: scenario.HeaderMap{{Key: "Content-Length", Value: "0"}}, Body: body},
+	})
+	if err != nil {
+		t.Fatalf("PayloadBytes: %v", err)
+	}
+	sep := bytes.Index(respBytes, []byte("\r\n\r\n"))
+	if sep < 0 {
+		t.Fatalf("响应字节中找不到头体分隔 \\r\\n\\r\\n")
+	}
+	compressed := respBytes[sep+4:]
+	wantCL := "Content-Length: " + strconv.Itoa(len(compressed)) + "\r\n"
+	if !bytes.Contains(pcap, []byte(wantCL)) {
+		t.Errorf("auto_content_length 未把 CL 覆盖为压缩后长度;want %q,pcap 中未找到", wantCL)
+	}
+	// round-trip:压缩后字节用 zstd 解码器解压,应还原原文,佐证 CL 取自真实压缩 body。
+	dec, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatalf("zstd.NewReader: %v", err)
+	}
+	defer dec.Close()
+	decoded, err := dec.DecodeAll(compressed, nil)
+	if err != nil {
+		t.Fatalf("zstd 解压: %v", err)
+	}
+	if !bytes.Equal(decoded, []byte(body)) {
+		t.Errorf("zstd round-trip 不符: got %q, want %q", decoded, body)
 	}
 }
