@@ -2,13 +2,13 @@ package builder_test
 
 import (
 	"bytes"
-	"encoding/base64"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/util/cte"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
 
@@ -108,58 +108,55 @@ func TestSerializeMultipart_TwoPartsOrder(t *testing.T) {
 	}
 }
 
-func TestSerializeMultipart_Base64Fold(t *testing.T) {
-	// 200 字节 → base64 约 268 字符,应每 76 字符折行(\r\n 分隔)。
-	body := strings.Repeat("A", 200)
-	f := &scenario.HTTPReqFields{
-		Multipart: &scenario.MultipartBody{
-			Parts: []scenario.MultipartPart{{
-				Headers:  scenario.HeaderMap{{Key: "Content-Transfer-Encoding", Value: "base64"}},
-				Body:     body,
-				Encoding: "base64",
-			}},
-		},
+// base64 折行与 QP 编码原语本身的单元测试见 internal/util/cte；
+// 此处只覆盖 multipart builder 侧的接线（encoding 字段 → encodePartBody 分派正确）。
+//
+// TestSerializeMultipart_Base64QP_Dispatch 验证非恒等编码（base64 / quoted-printable）
+// 经 encodePartBody 分派后,产物与 cte 包原语直接调用的结果逐字节一致——
+// 即 multipart 接线只是把 encoding 字段路由到 cte.Base64Fold / cte.QPEncode,不引入额外逻辑。
+func TestSerializeMultipart_Base64QP_Dispatch(t *testing.T) {
+	cases := []struct {
+		name     string
+		encoding string
+		body     string
+	}{
+		{"base64", "base64", strings.Repeat("A", 200)}, // 200 字节 → 触发 76 列折行
+		{"quoted-printable", "quoted-printable", "café = test"},
 	}
-	got := mustPayloadBytes(t, scenario.Layer{Type: "http_request", Fields: f})
-	// 提取 part body:跳过 HTTP 请求头空行,再跳过 part 头空行,取到终止 boundary 前。
-	// 结构:请求行+头\r\n\r\n --boundary\r\n part头\r\n\r\n {encoded} \r\n--boundary--\r\n
-	// 找第二个 \r\n\r\n(part 头体分隔),再取到 \r\n--boundary-- 前。
-	first := bytes.Index(got, []byte("\r\n\r\n")) + 4
-	second := bytes.Index(got[first:], []byte("\r\n\r\n")) + first + 4
-	end := bytes.Index(got[second:], []byte("\r\n------=_pMaker_0001--"))
-	encoded := got[second : second+end]
-	// 每行 ≤ 76 字符。
-	for _, line := range bytes.Split(encoded, []byte("\r\n")) {
-		if len(line) > 76 {
-			t.Errorf("base64 折行后某行 %d 字符 > 76: %q", len(line), line)
-		}
-	}
-	// 整体解码应还原原 body。
-	encStr := strings.ReplaceAll(string(encoded), "\r\n", "")
-	dec, err := base64.StdEncoding.DecodeString(encStr)
-	if err != nil {
-		t.Fatalf("base64 解码失败: %v", err)
-	}
-	if !bytes.Equal(dec, []byte(body)) {
-		t.Errorf("base64 往返不一致")
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &scenario.HTTPReqFields{
+				Multipart: &scenario.MultipartBody{
+					Parts: []scenario.MultipartPart{{
+						Headers:  scenario.HeaderMap{{Key: "Content-Transfer-Encoding", Value: tc.encoding}},
+						Body:     tc.body,
+						Encoding: tc.encoding,
+					}},
+				},
+			}
+			got := mustPayloadBytes(t, scenario.Layer{Type: "http_request", Fields: f})
+			// 取 part body：跳过请求头空行、part 头空行,取到终止 boundary 前。
+			// 结构:请求行+头\r\n\r\n --boundary\r\n part头\r\n\r\n {encoded} \r\n--boundary--\r\n
+			first := bytes.Index(got, []byte("\r\n\r\n")) + 4
+			second := bytes.Index(got[first:], []byte("\r\n\r\n")) + first + 4
+			end := bytes.Index(got[second:], []byte("\r\n------=_pMaker_0001--"))
+			encoded := got[second : second+end]
 
-func TestSerializeMultipart_QuotedPrintable(t *testing.T) {
-	f := &scenario.HTTPReqFields{
-		Multipart: &scenario.MultipartBody{
-			Parts: []scenario.MultipartPart{{
-				Headers:  scenario.HeaderMap{{Key: "Content-Transfer-Encoding", Value: "quoted-printable"}},
-				Body:     "café = test",
-				Encoding: "quoted-printable",
-			}},
-		},
-	}
-	got := mustPayloadBytes(t, scenario.Layer{Type: "http_request", Fields: f})
-	// é (U+00E9) UTF-8 = 0xC3 0xA9 → QP =C3=A9;'=' → =3D。
-	want := "caf=C3=A9 =3D test"
-	if !bytes.Contains(got, []byte(want)) {
-		t.Errorf("QP 编码结果 %q 不含 %q", got, want)
+			var want []byte
+			switch tc.encoding {
+			case "base64":
+				want = cte.Base64Fold([]byte(tc.body))
+			case "quoted-printable":
+				w, err := cte.QPEncode([]byte(tc.body))
+				if err != nil {
+					t.Fatalf("QPEncode: %v", err)
+				}
+				want = w
+			}
+			if !bytes.Equal(encoded, want) {
+				t.Errorf("%s 分派产物 != cte 原语结果\ngot  %q\nwant %q", tc.name, encoded, want)
+			}
+		})
 	}
 }
 

@@ -2,13 +2,12 @@ package builder
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
-	"mime/quotedprintable"
 	"strings"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/util/cte"
 )
 
 // 本文件实现 MIME multipart body(RFC 2046)的序列化,作 HTTP 或 EML 的 body。
@@ -100,50 +99,19 @@ func partBodyBytes(p *scenario.MultipartPart) ([]byte, error) {
 //   - "" / "none":原样返回;
 //   - "7bit" / "8bit" / "binary":RFC 2045 §6 恒等编码(identity),声明 body 字节性质、
 //     不做任何变换,原样返回(对齐 encoding: none 的行为);
-//   - "base64":RFC 2045 每 76 字符折行(\r\n 分隔);
-//   - "quoted-printable":mime/quotedprintable 编码。
+//   - "base64":RFC 2045 每 76 字符折行(\r\n 分隔),见 util/cte;
+//   - "quoted-printable":RFC 2045 quoted-printable 编码,见 util/cte。
 func encodePartBody(body []byte, encoding string) ([]byte, error) {
 	switch encoding {
 	case "", "none", "7bit", "8bit", "binary":
 		return body, nil
 	case "base64":
-		return base64Fold(body), nil
+		return cte.Base64Fold(body), nil
 	case "quoted-printable":
-		return qpEncode(body)
+		return cte.QPEncode(body)
 	}
 	// 校验已拦截非法 encoding,兜底原样返回。
 	return body, nil
-}
-
-// base64Fold 用 StdEncoding 编码 body,并按 RFC 2045 每 76 字符折行(\r\n 分隔)。
-// 输出确定性(同输入 → 同输出),结尾不额外加 CRLF(由调用方在 part body 末尾统一补)。
-func base64Fold(body []byte) []byte {
-	enc := base64.StdEncoding.EncodeToString(body)
-	if len(enc) <= 76 {
-		return []byte(enc)
-	}
-	var b strings.Builder
-	for i := 0; i < len(enc); i += 76 {
-		end := min(i+76, len(enc))
-		if i > 0 {
-			b.WriteString("\r\n")
-		}
-		b.WriteString(enc[i:end])
-	}
-	return []byte(b.String())
-}
-
-// qpEncode 用 quoted-printable 编码 body(RFC 2045)。
-func qpEncode(body []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	w := quotedprintable.NewWriter(&buf)
-	if _, err := w.Write(body); err != nil {
-		return nil, err
-	}
-	if err := w.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // warnBoundaryCollision 扫描编码后 part body,若某行(去尾空白/CRLF)独占 "--"+boundary,
