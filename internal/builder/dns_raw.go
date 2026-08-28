@@ -30,7 +30,7 @@ func encodeDNSMessageRaw(f *scenario.DNSFields, h dnsHeader) ([]byte, error) {
 		ttl   uint32
 		rdata []byte
 	}
-	encodeSection := func(name string, rrs []scenario.DNSRRFields) ([]encodedRR, error) {
+	encodeSection := func(rrs []scenario.DNSRRFields) ([]encodedRR, error) {
 		out := make([]encodedRR, 0, len(rrs))
 		for i, rr := range rrs {
 			n, err := encodeDNSNameBytes(rr.Name)
@@ -61,15 +61,15 @@ func encodeDNSMessageRaw(f *scenario.DNSFields, h dnsHeader) ([]byte, error) {
 		}
 		return out, nil
 	}
-	answers, err := encodeSection("answers", f.Answers)
+	answers, err := encodeSection(f.Answers)
 	if err != nil {
 		return nil, fmt.Errorf("answers: %w", err)
 	}
-	authorities, err := encodeSection("authorities", f.Authorities)
+	authorities, err := encodeSection(f.Authorities)
 	if err != nil {
 		return nil, fmt.Errorf("authorities: %w", err)
 	}
-	additionals, err := encodeSection("additionals", f.Additionals)
+	additionals, err := encodeSection(f.Additionals)
 	if err != nil {
 		return nil, fmt.Errorf("additionals: %w", err)
 	}
