@@ -18,11 +18,6 @@ func ApplyTransferCodingsForTest(b []byte, list scenario.CodingList, opts scenar
 	return applyTransferCodings(b, list, opts)
 }
 
-// ChunkedFrameForTest 是 chunkedFrame 的测试导出别名。
-func ChunkedFrameForTest(b []byte, size int) []byte {
-	return chunkedFrame(b, size)
-}
-
 // ApplyAutoContentLengthForTest 是 applyAutoContentLength 的测试导出别名。
 func ApplyAutoContentLengthForTest(h scenario.HeaderMap, on bool, n int) scenario.HeaderMap {
 	return applyAutoContentLength(h, on, n)

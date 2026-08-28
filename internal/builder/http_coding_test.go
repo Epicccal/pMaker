@@ -11,13 +11,15 @@ import (
 
 	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/util/chunked"
 )
 
 // 本文件覆盖 HTTP 内容编码(CE)/传输编码(TE)成帧与自动 Content-Length 的 builder 级
 // 单测(对应 http_coding.go 的纯函数 + serializeHTTPReq/Resp 端到端)。
 //
 // 覆盖点:
-//   - applyContentCodings / applyTransferCodings / compressCoding / chunkedFrame 的函数边界;
+//   - applyContentCodings / applyTransferCodings / compressCoding 的函数边界
+//     (chunked 成帧原语 chunked.Frame 的边界见 internal/util/chunked);
 //   - 确定性:三值(gzip/deflate/deflate_raw)连续两次构建逐字节相同;
 //   - 链式:content_encoding: [deflate, gzip] == gzip(deflate(body));[gzip, chunked] == chunked(gzip(body));
 //   - chunked: size 切多块块长十六进制;缺省/空/size=0 三者整段一块;始终追加 0\r\n\r\n;空 body 仅终止块;
@@ -157,15 +159,15 @@ func TestApplyTransferCodings_ChainedGzipChunked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gzip: %v", err)
 	}
-	expected := builder.ChunkedFrameForTest(gzipped, 0)
+	expected := chunked.Frame(gzipped, 0)
 	if !bytes.Equal(got, expected) {
-		t.Errorf("链式 [gzip, chunked] != chunkedFrame(gzip(body))")
+		t.Errorf("链式 [gzip, chunked] != chunked.Frame(gzip(body))")
 	}
 }
 
 // 异常栈:transfer_encoding: [chunked, gzip] —— chunked 非末位,RFC 9112 非常规顺序
 // (属告警路径,evasion 测试面)。builder 不判合规性,只机械按列表顺序 fold:
-// [chunked, gzip] = gzip(chunkedFrame(body))(先 chunked 成帧,再 gzip 压缩成帧后的字节)。
+// [chunked, gzip] = gzip(chunked.Frame(body))(先 chunked 成帧,再 gzip 压缩成帧后的字节)。
 func TestApplyTransferCodings_ChainedChunkedGzip(t *testing.T) {
 	body := []byte("chunked then gzip: 先分块成帧再压缩,异常编码栈 evasion,RFC 9112 §7.1")
 	got, err := builder.ApplyTransferCodingsForTest(body, scenario.CodingList{"CHUNKED", "GZIP"}, scenario.ChunkedOptions{})
@@ -173,19 +175,19 @@ func TestApplyTransferCodings_ChainedChunkedGzip(t *testing.T) {
 		t.Fatalf("异常栈 TE: %v", err)
 	}
 	// 先 chunked 成帧。
-	framed := builder.ChunkedFrameForTest(body, 0)
+	framed := chunked.Frame(body, 0)
 	// 再 gzip 压缩成帧后的字节。
 	expected, err := builder.ApplyContentCodingsForTest(framed, scenario.CodingList{"GZIP"})
 	if err != nil {
-		t.Fatalf("gzip(chunkedFrame): %v", err)
+		t.Fatalf("gzip(chunked.Frame): %v", err)
 	}
 	if !bytes.Equal(got, expected) {
-		t.Errorf("异常栈 [chunked, gzip] != gzip(chunkedFrame(body))")
+		t.Errorf("异常栈 [chunked, gzip] != gzip(chunked.Frame(body))")
 	}
 }
 
 // 异常栈:transfer_encoding: [chunked, chunked] —— 双 chunked(RFC 9112 §7.1 异常编码栈,
-// IDS 绕过特征,告警路径)。builder 机械按序 fold:[chunked, chunked] = chunkedFrame(chunkedFrame(body))
+// IDS 绕过特征,告警路径)。builder 机械按序 fold:[chunked, chunked] = chunked.Frame(chunked.Frame(body))
 // (对已分帧的字节再分一次块;两次成帧共用同一 ChunkedOptions.Size)。
 func TestApplyTransferCodings_DoubleChunked(t *testing.T) {
 	body := []byte("double chunked: 对已分帧字节再分块,异常编码栈 IDS 绕过特征")
@@ -195,10 +197,10 @@ func TestApplyTransferCodings_DoubleChunked(t *testing.T) {
 		t.Fatalf("双 chunked TE: %v", err)
 	}
 	// 两次 chunked 成帧共用 opts.Size(builder 对列表中每个 CHUNKED 都用同一 Size)。
-	inner := builder.ChunkedFrameForTest(body, size)
-	expected := builder.ChunkedFrameForTest(inner, size)
+	inner := chunked.Frame(body, size)
+	expected := chunked.Frame(inner, size)
 	if !bytes.Equal(got, expected) {
-		t.Errorf("双 chunked [chunked, chunked] != chunkedFrame(chunkedFrame(body))")
+		t.Errorf("双 chunked [chunked, chunked] != chunked.Frame(chunked.Frame(body))")
 	}
 }
 
@@ -262,9 +264,9 @@ func TestApplyTransferCodings_ChainedCompressChunked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compress: %v", err)
 	}
-	expected := builder.ChunkedFrameForTest(compressed, 0)
+	expected := chunked.Frame(compressed, 0)
 	if !bytes.Equal(got, expected) {
-		t.Errorf("链式 [compress, chunked] != chunkedFrame(compress(body))")
+		t.Errorf("链式 [compress, chunked] != chunked.Frame(compress(body))")
 	}
 }
 
@@ -288,65 +290,8 @@ func TestApplyContentCodings_ChainedCompressGzip(t *testing.T) {
 	}
 }
 
-func TestChunkedFrame_WholeOneChunk(t *testing.T) {
-	// size<=0:整段一块。
-	body := []byte("hello world")
-	got := builder.ChunkedFrameForTest(body, 0)
-	want := "b\r\nhello world\r\n0\r\n\r\n"
-	if string(got) != want {
-		t.Errorf("整段一块 got %q, want %q", got, want)
-	}
-}
-
-func TestChunkedFrame_MultiChunk(t *testing.T) {
-	// size=4:切多块,块长十六进制。
-	body := []byte("hello world!") // 12 字节
-	got := builder.ChunkedFrameForTest(body, 4)
-	want := "4\r\nhell\r\n4\r\no wo\r\n4\r\nrld!\r\n0\r\n\r\n"
-	if string(got) != want {
-		t.Errorf("切多块 got %q, want %q", got, want)
-	}
-}
-
-func TestChunkedFrame_EmptyBody(t *testing.T) {
-	// 空 body:仅终止块。
-	got := builder.ChunkedFrameForTest(nil, 0)
-	want := "0\r\n\r\n"
-	if string(got) != want {
-		t.Errorf("空 body got %q, want %q", got, want)
-	}
-}
-
-func TestChunkedFrame_DefaultSizeWholeChunk(t *testing.T) {
-	// size==0:整段一块(契约行为)。size<0 是 scenario 校验硬错,不应到达 builder,
-	// 故此处只测合法的 size==0,不把非法负数路径当作等价语义固化。
-	body := []byte("xyz")
-	got := builder.ChunkedFrameForTest(body, 0)
-	want := "3\r\nxyz\r\n0\r\n\r\n"
-	if string(got) != want {
-		t.Errorf("size=0 整段一块 got %q, want %q", got, want)
-	}
-}
-
-func TestChunkedFrame_SizeLargerThanBody(t *testing.T) {
-	// size 大于 body 长度:单块,块长 == body 实际长度(不按 size 截断出空块)。
-	body := []byte("short") // 5 字节
-	got := builder.ChunkedFrameForTest(body, 100)
-	want := "5\r\nshort\r\n0\r\n\r\n"
-	if string(got) != want {
-		t.Errorf("size>len got %q, want %q(应为单块,块长=body 长度)", got, want)
-	}
-}
-
-func TestChunkedFrame_NonDivisibleRemainder(t *testing.T) {
-	// size 不能整除:最后一块为余数,块长反映实际剩余字节。
-	body := []byte("hello world!") // 12 字节,size=5 -> 5+5+2
-	got := builder.ChunkedFrameForTest(body, 5)
-	want := "5\r\nhello\r\n5\r\n worl\r\n2\r\nd!\r\n0\r\n\r\n"
-	if string(got) != want {
-		t.Errorf("非整除余数 got %q, want %q(最后一块应为 2 字节)", got, want)
-	}
-}
+// chunked 成帧原语本身的单元测试(块长十六进制、切分、终止块)见
+// internal/util/chunked;此处只覆盖 builder 侧的接线(TE fold 顺序、与 CE 的组合)。
 
 func TestApplyAutoContentLength_Off(t *testing.T) {
 	h := scenario.HeaderMap{{Key: "Content-Length", Value: "999"}}
