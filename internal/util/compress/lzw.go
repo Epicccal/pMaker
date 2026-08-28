@@ -14,8 +14,8 @@ const (
 	flagBlockMode = byte(0x80) // bit7
 	flagReserved  = byte(0x60) // bit5/bit6,保留位
 
-	lzwInitBits  = 9
-	lzwMaxbits   = 16
+	lzwInitBits   = 9
+	lzwMaxbits    = 16
 	lzwMaxmaxcode = 1 << lzwMaxbits
 
 	// block mode 下 256 是清除码,首个空闲码为 257。

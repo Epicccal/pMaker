@@ -14,8 +14,8 @@ import (
 	"github.com/gopacket/gopacket/pcapgo"
 
 	"github.com/Epicccal/pMaker/internal/builder"
-	"github.com/Epicccal/pMaker/internal/util/compress"
 	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/util/compress"
 )
 
 // TestHTTPPutFileContent 验证 @file(...) 占位符:put_file 示例的 PUT body 来自外部文件
