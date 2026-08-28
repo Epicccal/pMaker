@@ -14,6 +14,7 @@ import (
 	"github.com/gopacket/gopacket/pcapgo"
 
 	"github.com/Epicccal/pMaker/internal/builder"
+	"github.com/Epicccal/pMaker/internal/util/compress"
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
@@ -260,7 +261,10 @@ func TestHTTPCompressContent(t *testing.T) {
 		t.Errorf("auto_content_length 未把 CL 覆盖为压缩后长度;want %q,pcap 中未找到", wantCL)
 	}
 	// round-trip:压缩后字节用 .Z 解码器解压,应还原原文,佐证 CL 取自真实压缩 body。
-	decoded := decodeLZWForTest(t, compressed)
+	decoded, err := compress.DecodeLZW(compressed)
+	if err != nil {
+		t.Fatalf("compress.DecodeLZW: %v", err)
+	}
 	if !bytes.Equal(decoded, []byte(body)) {
 		t.Errorf("compress round-trip 不符: got %q, want %q", decoded, body)
 	}
