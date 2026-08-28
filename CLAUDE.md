@@ -241,12 +241,12 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - **固定应用顺序**:body 生产(字面/`multipart`)→ `content_encoding`(CE fold)→ CL 基准 → `transfer_encoding`(TE fold)→ 自动 CL。
   `auto_content_length` 算的是 CE 之后、成帧之前的长度。自动 CL 唯一入口是 `auto_content_length: true`(原位覆盖占位 `Content-Length` 头值,或末尾追加);头里的 `Content-Length` 值原样上 wire,工具不识别任何特殊写法。
 - **CodingList**(`scenario/coding_list.go`):标量或序列写法(复用 HeaderMap 的 ScalarNode/SequenceNode 双分支解码),
-  解码时 `TrimSpace+ToUpper` 归一化,大小写不敏感。合法 CE ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`compress`,合法 TE ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress`;
-  `chunked` 是传输编码,放进 `content_encoding` 报错;`br`(Brotli,RFC 7932)仅限 `content_encoding`(表示层),
+  解码时 `TrimSpace+ToUpper` 归一化,大小写不敏感。合法 CE ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`zstd`/`compress`,合法 TE ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress`;
+  `chunked` 是传输编码,放进 `content_encoding` 报错;`br`(Brotli,RFC 7932)与 `zstd`(Zstandard,RFC 8478)均仅限 `content_encoding`(表示层),
   不是标准传输编码,放进 `transfer_encoding` 走 default 硬错。`compress`(UNIX compress/LZW,RFC 9110 §8.4.1.1)
-  历史遗留编码,CE 与 TE 均合法(与 `br` 不同),现代客户端支持度低,适合 evasion 测试。链式:列表顺序 = fold 顺序(`[A,B]`=`B(A(body))`)。
+  历史遗留编码,CE 与 TE 均合法(与 `br`/`zstd` 不同),现代客户端支持度低,适合 evasion 测试。链式:列表顺序 = fold 顺序(`[A,B]`=`B(A(body))`)。
 - **互斥硬错**:`auto_content_length: true` 且 `transfer_encoding` 非空(framing 互斥,RFC 9112 §6.1);`auto_content_length: true` 且 ≥2 个 `Content-Length` 头(覆盖目标歧义)。`chunked` 子结构仅 `transfer_encoding` 含 `chunked` 时有效。
-- **确定性压缩**:gzip/deflate/deflate_raw 级别 `flate.BestSpeed`、MTIME 归零;`br` 级别 `brotli.BestSpeed`(quality=0);`compress`(UNIX LZW/.Z)纯 Go 实现(`internal/util/compress/lzw.go`,无可用库),3 字节头 `[0x1F 0x9D 0x90]`(maxbits=16|块模式),LSB-first 连续位打包、码宽在 `freeEnt > maxcode+1` 时升档、表满(65536)冻结不发清除码(与 gunzip 的 uncompress 兼容)。
+- **确定性压缩**:gzip/deflate/deflate_raw 走 `github.com/klauspost/compress` 的 `flate`/`gzip`/`zlib`(API 级 drop-in 替代标准库,输出字节与标准库不同但同库内确定性),级别 `flate.BestSpeed`、MTIME 归零;`br` 级别 `brotli.BestSpeed`(quality=0);`zstd` 走 `github.com/klauspost/compress/zstd`,包级缓存编码器 + `WithEncoderLevel(SpeedFastest)` + `WithEncoderConcurrency(1)` + `EncodeAll`(单 goroutine、消除调度不确定,README 保证同代码版本同输入同输出);`compress`(UNIX LZW/.Z)纯 Go 实现(`internal/util/compress/lzw.go`,klauspost `lzw` 只支持 GIF/PDF 风味不支持 .Z 故自实现),3 字节头 `[0x1F 0x9D 0x90]`(maxbits=16|块模式),LSB-first 连续位打包、码宽在 `freeEnt > maxcode+1` 时升档、表满(65536)冻结不发清除码(与 gunzip 的 uncompress 兼容)。
   均不用 `time.Now()`(逐字节可复现)。chunked 分帧:块长十六进制、终止块 `0\r\n\r\n`、空 body 仅终止块;`chunked.size` 0/缺省=整段一块、>0=切分(<0 硬错,上限 1 MiB)。
 - **一致性告警**(软错,`scenario/http_consistency.go`,与 FTP 端口告警同一套 `Warnings`):CL+TE 冲突、TE/CE 头与列表不符或缺失、`chunked` 不在末位、多个 `chunked`;1xx/204 带 body、304 在 `auto_content_length: true` 时出 Warning(保留畸形构造能力)。HEAD 与 CONNECT 响应均不做特殊处理(响应层无请求方法上下文)。
 - 序列化纯函数 `builder.applyContentCodings` / `applyTransferCodings` / `chunkedFrame` / `applyAutoContentLength`(`builder/http_coding.go`);

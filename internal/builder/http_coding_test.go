@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/scenario"
@@ -47,7 +48,7 @@ func mustRespBytes(t *testing.T, f *scenario.HTTPRespFields) []byte {
 // compressDeterministic 表驱动:同一 body 两次压缩应逐字节相同。
 func TestCompressCoding_Deterministic(t *testing.T) {
 	body := []byte("Hello from pMaker! The quick brown fox jumps over the lazy dog. 1234567890")
-	for _, name := range []string{scenario.CodingGzip, scenario.CodingDeflate, scenario.CodingDeflateRaw, scenario.CodingBr, scenario.CodingCompress} {
+	for _, name := range []string{scenario.CodingGzip, scenario.CodingDeflate, scenario.CodingDeflateRaw, scenario.CodingBr, scenario.CodingZstd, scenario.CodingCompress} {
 		c1, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{name})
 		if err != nil {
 			t.Fatalf("%s 第一次: %v", name, err)
@@ -124,6 +125,39 @@ func TestCompressCoding_Brotli(t *testing.T) {
 	}
 	if !bytes.Equal(got, body) {
 		t.Errorf("br round-trip 不符: got %q, want %q", got, body)
+	}
+}
+
+// zstd(Zstandard)内容编码:round-trip(压缩→解压还原)+ 确定性(两次压缩逐字节相同)。
+// 对齐 TestCompressCoding_Brotli 形态。zstd 是 CE-only(RFC 8478),不是传输编码。
+func TestCompressCoding_Zstd(t *testing.T) {
+	body := []byte("Hello from pMaker zstd! The quick brown fox jumps over the lazy dog. 1234567890")
+
+	// 确定性:两次压缩逐字节相同。
+	c1, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{scenario.CodingZstd})
+	if err != nil {
+		t.Fatalf("zstd 第一次: %v", err)
+	}
+	c2, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{scenario.CodingZstd})
+	if err != nil {
+		t.Fatalf("zstd 第二次: %v", err)
+	}
+	if !bytes.Equal(c1, c2) {
+		t.Errorf("zstd 两次压缩结果不一致(确定性失败): len=%d vs %d", len(c1), len(c2))
+	}
+
+	// round-trip:用 klauspost/compress/zstd.NewReader 解压还原原文。
+	dec, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatalf("zstd.NewReader: %v", err)
+	}
+	defer dec.Close()
+	got, err := dec.DecodeAll(c1, nil)
+	if err != nil {
+		t.Fatalf("zstd 解压: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Errorf("zstd round-trip 不符: got %q, want %q", got, body)
 	}
 }
 
@@ -417,6 +451,46 @@ func TestSerializeHTTPResp_AutoCLWithBr(t *testing.T) {
 	}
 	if !bytes.Equal(decoded, []byte(body)) {
 		t.Errorf("br round-trip 不符: got %q, want %q", decoded, body)
+	}
+}
+
+// 端到端:auto=true + zstd(Zstandard)-> CL == 压缩后长度。
+// 覆盖 httpPayload 管线对 zstd 内容编码的端到端正确性:占位 Content-Length: 0 应被
+// applyAutoContentLength 原位覆盖为 zstd 压缩后字节长度(CE 之后、TE 之前的基准)。
+// zstd 此前仅在 TestCompressCoding_Zstd 测了纯函数(确定性 + round-trip),未覆盖
+// auto_content_length 的端到端路径。对齐 TestSerializeHTTPResp_AutoCLWithBr。
+func TestSerializeHTTPResp_AutoCLWithZstd(t *testing.T) {
+	body := "Hello from pMaker zstd content length end-to-end test payload"
+	f := &scenario.HTTPRespFields{
+		Status:            200,
+		AutoContentLength: true,
+		ContentEncoding:   scenario.CodingList{scenario.CodingZstd},
+		Headers: scenario.HeaderMap{
+			{Key: "Content-Length", Value: "0"}, // 占位,应被原位覆盖
+		},
+		Body: body,
+	}
+	got := mustRespBytes(t, f)
+	repr, err := builder.ApplyContentCodingsForTest([]byte(body), scenario.CodingList{scenario.CodingZstd})
+	if err != nil {
+		t.Fatalf("zstd: %v", err)
+	}
+	wantCL := "Content-Length: " + strconv.Itoa(len(repr))
+	if !bytes.Contains(got, []byte(wantCL)) {
+		t.Errorf("zstd: CL 应为压缩后长度 %s, got %q", wantCL, got)
+	}
+	// round-trip 兜底:压缩后字节能解压回原文,证明 autoCL 取的是真实 zstd body 的长度。
+	dec, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatalf("zstd.NewReader: %v", err)
+	}
+	defer dec.Close()
+	decoded, err := dec.DecodeAll(repr, nil)
+	if err != nil {
+		t.Fatalf("zstd 解压: %v", err)
+	}
+	if !bytes.Equal(decoded, []byte(body)) {
+		t.Errorf("zstd round-trip 不符: got %q, want %q", decoded, body)
 	}
 }
 
