@@ -61,11 +61,12 @@ var validContentCodings = map[string]bool{
 	CodingDeflate:    true,
 	CodingDeflateRaw: true,
 	CodingBr:         true,
+	CodingZstd:       true,
 	CodingCompress:   true,
 }
 
 // validTransferCodings 是 transfer_encoding 的合法元素集合(归一后大写形)。
-// br(Brotli)仅 Content-Encoding 专用,不是标准传输编码,出现在 TE 里 -> 报错。
+// br(Brotli)与 zstd(Zstandard)仅 Content-Encoding 专用,不是标准传输编码,出现在 TE 里 -> 报错。
 var validTransferCodings = map[string]bool{
 	CodingChunked:    true,
 	CodingGzip:       true,
@@ -127,12 +128,12 @@ func validateHTTPCodings(ce, te CodingList, chunked *ChunkedOptions, autoCL bool
 	// 逐元素枚举(归一后大写形)。
 	for _, c := range ceEff {
 		if !validContentCodings[c] {
-			return fmt.Errorf("content_encoding 元素 %q 非法(合法:gzip/deflate/deflate_raw/br/compress;chunked 是传输编码不能放进 content_encoding;非标编码请用 payload / payload_hex)", c)
+			return fmt.Errorf("content_encoding 元素 %q 非法(合法:gzip/deflate/deflate_raw/br/zstd/compress;chunked 是传输编码不能放进 content_encoding;非标编码请用 payload / payload_hex)", c)
 		}
 	}
 	for _, c := range teEff {
 		if !validTransferCodings[c] {
-			return fmt.Errorf("transfer_encoding 元素 %q 非法(合法:chunked/gzip/deflate/deflate_raw/compress;br 不是标准传输编码不能放进 transfer_encoding;非标编码请用 payload / payload_hex)", c)
+			return fmt.Errorf("transfer_encoding 元素 %q 非法(合法:chunked/gzip/deflate/deflate_raw/compress;br/zstd 不是标准传输编码不能放进 transfer_encoding;非标编码请用 payload / payload_hex)", c)
 		}
 	}
 

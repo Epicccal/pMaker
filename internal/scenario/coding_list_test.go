@@ -51,6 +51,8 @@ func TestCodingList_ScalarNormalized(t *testing.T) {
 		`list: "  gzip "`:   {"GZIP"}, // 前后空白裁剪
 		`list: Chunked`:     {"CHUNKED"},
 		`list: deflate_raw`: {"DEFLATE_RAW"},
+		`list: zstd`:        {"ZSTD"},
+		`list: Zstd`:        {"ZSTD"},
 	}
 	for in, want := range cases {
 		got := decodeCodingList(t, in)

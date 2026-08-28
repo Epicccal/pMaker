@@ -44,8 +44,8 @@
 | `body` | string | 否 | 请求体;可用 `@file(...)` 注入文件内容;与 `multipart` 互斥 |
 | `multipart` | object | 否 | MIME multipart body(RFC 2046);`auto_content_length: true` 按其实际长度计算;与 `body` 互斥;详见 `pmaker://schema/multipart` |
 | `auto_content_length` | bool | 否 | `true`=回填/覆盖 `Content-Length` 头值(存在则原位覆盖、位置不变;缺则末尾追加);`false`(缺省)=不动 Header。算的是 `content_encoding` 之后、`transfer_encoding` 成帧之前的长度。**与 `transfer_encoding` 非空互斥(硬错)** |
-| `content_encoding` | 标量或序列 | 否 | 表示层编码,按列表顺序应用(RFC 9110 §8.4);标量 `gzip` 或序列 `[deflate, gzip]`(`[A,B]`=`B(A(body))`)。元素 ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`compress`(大小写不敏感、前后空白裁剪)。链式/异常编码栈走此字段。`br`(Brotli,RFC 7932)仅限 `content_encoding`,不能用于 `transfer_encoding`;`compress`(UNIX compress/LZW,RFC 9110 §8.4.1.1)历史遗留编码,CE 与 TE 均合法,现代客户端支持度低,适合 evasion 测试 |
-| `transfer_encoding` | 标量或序列 | 否 | 传输层编码/成帧,按列表顺序应用(RFC 9112 §6.1);标量 `chunked` 或序列 `[gzip, chunked]`。元素 ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress`(大小写不敏感、前后空白裁剪)。`chunked` 应位于末位(非末位/多个 `chunked` 触发 Warning 但照常出包);`br` 不是标准传输编码,不能用于 `transfer_encoding`。**与 `auto_content_length: true` 互斥(硬错)** |
+| `content_encoding` | 标量或序列 | 否 | 表示层编码,按列表顺序应用(RFC 9110 §8.4);标量 `gzip` 或序列 `[deflate, gzip]`(`[A,B]`=`B(A(body))`)。元素 ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`zstd`/`compress`(大小写不敏感、前后空白裁剪)。链式/异常编码栈走此字段。`br`(Brotli,RFC 7932)与 `zstd`(Zstandard,RFC 8478)均仅限 `content_encoding`,不能用于 `transfer_encoding`;`compress`(UNIX compress/LZW,RFC 9110 §8.4.1.1)历史遗留编码,CE 与 TE 均合法,现代客户端支持度低,适合 evasion 测试 |
+| `transfer_encoding` | 标量或序列 | 否 | 传输层编码/成帧,按列表顺序应用(RFC 9112 §6.1);标量 `chunked` 或序列 `[gzip, chunked]`。元素 ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress`(大小写不敏感、前后空白裁剪)。`chunked` 应位于末位(非末位/多个 `chunked` 触发 Warning 但照常出包);`br`/`zstd` 不是标准传输编码,不能用于 `transfer_encoding`。**与 `auto_content_length: true` 互斥(硬错)** |
 | `chunked` | object | 否 | chunked 成帧专属参数,仅 `transfer_encoding` 含 `chunked` 时有效;字段 `size`(int):0/缺省=整段一块,>0=按指定大小切分(块长自动十六进制),<0 硬错。始终追加终止块 `0\r\n\r\n` |
 
 > headers 保留 YAML 声明顺序输出(不再按 key 字典序);支持重复头(如多个 `Cookie`)。
@@ -79,7 +79,7 @@ RFC 9110 §12.5.3:服务器用某种内容编码回响应,前提是客户端在 
 - `version` 非空时需符合 `HTTP/x.y` 文法(大小写敏感,`HTTP` 为大写;允许 `HTTP/2` 这类无 minor 写法);非标值(如 `1.1`、`http/1.1`、`HTTP/x.y`)报错并引导改用 `payload`/`payload_hex`。
 - `method`/`url`/`version` **可含 CR/LF**:CRLF 注入(请求走私)是受支持的畸形构造场景,不拦截。需要精确字节的其他畸形(非标 version、私有方法名等)另可走 `payload`/`payload_hex`。
 - `method`/`url` 空值合法(走 builder 默认 GET / `/`),不报错。
-- `content_encoding` 每个元素 ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`compress`(`chunked` 是传输编码,放进 `content_encoding` 报错;`br` 仅限 `content_encoding`,不能用于 `transfer_encoding`);`transfer_encoding` 每个元素 ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress`(`br` 不是标准传输编码,放进 `transfer_encoding` 报错);非法元素报错并引导 `payload`/`payload_hex`。
+- `content_encoding` 每个元素 ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`zstd`/`compress`(`chunked` 是传输编码,放进 `content_encoding` 报错;`br`/`zstd` 仅限 `content_encoding`,不能用于 `transfer_encoding`);`transfer_encoding` 每个元素 ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress`(`br`/`zstd` 不是标准传输编码,放进 `transfer_encoding` 报错);非法元素报错并引导 `payload`/`payload_hex`。
 - `auto_content_length: true` 且 `transfer_encoding` 非空 → **硬错**(framing 互斥);`auto_content_length: true` 且 `headers` 有 ≥2 个 `Content-Length` → **硬错**(覆盖目标歧义)。
 - `chunked` 子结构仅在 `transfer_encoding` 含 `chunked` 时有效(否则硬错);`chunked.size` 不可为负、不可超过固定上限(1 MiB)。
 

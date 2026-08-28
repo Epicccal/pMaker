@@ -114,6 +114,8 @@ func TestValidateHTTPCodings_OK(t *testing.T) {
 		{ContentEncoding: scenario.CodingList{"DEFLATE", "GZIP"}},  // 链式
 		{ContentEncoding: scenario.CodingList{"BR"}},               // Brotli(仅 CE)
 		{ContentEncoding: scenario.CodingList{"BR", "GZIP"}},       // 链式含 br
+		{ContentEncoding: scenario.CodingList{"ZSTD"}},             // Zstandard(RFC 8478,仅 CE)
+		{ContentEncoding: scenario.CodingList{"ZSTD", "GZIP"}},     // 链式含 zstd
 		{ContentEncoding: scenario.CodingList{"COMPRESS"}},         // UNIX compress/LZW(CE 合法)
 		{ContentEncoding: scenario.CodingList{"COMPRESS", "GZIP"}}, // 链式含 compress
 		{TransferEncoding: scenario.CodingList{"CHUNKED"}},
@@ -174,6 +176,12 @@ func TestValidateHTTPCodings_RejectInvalidTE(t *testing.T) {
 		TransferEncoding: scenario.CodingList{"BR"},
 	})); err == nil || !strings.Contains(err.Error(), "transfer_encoding") {
 		t.Errorf("TE=BR 期望被拒(br 仅限 content_encoding),得到 %v", err)
+	}
+	// zstd 仅限 content_encoding,放进 transfer_encoding 应被拒(zstd 不是标准传输编码)。
+	if err := httpValidateScenario(mustHTTPRespLayer(t, &scenario.HTTPRespFields{
+		TransferEncoding: scenario.CodingList{"ZSTD"},
+	})); err == nil || !strings.Contains(err.Error(), "transfer_encoding") {
+		t.Errorf("TE=ZSTD 期望被拒(zstd 仅限 content_encoding),得到 %v", err)
 	}
 }
 
