@@ -211,7 +211,8 @@ func DecodeLZW(in []byte) ([]byte, error) {
 			entry = decodeString(code)
 		case code == freeEnt && old != -1:
 			s := decodeString(old)
-			entry = append(s, s[0])
+			entry = s
+			entry = append(entry, s[0])
 		default:
 			return nil, fmt.Errorf("compress: 坏码 %d >= freeEnt %d(输入非合法 .Z 流)", code, freeEnt)
 		}
