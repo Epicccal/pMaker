@@ -12,6 +12,10 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/gopacket/gopacket/pcapgo"
+
+	"github.com/Epicccal/pMaker/internal/builder"
+	"github.com/Epicccal/pMaker/internal/scenario"
+	"github.com/Epicccal/pMaker/internal/util/compress"
 )
 
 // TestHTTPPutFileContent 验证 @file(...) 占位符:put_file 示例的 PUT body 来自外部文件
@@ -212,6 +216,69 @@ func TestHTTPChainedEncodingContent(t *testing.T) {
 		[]byte("Transfer-Encoding: gzip, chunked\r\n"),
 		// gzip 魔数 0x1f 0x8b(先 gzip 压缩)。
 		{0x1f, 0x8b},
+		// chunked 终止块(成帧在外层)。
+		[]byte("0\r\n\r\n"),
+	} {
+		if !bytes.Contains(pcap, want) {
+			t.Errorf("pcap 不含 %q", want)
+		}
+	}
+}
+
+// TestHTTPCompressContent 回读 compress 示例:content_encoding: compress + auto_content_length: true,
+// 断言 Content-Encoding 头存在、Content-Length 为压缩后长度(非占位 0)、body 为 .Z 压缩字节
+// (含固定魔数 0x1F 0x9D)。compress(UNIX LZW)有固定魔数,可直接断言(比 br 的处境好),
+// 再用 test-only .Z 解码器 round-trip 佐证 CL 取自真实压缩 body。
+//
+// 期望压缩字节经 builder.PayloadBytes(公开入口,与示例同一序列化路径)重算,避免在 golden
+// 侧重复实现 LZW 编码器;只用自带的 .Z 解码器做 round-trip 佐证。
+func TestHTTPCompressContent(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/http/compress.yaml")
+	if !bytes.Contains(pcap, []byte("Content-Encoding: compress\r\n")) {
+		t.Errorf("pcap 不含 %q", "Content-Encoding: compress\r\n")
+	}
+	// .Z 魔数 0x1F 0x9D 0x90(魔数 + maxbits=16|blockmode)。
+	if !bytes.Contains(pcap, []byte{0x1F, 0x9D, 0x90}) {
+		t.Errorf("pcap 不含 .Z 魔数 1F 9D 90")
+	}
+	// body 取自 compress.yaml 的 `|` 块标量(YAML 块标量保留一个尾随换行)。
+	body := "<html><body>Hello from pMaker compress content encoding example</body></html>\n"
+	// 经 builder 公开入口重算压缩后字节(与示例同一序列化路径,确保一致)。
+	respBytes, err := builder.PayloadBytes(scenario.Layer{
+		Type:   "http_response",
+		Fields: &scenario.HTTPRespFields{Status: 200, ContentEncoding: scenario.CodingList{scenario.CodingCompress}, AutoContentLength: true, Headers: scenario.HeaderMap{{Key: "Content-Length", Value: "0"}}, Body: body},
+	})
+	if err != nil {
+		t.Fatalf("PayloadBytes: %v", err)
+	}
+	sep := bytes.Index(respBytes, []byte("\r\n\r\n"))
+	if sep < 0 {
+		t.Fatalf("响应字节中找不到头体分隔 \\r\\n\\r\\n")
+	}
+	compressed := respBytes[sep+4:]
+	wantCL := "Content-Length: " + strconv.Itoa(len(compressed)) + "\r\n"
+	if !bytes.Contains(pcap, []byte(wantCL)) {
+		t.Errorf("auto_content_length 未把 CL 覆盖为压缩后长度;want %q,pcap 中未找到", wantCL)
+	}
+	// round-trip:压缩后字节用 .Z 解码器解压,应还原原文,佐证 CL 取自真实压缩 body。
+	decoded, err := compress.DecodeLZW(compressed)
+	if err != nil {
+		t.Fatalf("compress.DecodeLZW: %v", err)
+	}
+	if !bytes.Equal(decoded, []byte(body)) {
+		t.Errorf("compress round-trip 不符: got %q, want %q", decoded, body)
+	}
+}
+
+// TestHTTPCompressTEContent 回读 compress_te 示例:transfer_encoding: [compress, chunked]
+// 链式应用,断言 Transfer-Encoding 头声明 "compress, chunked"、body 先 compress(.Z 魔数)
+// 再 chunked 成帧。这是 compress 能进 TE(相对 br 的净新增能力面)的端到端覆盖。
+func TestHTTPCompressTEContent(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/http/compress_te.yaml")
+	for _, want := range [][]byte{
+		[]byte("Transfer-Encoding: compress, chunked\r\n"),
+		// .Z 魔数(先 compress 压缩)。
+		{0x1F, 0x9D, 0x90},
 		// chunked 终止块(成帧在外层)。
 		[]byte("0\r\n\r\n"),
 	} {

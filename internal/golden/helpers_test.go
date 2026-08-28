@@ -168,3 +168,6 @@ func brotliBytes(src []byte) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+// .Z 编解码见 internal/util/compress(与 builder 的 compress_lzw_test.go 共用同一份实现):
+// 位打包与码宽升档语义最易错,不宜两处各留一份副本。

@@ -45,7 +45,7 @@ func mustRespBytes(t *testing.T, f *scenario.HTTPRespFields) []byte {
 // compressDeterministic 表驱动:同一 body 两次压缩应逐字节相同。
 func TestCompressCoding_Deterministic(t *testing.T) {
 	body := []byte("Hello from pMaker! The quick brown fox jumps over the lazy dog. 1234567890")
-	for _, name := range []string{scenario.CodingGzip, scenario.CodingDeflate, scenario.CodingDeflateRaw, scenario.CodingBr} {
+	for _, name := range []string{scenario.CodingGzip, scenario.CodingDeflate, scenario.CodingDeflateRaw, scenario.CodingBr, scenario.CodingCompress} {
 		c1, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{name})
 		if err != nil {
 			t.Fatalf("%s 第一次: %v", name, err)
@@ -199,6 +199,92 @@ func TestApplyTransferCodings_DoubleChunked(t *testing.T) {
 	expected := builder.ChunkedFrameForTest(inner, size)
 	if !bytes.Equal(got, expected) {
 		t.Errorf("双 chunked [chunked, chunked] != chunkedFrame(chunkedFrame(body))")
+	}
+}
+
+// compress(UNIX LZW/.Z)内容编码:确定性(两次压缩逐字节相同)+ .Z 魔数 +
+// 表满路径无清除码(用测试解码器 round-trip 佐证)。compress 的深度边界(码表满/相位
+// 补齐)由 compress_lzw_test.go 覆盖,这里只覆盖 HTTP 接线路径(CE fold 入口)。
+func TestCompressCoding_Compress(t *testing.T) {
+	body := []byte("Hello from pMaker compress! The quick brown fox jumps over the lazy dog. 1234567890")
+
+	// 确定性:两次压缩逐字节相同。
+	c1, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{scenario.CodingCompress})
+	if err != nil {
+		t.Fatalf("compress 第一次: %v", err)
+	}
+	c2, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{scenario.CodingCompress})
+	if err != nil {
+		t.Fatalf("compress 第二次: %v", err)
+	}
+	if !bytes.Equal(c1, c2) {
+		t.Errorf("compress 两次压缩结果不一致(确定性失败): len=%d vs %d", len(c1), len(c2))
+	}
+	// .Z 固定魔数头 0x1F 0x9D,flags=maxbits(16)|blockmode(0x80)=0x90。
+	if len(c1) < 3 || c1[0] != 0x1F || c1[1] != 0x9D || c1[2] != 0x90 {
+		t.Errorf("compress 输出应以 .Z 魔数 1F 9D 90 开头, got % x", c1[:min(3, len(c1))])
+	}
+}
+
+// 端到端:auto=true + compress -> CL == 压缩后长度(CE 之后、TE 之前)。
+// 对齐 TestSerializeHTTPResp_AutoCLWithBr,覆盖 compress 走 httpPayload 管线的端到端正确性。
+func TestSerializeHTTPResp_AutoCLWithCompress(t *testing.T) {
+	body := "Hello from pMaker compress content length end-to-end test payload"
+	f := &scenario.HTTPRespFields{
+		Status:            200,
+		AutoContentLength: true,
+		ContentEncoding:   scenario.CodingList{scenario.CodingCompress},
+		Headers: scenario.HeaderMap{
+			{Key: "Content-Length", Value: "0"}, // 占位,应被原位覆盖
+		},
+		Body: body,
+	}
+	got := mustRespBytes(t, f)
+	repr, err := builder.ApplyContentCodingsForTest([]byte(body), scenario.CodingList{scenario.CodingCompress})
+	if err != nil {
+		t.Fatalf("compress: %v", err)
+	}
+	wantCL := "Content-Length: " + strconv.Itoa(len(repr))
+	if !bytes.Contains(got, []byte(wantCL)) {
+		t.Errorf("compress: CL 应为压缩后长度 %s, got %q", wantCL, got)
+	}
+}
+
+// 链式:transfer_encoding: [compress, chunked] == chunked(compress(body))。
+// compress 能进 TE(相对 br 仅限 CE 的净新增能力面),覆盖 TE fold 入口对 compress 的接线。
+func TestApplyTransferCodings_ChainedCompressChunked(t *testing.T) {
+	body := []byte("compress then chunked: 先 LZW 压缩再分块成帧")
+	got, err := builder.ApplyTransferCodingsForTest(body, scenario.CodingList{scenario.CodingCompress, "CHUNKED"}, scenario.ChunkedOptions{})
+	if err != nil {
+		t.Fatalf("链式 TE: %v", err)
+	}
+	compressed, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{scenario.CodingCompress})
+	if err != nil {
+		t.Fatalf("compress: %v", err)
+	}
+	expected := builder.ChunkedFrameForTest(compressed, 0)
+	if !bytes.Equal(got, expected) {
+		t.Errorf("链式 [compress, chunked] != chunkedFrame(compress(body))")
+	}
+}
+
+// 链式:content_encoding: [compress, gzip] == gzip(compress(body))。
+func TestApplyContentCodings_ChainedCompressGzip(t *testing.T) {
+	body := []byte("compress then gzip: 先 LZW 再 gzip,异常编码栈 evasion")
+	got, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{scenario.CodingCompress, scenario.CodingGzip})
+	if err != nil {
+		t.Fatalf("链式 CE: %v", err)
+	}
+	compressed, err := builder.ApplyContentCodingsForTest(body, scenario.CodingList{scenario.CodingCompress})
+	if err != nil {
+		t.Fatalf("compress: %v", err)
+	}
+	expected, err := builder.ApplyContentCodingsForTest(compressed, scenario.CodingList{scenario.CodingGzip})
+	if err != nil {
+		t.Fatalf("gzip(compress): %v", err)
+	}
+	if !bytes.Equal(got, expected) {
+		t.Errorf("链式 [compress, gzip] != gzip(compress(body))")
 	}
 }
 

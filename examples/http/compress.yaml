@@ -1,0 +1,45 @@
+# examples/http/compress.yaml
+#
+# 合规的 HTTP compress(UNIX LZW / .Z)content-encoding 响应:
+# content_encoding: compress + auto_content_length: true。
+# auto_content_length 算的是 content_encoding 之后、成帧之前的长度(即压缩后字节长度),
+# 头里写占位 Content-Length: 0,开启 auto 后被原位覆盖为压缩后实际长度。
+#
+# compress(RFC 9110 §8.4.1.1)是历史遗留内容编码,现代客户端支持度低;正因如此,
+# 中间设备/IDS 对其解码支持往往不完整,是经典 evasion 测试面。CE 与 TE 均合法。
+link_type: ethernet
+seed: 42
+
+flows:
+  - name: http-compress
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /index.html
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+                Accept-Encoding: compress
+
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              content_encoding: compress
+              auto_content_length: true
+              headers:
+                Server: nginx/1.24.0
+                Content-Type: text/html; charset=utf-8
+                Content-Encoding: compress
+                Content-Length: 0
+              body: |
+                <html><body>Hello from pMaker compress content encoding example</body></html>

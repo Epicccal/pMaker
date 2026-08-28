@@ -16,7 +16,7 @@ import (
 //   - version 非 HTTP/x.y 文法被拒并引导 payload/payload_hex;
 //   - status 越界(非 0 且不在 100-599)被拒;
 //   - 请求行 / 状态行 CRLF 注入通过(请求走私 / 响应拆分是受支持的畸形构造,不拦截);
-//   - coding 逐元素枚举(CE: gzip/deflate/deflate_raw; TE: chunked/gzip/deflate/deflate_raw);
+//   - coding 逐元素枚举(CE: gzip/deflate/deflate_raw/br/compress; TE: chunked/gzip/deflate/deflate_raw/compress);
 //   - auto_content_length 与 TE 非空互斥;
 //   - auto_content_length 且多 CL 头 -> 硬错;
 //   - chunked 子结构依赖 TE 含 chunked; chunked.size 范围校验。
@@ -111,12 +111,16 @@ func TestValidateHTTPCodings_OK(t *testing.T) {
 	cases := []scenario.HTTPRespFields{
 		{}, // 全不设
 		{ContentEncoding: scenario.CodingList{"GZIP"}},
-		{ContentEncoding: scenario.CodingList{"DEFLATE", "GZIP"}}, // 链式
-		{ContentEncoding: scenario.CodingList{"BR"}},              // Brotli(仅 CE)
-		{ContentEncoding: scenario.CodingList{"BR", "GZIP"}},      // 链式含 br
+		{ContentEncoding: scenario.CodingList{"DEFLATE", "GZIP"}},  // 链式
+		{ContentEncoding: scenario.CodingList{"BR"}},               // Brotli(仅 CE)
+		{ContentEncoding: scenario.CodingList{"BR", "GZIP"}},       // 链式含 br
+		{ContentEncoding: scenario.CodingList{"COMPRESS"}},         // UNIX compress/LZW(CE 合法)
+		{ContentEncoding: scenario.CodingList{"COMPRESS", "GZIP"}}, // 链式含 compress
 		{TransferEncoding: scenario.CodingList{"CHUNKED"}},
 		{TransferEncoding: scenario.CodingList{"CHUNKED", "GZIP"}},
-		{TransferEncoding: scenario.CodingList{"GZIP"}}, // 仅 TE=gzip(无 chunked 也合法)
+		{TransferEncoding: scenario.CodingList{"GZIP"}},                // 仅 TE=gzip(无 chunked 也合法)
+		{TransferEncoding: scenario.CodingList{"COMPRESS", "CHUNKED"}}, // compress 进 TE(相对 br 的净新增能力面)
+		{TransferEncoding: scenario.CodingList{"COMPRESS"}},            // 仅 TE=compress(无 chunked 也合法)
 		{TransferEncoding: scenario.CodingList{"CHUNKED"}, Chunked: &scenario.ChunkedOptions{Size: 8}},
 		{TransferEncoding: scenario.CodingList{"CHUNKED"}, Chunked: &scenario.ChunkedOptions{Size: 0}},
 		{AutoContentLength: true},
@@ -141,6 +145,20 @@ func TestValidateHTTPCodings_RejectInvalidCE(t *testing.T) {
 		ContentEncoding: scenario.CodingList{"BROTLI"},
 	})); err == nil || !strings.Contains(err.Error(), "content_encoding") {
 		t.Errorf("CE=BROTLI 期望被拒,得到 %v", err)
+	}
+}
+
+func TestValidateHTTPCodings_CompressInBothCEAndTE(t *testing.T) {
+	// compress(UNIX LZW)与 br 不同:CE 与 TE 均合法,两端都不应被拒。
+	if err := httpValidateScenario(mustHTTPRespLayer(t, &scenario.HTTPRespFields{
+		ContentEncoding: scenario.CodingList{"COMPRESS"},
+	})); err != nil {
+		t.Errorf("CE=COMPRESS 期望通过(CE 合法),得到 %v", err)
+	}
+	if err := httpValidateScenario(mustHTTPRespLayer(t, &scenario.HTTPRespFields{
+		TransferEncoding: scenario.CodingList{"COMPRESS"},
+	})); err != nil {
+		t.Errorf("TE=COMPRESS 期望通过(TE 合法,与 br 不同),得到 %v", err)
 	}
 }
 

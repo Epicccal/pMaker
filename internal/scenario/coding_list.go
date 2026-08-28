@@ -32,7 +32,8 @@ const (
 	CodingGzip       = "GZIP"
 	CodingDeflate    = "DEFLATE"
 	CodingDeflateRaw = "DEFLATE_RAW"
-	CodingBr         = "BR" // Brotli(RFC 7932),仅 Content-Encoding 专用,不允许进 Transfer-Encoding
+	CodingBr         = "BR"       // Brotli(RFC 7932),仅 Content-Encoding 专用,不允许进 Transfer-Encoding
+	CodingCompress   = "COMPRESS" // UNIX compress/LZW(RFC 9110 §8.4.1.1);CE 与 TE 均合法
 	CodingChunked    = "CHUNKED"
 	CodingNone       = "NONE" // 显式 none,与 nil 等价
 )
