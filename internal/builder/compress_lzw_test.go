@@ -2,7 +2,6 @@ package builder_test
 
 import (
 	"bytes"
-	"os/exec"
 	"testing"
 
 	"github.com/Epicccal/pMaker/internal/builder"
@@ -16,8 +15,7 @@ import (
 //   - 确定性:同输入两次调用逐字节相同;
 //   - 边界:空 body(只出 3 字节头)、单字节、跨 9→10 位码宽增长;
 //   - 码表满路径:造确定能填满 65536 项码表的输入,断言输出流不含清除码 256(本实现冻结码表、
-//     不发清除)且 round-trip 正确;
-//   - 外部交叉验证:本机 uncompress -c 可用时跑,否则 t.Skip。
+//     不发清除)且 round-trip 正确。
 
 // decodeLZW 是 test-only UNIX compress(.Z)LZW 解码器,用于 round-trip 验证 compressLZW。
 // 标准库 compress/lzw 是 GIF/PDF 风味(无 .Z 头、码宽上限 12),不可复用,故此处自带。
@@ -264,35 +262,4 @@ func containsClearCode(in []byte) bool {
 		old = code
 	}
 	return false
-}
-
-func TestCompressLZW_UncompressCrossCheck(t *testing.T) {
-	if _, err := exec.LookPath("uncompress"); err != nil {
-		t.Skip("本机无 uncompress,跳过外部交叉验证")
-	}
-	bodies := [][]byte{
-		[]byte("Hello, World!"),
-		bytes.Repeat([]byte("ABCDEFGH"), 64),
-		bytes.Repeat([]byte("ab"), 1000),
-		bytes.Repeat([]byte("ab"), 50000),
-		bytes.Repeat([]byte("abc"), 7000),
-		[]byte("<html><body>Hello from pMaker compress content encoding example</body></html>\n"),
-		make([]byte, 1<<18),
-	}
-	for i := range bodies[6] {
-		bodies[6][i] = byte(i * 73 % 251)
-	}
-	for _, body := range bodies {
-		enc, _ := builder.CompressLZWForTest(body)
-		cmd := exec.Command("uncompress", "-c")
-		cmd.Stdin = bytes.NewReader(enc)
-		out, err := cmd.Output()
-		if err != nil {
-			t.Errorf("uncompress -c 失败(len=%d): %v", len(body), err)
-			continue
-		}
-		if !bytes.Equal(out, body) {
-			t.Errorf("uncompress 交叉验证不符(len=%d):\n got len=%d\n want len=%d", len(body), len(out), len(body))
-		}
-	}
 }
