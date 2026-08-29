@@ -3,7 +3,6 @@ package builder
 import (
 	"encoding/binary"
 	"fmt"
-	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -78,7 +77,7 @@ func buildICMP(ctx buildContext, f *scenario.ICMPFields) (*layers.ICMPv4, []byte
 		}
 	}
 	if f.Checksum != nil {
-		slog.Warn("最小版忽略 icmp checksum 覆盖")
+		icmp.Checksum = uint16(*f.Checksum)
 	}
 	return icmp, payload, nil
 }

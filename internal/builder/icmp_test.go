@@ -158,3 +158,48 @@ func TestICMPv4FieldsOnWrongType(t *testing.T) {
 		t.Fatal("期望 mtu 用于 code 3 时报错,实际成功")
 	}
 }
+
+// TestICMPv4ChecksumOverride 显式写 0xdead → 回读等于 0xdead(关闭自动计算,值原样上 wire)。
+func TestICMPv4ChecksumOverride(t *testing.T) {
+	f := &scenario.ICMPFields{
+		Type:       yaml.Node{Kind: yaml.ScalarNode, Value: "echo_request"},
+		ID:         hexPtr(0x1234),
+		Seq:        1,
+		PayloadHex: "0x68656c6c6f",
+		Checksum:   hexPtr(0xdead),
+	}
+	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			{Type: "icmp", Fields: f},
+		},
+	}}}
+	pkts := readPackets(t, buildScenarioPcap(t, s))
+	icmp := pkts[0].Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+	if icmp.Checksum != 0xdead {
+		t.Fatalf("icmp checksum = %#x,期望 0xdead", icmp.Checksum)
+	}
+}
+
+// TestICMPv4ChecksumAuto 未写 checksum → 自动计算非零(防止接线时误关自动计算)。
+func TestICMPv4ChecksumAuto(t *testing.T) {
+	f := &scenario.ICMPFields{
+		Type:       yaml.Node{Kind: yaml.ScalarNode, Value: "echo_request"},
+		ID:         hexPtr(0x1234),
+		Seq:        1,
+		PayloadHex: "0x68656c6c6f",
+	}
+	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			{Type: "icmp", Fields: f},
+		},
+	}}}
+	pkts := readPackets(t, buildScenarioPcap(t, s))
+	icmp := pkts[0].Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+	if icmp.Checksum == 0 {
+		t.Fatalf("icmp checksum=0,期望自动计算非零")
+	}
+}

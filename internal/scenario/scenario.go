@@ -139,6 +139,13 @@ func validateFlow(f FlowSpec) error {
 	seen := map[string]bool{}
 	for _, l := range f.Stack {
 		seen[l.Type] = true
+		// flow 展开器(parseFlowStack)按连接状态重建各层字段结构体,只搬 port/seq/ack/
+		// ip/ttl/mss,Checksum 直接丢弃。故 flow.stack 上写 checksum 会静默无效 —— 这正是
+		// 本轮要消灭的失败模式。先于 validateLayer 拦截,避免值域错误(如 0x1FFFF)抢在
+		// 「不支持覆盖」之前报出;后者才是对用户更有用的引导。请改用 standalone packet。
+		if hasChecksumOverride(l) {
+			return fmt.Errorf("stack.%s: 暂不支持 checksum 覆盖(flow 展开器按连接状态重建各层字段);请用 standalone packet 构造该畸形包", l.Type)
+		}
 		if l.Type != "tcp_session" {
 			if err := validateLayer(l); err != nil {
 				return fmt.Errorf("stack.%s: %w", l.Type, err)
@@ -388,6 +395,8 @@ func indexOfInt(slice []int, v int) int {
 	return -1
 }
 
+// hasChecksumOverride 与 validateChecksumRange 见 checksum.go。
+
 func validateLayer(l Layer) error {
 	switch f := l.Fields.(type) {
 	case *EthFields:
@@ -398,6 +407,9 @@ func validateLayer(l Layer) error {
 		if f.Src == "" || f.Dst == "" {
 			return fmt.Errorf("需要 src 与 dst")
 		}
+		if err := validateChecksumRange(f.Checksum); err != nil {
+			return err
+		}
 	case *IPv6Fields:
 		if f.Src == "" || f.Dst == "" {
 			return fmt.Errorf("需要 src 与 dst")
@@ -406,11 +418,20 @@ func validateLayer(l Layer) error {
 		if f.SPort == 0 || f.DPort == 0 {
 			return fmt.Errorf("需要 sport 与 dport")
 		}
+		if err := validateChecksumRange(f.Checksum); err != nil {
+			return err
+		}
 	case *UDPFields:
 		if f.SPort == 0 || f.DPort == 0 {
 			return fmt.Errorf("需要 sport 与 dport")
 		}
+		if err := validateChecksumRange(f.Checksum); err != nil {
+			return err
+		}
 	case *ICMPFields:
+		if err := validateChecksumRange(f.Checksum); err != nil {
+			return err
+		}
 		payloadKinds := 0
 		for _, present := range []bool{f.Payload != "", f.PayloadHex != "", f.Quote != nil, f.QuoteFrom != ""} {
 			if present {
@@ -439,6 +460,9 @@ func validateLayer(l Layer) error {
 			}
 		}
 	case *ICMPv6Fields:
+		if err := validateChecksumRange(f.Checksum); err != nil {
+			return err
+		}
 		payloadKinds := 0
 		for _, present := range []bool{f.Payload != "", f.PayloadHex != "", f.Quote != nil, f.QuoteFrom != ""} {
 			if present {

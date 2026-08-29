@@ -261,7 +261,7 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 **未实现 / 简化**:
 
 - flow 的 overlap / 重传 / IP 分片未做(乱序与段间 RTT 已由 `message.offset_time` / `segment.interval` 覆盖)。
-- 畸形开关 `fix_lengths` / `checksum` **解析但忽略**(build 时 `slog.Warn`),真正的畸形 / 原始字节兜底待做。
+- `checksum` 已实现三态覆盖(ipv4/tcp/udp/icmp/icmpv6):不写=自动计算,显式写值=关闭自动计算、值原样上 wire;`fix_lengths` 仍解析但忽略(独立一轮做)。原始字节兜底(`payload_hex`)已可用。
 - HTTP/EML 头部与 SMTP 参数保留 YAML 声明顺序输出、支持重复键(`scenario.HeaderMap` 有序键值集合,见 `internal/scenario/header_map.go`)。
 
 > **源码组织**:builder 与 scenario 包已按职责拆分。

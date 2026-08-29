@@ -231,3 +231,46 @@ func TestICMPv6MTUOnWrongType(t *testing.T) {
 		t.Fatal("期望 mtu 用于 echo 时构建报错,实际成功")
 	}
 }
+
+// TestICMPv6ChecksumOverride 显式写 0xdead → 回读等于 0xdead(关闭自动计算,值原样上 wire)。
+func TestICMPv6ChecksumOverride(t *testing.T) {
+	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+			{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2"}},
+			{Type: "icmpv6", Fields: &scenario.ICMPv6Fields{
+				Type:       yaml.Node{Kind: yaml.ScalarNode, Value: "echo_request"},
+				ID:         hexPtr(0x1234),
+				Seq:        1,
+				PayloadHex: "0x68656c6c6f",
+				Checksum:   hexPtr(0xdead),
+			}},
+		},
+	}}}
+	pkts := readPackets(t, buildScenarioPcap(t, s))
+	icmp := pkts[0].Layer(layers.LayerTypeICMPv6).(*layers.ICMPv6)
+	if icmp.Checksum != 0xdead {
+		t.Fatalf("icmpv6 checksum = %#x,期望 0xdead", icmp.Checksum)
+	}
+}
+
+// TestICMPv6ChecksumAuto 未写 checksum → 自动计算非零(防止接线时误关自动计算)。
+func TestICMPv6ChecksumAuto(t *testing.T) {
+	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+			{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2"}},
+			{Type: "icmpv6", Fields: &scenario.ICMPv6Fields{
+				Type:       yaml.Node{Kind: yaml.ScalarNode, Value: "echo_request"},
+				ID:         hexPtr(0x1234),
+				Seq:        1,
+				PayloadHex: "0x68656c6c6f",
+			}},
+		},
+	}}}
+	pkts := readPackets(t, buildScenarioPcap(t, s))
+	icmp := pkts[0].Layer(layers.LayerTypeICMPv6).(*layers.ICMPv6)
+	if icmp.Checksum == 0 {
+		t.Fatalf("icmpv6 checksum=0,期望自动计算非零")
+	}
+}

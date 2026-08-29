@@ -19,7 +19,8 @@ type (
 		Dst      string  `yaml:"dst"`
 		TTL      *uint8  `yaml:"ttl"`
 		Protocol *string `yaml:"protocol"` // 覆盖:tcp/udp/gre/ipv4
-		// 畸形开关:当前解析但构建时忽略并告警。
+		// 畸形开关。checksum 三态:nil=自动计算,非 nil=原样落值(关闭自动计算)。
+		// fix_lengths 仍解析但忽略(独立一轮做)。
 		Checksum   *Hex  `yaml:"checksum"`
 		FixLengths *bool `yaml:"fix_lengths"`
 	}
@@ -41,15 +42,16 @@ type (
 		ClientISN uint32   `yaml:"client_isn"`
 		ServerISN uint32   `yaml:"server_isn"`
 		MSS       *uint16  `yaml:"mss"`      // SYN 通告 option(展开器仅在 SYN 上设)
-		Checksum  *Hex     `yaml:"checksum"` // 解析但忽略
+		Checksum  *Hex     `yaml:"checksum"` // 三态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
 	}
 	TCPSessionFields struct {
 		Open  string `yaml:"open"`  // handshake(默认)| none
 		Close string `yaml:"close"` // fin(默认)| rst | none
 	}
 	UDPFields struct {
-		SPort uint16 `yaml:"sport"`
-		DPort uint16 `yaml:"dport"`
+		SPort    uint16 `yaml:"sport"`
+		DPort    uint16 `yaml:"dport"`
+		Checksum *Hex   `yaml:"checksum"` // 三态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
 	}
 	ICMPFields struct {
 		Type       yaml.Node `yaml:"type"`
@@ -60,7 +62,7 @@ type (
 		PayloadHex string    `yaml:"payload_hex"`
 		Quote      *Packet   `yaml:"quote"`
 		QuoteFrom  string    `yaml:"quote_from"`
-		Checksum   *Hex      `yaml:"checksum"` // 解析但忽略
+		Checksum   *Hex      `yaml:"checksum"` // 三态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
 		// 类型相关字段(RFC 792),映射到 ICMPv4 头 bytes 4-7(Id/Seq 位):
 		Gateway *string `yaml:"gateway"` // 仅 redirect(type 5):网关 IPv4(bytes 4-7)
 		Pointer *uint8  `yaml:"pointer"` // 仅 parameter_problem(type 12):出错字节偏移(byte 4)
@@ -76,7 +78,7 @@ type (
 		PayloadHex string    `yaml:"payload_hex"`
 		Quote      *Packet   `yaml:"quote"`
 		QuoteFrom  string    `yaml:"quote_from"`
-		Checksum   *Hex      `yaml:"checksum"` // 解析但忽略
+		Checksum   *Hex      `yaml:"checksum"` // 三态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
 		// 类型相关 4 字节字段(RFC 4443 §3):仅错误报文使用,echo 不用。
 		MTU     *uint32 `yaml:"mtu"`     // 仅 packet_too_big(type 2):下一跳 MTU
 		Pointer *uint32 `yaml:"pointer"` // 仅 parameter_problem(type 4):出错字节偏移

@@ -2,7 +2,6 @@ package builder
 
 import (
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/gopacket/gopacket/layers"
@@ -41,7 +40,7 @@ func buildTCP(f *scenario.TCPFields) (*layers.TCP, error) {
 		}
 	}
 	if f.Checksum != nil {
-		slog.Warn("最小版忽略 tcp checksum 覆盖", "sport", f.SPort, "dport", f.DPort)
+		t.Checksum = uint16(*f.Checksum)
 	}
 	if f.MSS != nil {
 		t.Options = append(t.Options, layers.TCPOption{
@@ -54,5 +53,9 @@ func buildTCP(f *scenario.TCPFields) (*layers.TCP, error) {
 }
 
 func buildUDP(f *scenario.UDPFields) *layers.UDP {
-	return &layers.UDP{SrcPort: layers.UDPPort(f.SPort), DstPort: layers.UDPPort(f.DPort)}
+	u := &layers.UDP{SrcPort: layers.UDPPort(f.SPort), DstPort: layers.UDPPort(f.DPort)}
+	if f.Checksum != nil {
+		u.Checksum = uint16(*f.Checksum)
+	}
+	return u
 }
