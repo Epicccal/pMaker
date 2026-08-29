@@ -1,0 +1,33 @@
+# examples/udp/bad_checksum.yaml
+#
+# UDP checksum 显式覆盖(三态语义):
+# ① 不写 checksum → 自动计算(IPv4 下 UDP checksum 非零为合规默认);
+# ② 写 checksum: 0xdead → 关闭自动计算,值原样上 wire,构造错误校验和流量;
+# ③ 写 checksum: 0 → RFC 768 下 IPv4 里表示「不校验」,合法且有意义的构造。
+#    gopacket 的 0xffff 翻转只在自动计算时发生,覆盖层关掉计算后字面 0 原样上 wire。
+link_type: ethernet
+seed: 42
+packets:
+  # ① 规范包:checksum 自动计算。
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - udp:  { sport: 40000, dport: 53 }
+      - payload:
+          payload: "query"
+
+  # ② 畸形包:checksum 原样落 0xdead(关闭自动计算)。
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - udp:  { sport: 40000, dport: 53, checksum: 0xdead }
+      - payload:
+          payload: "query"
+
+  # ③ UDP checksum=0:IPv4 下表示「不校验」(RFC 768 合法)。
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - udp:  { sport: 40000, dport: 53, checksum: 0 }
+      - payload:
+          payload: "query"

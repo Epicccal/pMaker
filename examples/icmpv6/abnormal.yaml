@@ -2,7 +2,7 @@
 #
 # ICMPv6 畸形/规避用例:
 # ① next_header 显式覆盖制造解析断链(IPv6 声称后接 UDP,实际载荷为 ICMPv6);
-# ② checksum 覆盖(解析但构建时忽略并告警,序列化为合规包)。
+# ② checksum 覆盖(显式写 0xdead,关闭自动计算,值原样上 wire)。
 link_type: ethernet
 seed: 42
 packets:
@@ -19,8 +19,8 @@ packets:
           seq: 1
           payload_hex: 0x68656c6c6f
 
-  # ② checksum 覆盖:解析但忽略(对齐畸形开关现状,序列化为合规包)。
-  - name: icmpv6-checksum-ignored
+  # ② checksum 覆盖:显式写 0xdead,关闭自动计算,值原样上 wire。
+  - name: icmpv6-checksum-override
     stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
       - ipv6: { src: "2001:db8::10", dst: "2001:db8::1", hop_limit: 64 }
