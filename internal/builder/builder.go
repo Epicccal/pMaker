@@ -217,11 +217,13 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 	// 反向(从最内层到最外层)依次 PrependBytes,与 SerializeLayers 行为一致。
 	buf := gopacket.NewSerializeBuffer()
 	if err := buf.Clear(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("清空序列化缓冲区: %w", err)
 	}
 	for i := len(serLayers) - 1; i >= 0; i-- {
 		if err := serLayers[i].SerializeTo(buf, layerOpts[i]); err != nil {
-			return nil, err
+			// 索引 i 是 serLayers 的位置(由外到内),与 stack 非一一对应
+			// (ICMPv6 一个 scenario 层会展开多项),故用 gopacket LayerType 定位。
+			return nil, fmt.Errorf("序列化层 %d(%s): %w", i, serLayers[i].LayerType(), err)
 		}
 		buf.PushLayer(serLayers[i].LayerType())
 	}
