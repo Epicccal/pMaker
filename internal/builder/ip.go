@@ -53,8 +53,11 @@ func buildIPv4(f *scenario.IPv4Fields, next string) (*layers.IPv4, error) {
 	if f.Protocol != nil {
 		ip.Protocol = ipProtoFor(*f.Protocol)
 	}
-	if f.FixLengths != nil || f.Checksum != nil {
-		slog.Warn("最小版忽略 ipv4 畸形开关(fix_lengths/checksum),序列化为合规包", "src", f.Src, "dst", f.Dst)
+	if f.Checksum != nil {
+		ip.Checksum = uint16(*f.Checksum)
+	}
+	if f.FixLengths != nil {
+		slog.Warn("最小版忽略 ipv4 fix_lengths 畸形开关,序列化为合规包", "src", f.Src, "dst", f.Dst)
 	}
 	return ip, nil
 }

@@ -3,7 +3,6 @@ package builder
 import (
 	"encoding/binary"
 	"fmt"
-	"log/slog"
 
 	"github.com/gopacket/gopacket/layers"
 	"gopkg.in/yaml.v3"
@@ -71,7 +70,7 @@ func buildICMPv6(ctx buildContext, f *scenario.ICMPv6Fields) (*layers.ICMPv6, *l
 		}
 	}
 	if f.Checksum != nil {
-		slog.Warn("最小版忽略 icmpv6 checksum 覆盖")
+		icmp.Checksum = uint16(*f.Checksum)
 	}
 	return icmp, echo, reserved, payload, nil
 }
