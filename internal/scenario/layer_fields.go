@@ -19,30 +19,32 @@ type (
 		Dst      string  `yaml:"dst"`
 		TTL      *uint8  `yaml:"ttl"`
 		Protocol *string `yaml:"protocol"` // 覆盖:tcp/udp/gre/ipv4
-		// 畸形开关。checksum 三态:nil=自动计算,非 nil=原样落值(关闭自动计算)。
-		// fix_lengths 仍解析但忽略(独立一轮做)。
-		Checksum   *Hex  `yaml:"checksum"`
-		FixLengths *bool `yaml:"fix_lengths"`
+		// 畸形覆盖。checksum/length 两态:nil=自动计算,非 nil=原样落值(关闭自动计算/修正)。
+		Checksum *Hex `yaml:"checksum"`
+		Length   *Hex `yaml:"total_length"`  // 总长度(含头);写即覆盖原样上 wire,不写=自动计算
+		IHL      *Hex `yaml:"header_length"` // 头部长度(IHL,4 位,5-15);写即覆盖,不写=自动计算
 	}
 	IPv6Fields struct {
-		Src          string  `yaml:"src"`
-		Dst          string  `yaml:"dst"`
-		HopLimit     *uint8  `yaml:"hop_limit"` // 跳数限制(类比 IPv4 ttl),缺省 64
-		TrafficClass *uint8  `yaml:"traffic_class"`
-		FlowLabel    *uint32 `yaml:"flow_label"`
-		NextHeader   *string `yaml:"next_header"` // 覆盖:tcp/udp/icmpv6/ipv4/ipv6(制造断链)
+		Src           string  `yaml:"src"`
+		Dst           string  `yaml:"dst"`
+		HopLimit      *uint8  `yaml:"hop_limit"` // 跳数限制(类比 IPv4 ttl),缺省 64
+		TrafficClass  *uint8  `yaml:"traffic_class"`
+		FlowLabel     *uint32 `yaml:"flow_label"`
+		NextHeader    *string `yaml:"next_header"`    // 覆盖:tcp/udp/icmpv6/ipv4/ipv6(制造断链)
+		PayloadLength *Hex    `yaml:"payload_length"` // 载荷长度(不含 40B 头);写即覆盖,不写=自动计算
 	}
 	GREFields struct{}
 	TCPFields struct {
-		SPort     uint16   `yaml:"sport"`
-		DPort     uint16   `yaml:"dport"`
-		Flags     []string `yaml:"flags"`
-		Seq       *uint32  `yaml:"seq"`
-		Ack       *uint32  `yaml:"ack"`
-		ClientISN uint32   `yaml:"client_isn"`
-		ServerISN uint32   `yaml:"server_isn"`
-		MSS       *uint16  `yaml:"mss"`      // SYN 通告 option(展开器仅在 SYN 上设)
-		Checksum  *Hex     `yaml:"checksum"` // 三态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
+		SPort      uint16   `yaml:"sport"`
+		DPort      uint16   `yaml:"dport"`
+		Flags      []string `yaml:"flags"`
+		Seq        *uint32  `yaml:"seq"`
+		Ack        *uint32  `yaml:"ack"`
+		ClientISN  uint32   `yaml:"client_isn"`
+		ServerISN  uint32   `yaml:"server_isn"`
+		MSS        *uint16  `yaml:"mss"`           // SYN 通告 option(展开器仅在 SYN 上设)
+		Checksum   *Hex     `yaml:"checksum"`      // 两态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
+		DataOffset *Hex     `yaml:"header_length"` // 数据偏移(4 位,5-15,以 4 字节为单位);写即覆盖,不写=自动计算
 	}
 	TCPSessionFields struct {
 		Open  string `yaml:"open"`  // handshake(默认)| none
@@ -51,7 +53,8 @@ type (
 	UDPFields struct {
 		SPort    uint16 `yaml:"sport"`
 		DPort    uint16 `yaml:"dport"`
-		Checksum *Hex   `yaml:"checksum"` // 三态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
+		Checksum *Hex   `yaml:"checksum"`     // 两态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
+		Length   *Hex   `yaml:"total_length"` // udp 总长度(头 8 + payload);写即覆盖,不写=自动计算
 	}
 	ICMPFields struct {
 		Type       yaml.Node `yaml:"type"`
@@ -62,7 +65,7 @@ type (
 		PayloadHex string    `yaml:"payload_hex"`
 		Quote      *Packet   `yaml:"quote"`
 		QuoteFrom  string    `yaml:"quote_from"`
-		Checksum   *Hex      `yaml:"checksum"` // 三态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
+		Checksum   *Hex      `yaml:"checksum"` // 两态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
 		// 类型相关字段(RFC 792),映射到 ICMPv4 头 bytes 4-7(Id/Seq 位):
 		Gateway *string `yaml:"gateway"` // 仅 redirect(type 5):网关 IPv4(bytes 4-7)
 		Pointer *uint8  `yaml:"pointer"` // 仅 parameter_problem(type 12):出错字节偏移(byte 4)
@@ -78,7 +81,7 @@ type (
 		PayloadHex string    `yaml:"payload_hex"`
 		Quote      *Packet   `yaml:"quote"`
 		QuoteFrom  string    `yaml:"quote_from"`
-		Checksum   *Hex      `yaml:"checksum"` // 三态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
+		Checksum   *Hex      `yaml:"checksum"` // 两态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
 		// 类型相关 4 字节字段(RFC 4443 §3):仅错误报文使用,echo 不用。
 		MTU     *uint32 `yaml:"mtu"`     // 仅 packet_too_big(type 2):下一跳 MTU
 		Pointer *uint32 `yaml:"pointer"` // 仅 parameter_problem(type 4):出错字节偏移

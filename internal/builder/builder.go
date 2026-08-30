@@ -54,21 +54,26 @@ func plannedByName(planned []scenario.PlannedPacket) map[string]scenario.Packet 
 
 func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 	serLayers := make([]gopacket.SerializableLayer, 0, len(stack))
-	// layerOpts 与 serLayers 一一对应:每层各自的 SerializeOptions。
-	// 默认 = defaultSerOpts;某层显式覆盖 checksum 时,拷贝一份并关掉其 ComputeChecksums,
-	// 让结构体上的 Checksum 值原样上 wire(三态语义:nil=自动计算,非 nil=原样落值)。
-	layerOpts := make([]gopacket.SerializeOptions, 0, len(stack))
-	// add 把一个序列化层及其 opts 配对追加。csum 非 nil 表示该层显式覆盖了 checksum,
-	// 关掉自动计算;传 nil 则用默认 opts(自动计算 + 修正长度)。
+	// layerOpts / lenFill 与 serLayers 一一对应:每层各自的 SerializeOptions 与长度覆盖标志。
+	// 默认 = defaultSerOpts(自动修正长度 + 计算 checksum);显式覆盖时拷贝一份按需关掉。
 	// 索引必须跟着 serLayers 走:ICMPv6 一个 scenario 层会 append 出 icmp/echo/reserved/payload
-	// 多项,每项都要配对 opts,故统一走 add,不在 switch 外零散 append。
-	add := func(l gopacket.SerializableLayer, csum *scenario.Hex) {
+	// 多项,每项都要配对,故统一走 add,不在 switch 外零散 append。
+	layerOpts := make([]gopacket.SerializeOptions, 0, len(stack))
+	// lenFill 记录每层哪些长度字段被显式覆盖(非 nil=原样落值,nil=未覆盖、反向循环按公式补值)。
+	// 覆盖与否靠 scenario 字段指针区分(两态:写即覆盖、不写即自动),不能对结构体做零值检测
+	// —— 显式 0 与未覆盖在结构体上都是 0。
+	lenFill := make([]lengthOverrideInfo, 0, len(stack))
+	add := func(l gopacket.SerializableLayer, csum *scenario.Hex, info lengthOverrideInfo) {
 		o := defaultSerOpts
 		if csum != nil {
 			o.ComputeChecksums = false
 		}
+		if info.any() {
+			o.FixLengths = false
+		}
 		serLayers = append(serLayers, l)
 		layerOpts = append(layerOpts, o)
+		lenFill = append(lenFill, info)
 	}
 	var netLayer gopacket.NetworkLayer // 最近的 IP 层,供传输层 checksum 伪首部使用
 
@@ -84,25 +89,25 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("eth: %w", err)
 			}
-			add(eth, nil)
+			add(eth, nil, lengthOverrideInfo{})
 		case *scenario.VLANFields:
-			add(buildVLAN(f, next), nil)
+			add(buildVLAN(f, next), nil, lengthOverrideInfo{})
 		case *scenario.IPv4Fields:
 			ip, err := buildIPv4(f, next)
 			if err != nil {
 				return nil, fmt.Errorf("ipv4: %w", err)
 			}
 			netLayer = ip
-			add(ip, f.Checksum)
+			add(ip, f.Checksum, lengthOverrideInfo{ipv4Length: f.Length, ipv4IHL: f.IHL})
 		case *scenario.IPv6Fields:
 			ip, err := buildIPv6(f, next)
 			if err != nil {
 				return nil, fmt.Errorf("ipv6: %w", err)
 			}
 			netLayer = ip
-			add(ip, nil)
+			add(ip, nil, lengthOverrideInfo{ipv6PayloadLength: f.PayloadLength})
 		case *scenario.GREFields:
-			add(buildGRE(next), nil)
+			add(buildGRE(next), nil, lengthOverrideInfo{})
 		case *scenario.TCPFields:
 			t, err := buildTCP(f)
 			if err != nil {
@@ -111,21 +116,21 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			if netLayer != nil {
 				_ = t.SetNetworkLayerForChecksum(netLayer)
 			}
-			add(t, f.Checksum)
+			add(t, f.Checksum, lengthOverrideInfo{tcpDataOffset: f.DataOffset})
 		case *scenario.UDPFields:
 			u := buildUDP(f)
 			if netLayer != nil {
 				_ = u.SetNetworkLayerForChecksum(netLayer)
 			}
-			add(u, f.Checksum)
+			add(u, f.Checksum, lengthOverrideInfo{udpLength: f.Length})
 		case *scenario.ICMPFields:
 			icmp, payload, err := buildICMP(ctx, f)
 			if err != nil {
 				return nil, fmt.Errorf("icmp: %w", err)
 			}
-			add(icmp, f.Checksum)
+			add(icmp, f.Checksum, lengthOverrideInfo{})
 			if len(payload) > 0 {
-				add(gopacket.Payload(payload), nil)
+				add(gopacket.Payload(payload), nil, lengthOverrideInfo{})
 			}
 		case *scenario.ICMPv6Fields:
 			icmp, echo, reserved, payload, err := buildICMPv6(ctx, f)
@@ -138,76 +143,76 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 					return nil, fmt.Errorf("icmpv6: %w", err)
 				}
 			}
-			add(icmp, f.Checksum)
+			add(icmp, f.Checksum, lengthOverrideInfo{})
 			if echo != nil {
-				add(echo, nil)
+				add(echo, nil, lengthOverrideInfo{})
 			}
 			// 错误报文(非 echo)的 4 字节类型相关字段,置于 ICMPv6 头与 quote 之间。
 			// 作为独立 Payload 层,gopacket 的 ICMPv6 checksum 会自动将其纳入计算。
 			if len(reserved) > 0 {
-				add(gopacket.Payload(reserved), nil)
+				add(gopacket.Payload(reserved), nil, lengthOverrideInfo{})
 			}
 			if len(payload) > 0 {
-				add(gopacket.Payload(payload), nil)
+				add(gopacket.Payload(payload), nil, lengthOverrideInfo{})
 			}
 		case *scenario.PayloadFields:
 			b, err := payloadBytes(f)
 			if err != nil {
 				return nil, fmt.Errorf("payload: %w", err)
 			}
-			add(gopacket.Payload(b), nil)
+			add(gopacket.Payload(b), nil, lengthOverrideInfo{})
 		case scenario.PayloadHex:
 			b, err := scenario.ParsePayloadHex(string(f))
 			if err != nil {
 				return nil, fmt.Errorf("payload_hex: %w", err)
 			}
-			add(gopacket.Payload(b), nil)
+			add(gopacket.Payload(b), nil, lengthOverrideInfo{})
 		case *scenario.DNSFields:
 			d, err := buildDNS(f)
 			if err != nil {
 				return nil, fmt.Errorf("dns: %w", err)
 			}
-			add(d, nil)
+			add(d, nil, lengthOverrideInfo{})
 		case *scenario.HTTPReqFields:
 			b, err := serializeHTTPReq(f)
 			if err != nil {
 				return nil, fmt.Errorf("http_request: %w", err)
 			}
-			add(gopacket.Payload(b), nil)
+			add(gopacket.Payload(b), nil, lengthOverrideInfo{})
 		case *scenario.HTTPRespFields:
 			b, err := serializeHTTPResp(f)
 			if err != nil {
 				return nil, fmt.Errorf("http_response: %w", err)
 			}
-			add(gopacket.Payload(b), nil)
+			add(gopacket.Payload(b), nil, lengthOverrideInfo{})
 		case *scenario.FTPRequestFields:
-			add(gopacket.Payload(serializeFTPReq(f)), nil)
+			add(gopacket.Payload(serializeFTPReq(f)), nil, lengthOverrideInfo{})
 		case *scenario.FTPResponseFields:
-			add(gopacket.Payload(serializeFTPResp(f)), nil)
+			add(gopacket.Payload(serializeFTPResp(f)), nil, lengthOverrideInfo{})
 		case *scenario.TelnetFields:
 			b, err := serializeTelnet(f)
 			if err != nil {
 				return nil, fmt.Errorf("telnet: %w", err)
 			}
-			add(gopacket.Payload(b), nil)
+			add(gopacket.Payload(b), nil, lengthOverrideInfo{})
 		case *scenario.SMTPRequestFields:
-			add(gopacket.Payload(serializeSMTPReq(f)), nil)
+			add(gopacket.Payload(serializeSMTPReq(f)), nil, lengthOverrideInfo{})
 		case *scenario.SMTPResponseFields:
-			add(gopacket.Payload(serializeSMTPResp(f)), nil)
+			add(gopacket.Payload(serializeSMTPResp(f)), nil, lengthOverrideInfo{})
 		case *scenario.POP3RequestFields:
-			add(gopacket.Payload(serializePOP3Req(f)), nil)
+			add(gopacket.Payload(serializePOP3Req(f)), nil, lengthOverrideInfo{})
 		case *scenario.POP3ResponseFields:
 			b, err := serializePOP3Resp(f)
 			if err != nil {
 				return nil, fmt.Errorf("pop3_response: %w", err)
 			}
-			add(gopacket.Payload(b), nil)
+			add(gopacket.Payload(b), nil, lengthOverrideInfo{})
 		case *scenario.EMLDataFields:
 			b, err := serializeEMLDataFramed(f)
 			if err != nil {
 				return nil, fmt.Errorf("eml_data: %w", err)
 			}
-			add(gopacket.Payload(b), nil)
+			add(gopacket.Payload(b), nil, lengthOverrideInfo{})
 		default:
 			return nil, fmt.Errorf("不支持的层类型 %q", l.Type)
 		}
@@ -220,6 +225,12 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 		return nil, fmt.Errorf("清空序列化缓冲区: %w", err)
 	}
 	for i := len(serLayers) - 1; i >= 0; i-- {
+		// SerializeTo 之前补值:此时 buf.Bytes() 是该层 payload(尚未 prepend 本层头),
+		// 与 gopacket 内部取值时机一致。只对有覆盖的层(info.any())补未覆盖字段为公式值;
+		// 覆盖字段(含显式 0)原样落值,不碰。
+		if err := fillLengths(serLayers[i], lenFill[i], buf); err != nil {
+			return nil, fmt.Errorf("序列化层 %d(%s): %w", i, serLayers[i].LayerType(), err)
+		}
 		if err := serLayers[i].SerializeTo(buf, layerOpts[i]); err != nil {
 			// 索引 i 是 serLayers 的位置(由外到内),与 stack 非一一对应
 			// (ICMPv6 一个 scenario 层会展开多项),故用 gopacket LayerType 定位。

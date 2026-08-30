@@ -146,6 +146,9 @@ func validateFlow(f FlowSpec) error {
 		if hasChecksumOverride(l) {
 			return fmt.Errorf("stack.%s: 暂不支持 checksum 覆盖(flow 展开器按连接状态重建各层字段);请用 standalone packet 构造该畸形包", l.Type)
 		}
+		if hasLengthOverride(l) {
+			return fmt.Errorf("stack.%s: 暂不支持 length 覆盖(flow 展开器按连接状态重建各层字段);请用 standalone packet 构造该畸形包", l.Type)
+		}
 		if l.Type != "tcp_session" {
 			if err := validateLayer(l); err != nil {
 				return fmt.Errorf("stack.%s: %w", l.Type, err)
@@ -396,6 +399,7 @@ func indexOfInt(slice []int, v int) int {
 }
 
 // hasChecksumOverride 与 validateChecksumRange 见 checksum.go。
+// hasLengthOverride 与 validateLengthRange 见 length.go。
 
 func validateLayer(l Layer) error {
 	switch f := l.Fields.(type) {
@@ -410,9 +414,18 @@ func validateLayer(l Layer) error {
 		if err := validateChecksumRange(f.Checksum); err != nil {
 			return err
 		}
+		if err := validateLengthRange(f.Length, 16, "ipv4.total_length"); err != nil {
+			return err
+		}
+		if err := validateLengthRange(f.IHL, 4, "ipv4.header_length"); err != nil {
+			return err
+		}
 	case *IPv6Fields:
 		if f.Src == "" || f.Dst == "" {
 			return fmt.Errorf("需要 src 与 dst")
+		}
+		if err := validateLengthRange(f.PayloadLength, 16, "ipv6.payload_length"); err != nil {
+			return err
 		}
 	case *TCPFields:
 		if f.SPort == 0 || f.DPort == 0 {
@@ -421,11 +434,17 @@ func validateLayer(l Layer) error {
 		if err := validateChecksumRange(f.Checksum); err != nil {
 			return err
 		}
+		if err := validateLengthRange(f.DataOffset, 4, "tcp.header_length"); err != nil {
+			return err
+		}
 	case *UDPFields:
 		if f.SPort == 0 || f.DPort == 0 {
 			return fmt.Errorf("需要 sport 与 dport")
 		}
 		if err := validateChecksumRange(f.Checksum); err != nil {
+			return err
+		}
+		if err := validateLengthRange(f.Length, 16, "udp.total_length"); err != nil {
 			return err
 		}
 	case *ICMPFields:
