@@ -1,6 +1,6 @@
 # examples/tcp/bad_checksum.yaml
 #
-# TCP checksum 显式覆盖(三态语义):
+# TCP checksum 显式覆盖(两态语义):
 # ① 不写 checksum → 自动计算(伪首部绑就近 IPv4);
 # ② 写 checksum: 0xdead → 关闭自动计算,值原样上 wire,构造错误校验和流量。
 link_type: ethernet

@@ -24,7 +24,7 @@ echo request/reply 及错误报文。`type`/`code` 可用名称或数字。
 | `gateway` | IPv4 | 否 | 仅 `redirect`(type 5):网关地址(bytes 4-7) |
 | `pointer` | uint8 | 否 | 仅 `parameter_problem`(type 12):出错字节偏移(byte 4) |
 | `mtu` | uint16 | 否 | 仅 `dest_unreachable` code 4:下一跳 MTU(RFC 1191) |
-| `checksum` | `Hex` | 否 | 三态覆盖:不写=自动计算;写值=关闭自动计算,原样上 wire;`0` 也照单全收 |
+| `checksum` | `Hex` | 否 | 两态覆盖:不写=自动计算;写值=关闭自动计算,原样上 wire;`0` 也照单全收 |
 
 ## 已知 type 名称
 

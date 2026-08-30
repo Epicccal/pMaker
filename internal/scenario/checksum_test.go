@@ -7,7 +7,7 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-// 本文件覆盖 checksum 三态覆盖的 scenario 层校验:
+// 本文件覆盖 checksum 两态覆盖的 scenario 层校验:
 //   - UDPFields.Checksum 字段可解析(UDP 此前连字段都没有)
 //   - validateLayer 对 5 层(ipv4/tcp/udp/icmp/icmpv6)做 16 位值域校验,
 //     超出 0xFFFF 报错(否则 Hex(uint32) 静默截断,等于没修)

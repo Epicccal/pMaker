@@ -1,6 +1,6 @@
 # examples/udp/bad_checksum.yaml
 #
-# UDP checksum 显式覆盖(三态语义):
+# UDP checksum 显式覆盖(两态语义):
 # ① 不写 checksum → 自动计算(IPv4 下 UDP checksum 非零为合规默认);
 # ② 写 checksum: 0xdead → 关闭自动计算,值原样上 wire,构造错误校验和流量;
 # ③ 写 checksum: 0 → RFC 768 下 IPv4 里表示「不校验」,合法且有意义的构造。
