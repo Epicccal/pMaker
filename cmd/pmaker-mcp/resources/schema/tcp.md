@@ -16,8 +16,9 @@ standalone packet 与 flow 均用。flow 中由 `tcp_session` + `messages` 驱�
 | `client_isn` | uint32 | 否 | flow 用:客户端初始 seq |
 | `server_isn` | uint32 | 否 | flow 用:服务端初始 seq |
 | `mss` | uint16 | 否 | SYN 通告的 MSS option(flow 展开器仅在 SYN 上设) |
-| `checksum` | `Hex` | 否 | 三态覆盖:不写=自动计算(伪首部绑就近 IP);写值=关闭自动计算,值原样上 wire;`0` 也照单全收 |
+| `checksum` | `Hex` | 否 | 两态覆盖:不写=自动计算(伪首部绑就近 IP);写值=关闭自动计算,值原样上 wire |
+| `header_length` | `Hex` | 否 | 两态覆盖(数据偏移/DataOffset,4 位 5-15):不写=自动计算;写值=原样上 wire(构造畸形偏移);`0xF` 为上限 |
 
 ## checksum 伪首部
 
-TCP checksum 自动绑定**就近 IP 层**(多层 IP 时绑内层)。除非故意要错 checksum,无需手算。显式写 `checksum` 即关闭自动计算、原样落值(三态);flow 中暂不支持,请用 standalone packet。
+TCP checksum 自动绑定**就近 IP 层**(多层 IP 时绑内层)。除非故意要错 checksum,无需手算。显式写 `checksum`/`header_length` 即关闭对应自动计算、原样落值(两态);flow 中暂不支持,请用 standalone packet。

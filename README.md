@@ -37,7 +37,7 @@
 | **声明式 YAML** | 以代码形式描述包/流，可审阅、可 diff |
 | **任意层栈嵌套** | QinQ、GRE 隧道、递归封装——无固定 L2/L3/L4 槽位 |
 | **有状态 TCP 流** | 自动握手、seq/ack 推导、MSS 分段、FIN/RST 挥手 |
-| **畸形与逃逸** | 逐层 `fix_lengths`/`checksum` 覆盖、`payload_hex` 原始字节注入、断链 next-proto |
+| **畸形与逃逸** | 逐层 `checksum`/`length` 覆盖、`payload_hex` 原始字节注入、断链 next-proto |
 | **确定性输出** | 同一 scenario + seed → 逐字节相同的 pcap  |
 | **纯 Go 实现** | 通过 `pcapgo` 生成静态跨平台二进制 |
 | **MCP server** | 将生成/校验暴露为 Model Context Protocol 工具，供 LLM agent 调用 |
