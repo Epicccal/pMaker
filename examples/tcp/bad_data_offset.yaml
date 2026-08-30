@@ -1,0 +1,19 @@
+# examples/tcp/bad_data_offset.yaml
+#
+# TCP 数据偏移(header_length)显式覆盖(两态语义):
+# ① 不写 header_length → 自动计算(无 option=5,有 MSS option=6);
+# ② 写 header_length: 15 → 关闭自动计算,值原样上 wire(构造超大偏移畸形包)。
+link_type: ethernet
+seed: 42
+packets:
+  # ① 规范包:header_length 自动计算(带 MSS option → 6)。
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - tcp:  { sport: 40000, dport: 80, flags: [SYN], seq: 1000, mss: 1460 }
+
+  # ② 畸形包:header_length 原样落 15(0xF,4 位字段上限)。
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - tcp:  { sport: 40000, dport: 80, flags: [SYN], seq: 1000, mss: 1460, header_length: 15 }

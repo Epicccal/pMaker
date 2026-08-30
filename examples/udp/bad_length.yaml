@@ -1,0 +1,23 @@
+# examples/udp/bad_length.yaml
+#
+# UDP 长度(total_length)显式覆盖(两态语义):
+# ① 不写 total_length → 自动计算(头 8 + payload 字节数);
+# ② 写 total_length: 1234 → 关闭自动计算,值原样上 wire(构造撒谎长度流量)。
+link_type: ethernet
+seed: 42
+packets:
+  # ① 规范包:total_length 自动计算(8 + 5 = 13)。
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - udp:  { sport: 40000, dport: 53 }
+      - payload:
+          payload: "query"
+
+  # ② 畸形包:total_length 原样落 1234。
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - udp:  { sport: 40000, dport: 53, total_length: 1234 }
+      - payload:
+          payload: "query"

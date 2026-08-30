@@ -1,0 +1,23 @@
+# examples/ipv6/bad_length.yaml
+#
+# IPv6 载荷长度(payload_length)显式覆盖(两态语义):
+# ① 不写 payload_length → 自动计算(载荷字节数,不含 40B ipv6 头);
+# ② 写 payload_length: 9999 → 关闭该层自动长度修正,值原样上 wire(构造撒谎载荷长度流量)。
+link_type: ethernet
+seed: 42
+packets:
+  # ① 规范包:payload_length 自动计算(8 udp 头 + 5 payload = 13,不含 40B ipv6 头)。
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::20", hop_limit: 64 }
+      - udp:  { sport: 40000, dport: 53 }
+      - payload:
+          payload: "probe"
+
+  # ② 畸形包:payload_length 原样落 9999。
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::10", dst: "2001:db8::20", hop_limit: 64, payload_length: 9999 }
+      - udp:  { sport: 40000, dport: 53 }
+      - payload:
+          payload: "probe"
