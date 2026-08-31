@@ -21,8 +21,8 @@ type (
 		Protocol *string `yaml:"protocol"` // 覆盖:tcp/udp/gre/ipv4
 		// 畸形覆盖。checksum/length 两态:nil=自动计算,非 nil=原样落值(关闭自动计算/修正)。
 		Checksum *Hex `yaml:"checksum"`
-		Length   *Hex `yaml:"total_length"`  // 总长度(含头);写即覆盖原样上 wire,不写=自动计算
-		IHL      *Hex `yaml:"header_length"` // 头部长度(IHL,4 位,5-15);写即覆盖,不写=自动计算
+		Length   *Hex `yaml:"total_length"`  // 总长度(16 位,上限 0xFFFF);写即覆盖原样上 wire,不写=自动计算
+		IHL      *Hex `yaml:"header_length"` // 头部长度(IHL,4 位,可写 0-15,上限 0xF);写即覆盖,不写=自动计算。5-15 为规范范围,0-4 合法畸形
 	}
 	IPv6Fields struct {
 		Src           string  `yaml:"src"`
@@ -31,7 +31,7 @@ type (
 		TrafficClass  *uint8  `yaml:"traffic_class"`
 		FlowLabel     *uint32 `yaml:"flow_label"`
 		NextHeader    *string `yaml:"next_header"`    // 覆盖:tcp/udp/icmpv6/ipv4/ipv6(制造断链)
-		PayloadLength *Hex    `yaml:"payload_length"` // 载荷长度(不含 40B 头);写即覆盖,不写=自动计算
+		PayloadLength *Hex    `yaml:"payload_length"` // 载荷长度(16 位,上限 0xFFFF,不含 40B 头);写即覆盖,不写=自动计算
 	}
 	GREFields struct{}
 	TCPFields struct {
@@ -44,7 +44,7 @@ type (
 		ServerISN  uint32   `yaml:"server_isn"`
 		MSS        *uint16  `yaml:"mss"`           // SYN 通告 option(展开器仅在 SYN 上设)
 		Checksum   *Hex     `yaml:"checksum"`      // 两态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
-		DataOffset *Hex     `yaml:"header_length"` // 数据偏移(4 位,5-15,以 4 字节为单位);写即覆盖,不写=自动计算
+		DataOffset *Hex     `yaml:"header_length"` // 数据偏移(4 位,可写 0-15,上限 0xF,以 4 字节为单位);写即覆盖,不写=自动计算。5-15 为规范范围,0-4 合法畸形
 	}
 	TCPSessionFields struct {
 		Open  string `yaml:"open"`  // handshake(默认)| none
@@ -54,7 +54,7 @@ type (
 		SPort    uint16 `yaml:"sport"`
 		DPort    uint16 `yaml:"dport"`
 		Checksum *Hex   `yaml:"checksum"`     // 两态:nil=自动计算(伪首部照常绑定),非 nil=原样落值
-		Length   *Hex   `yaml:"total_length"` // udp 总长度(头 8 + payload);写即覆盖,不写=自动计算
+		Length   *Hex   `yaml:"total_length"` // udp 总长度(16 位,上限 0xFFFF,头 8 + payload);写即覆盖,不写=自动计算
 	}
 	ICMPFields struct {
 		Type       yaml.Node `yaml:"type"`

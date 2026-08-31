@@ -91,7 +91,7 @@ flows:
 ## 通用约定
 
 - **next-proto / EtherType 自动串接**:按层栈自动推导,可逐层显式覆盖(`type`/`tpid`/`ethertype`)制造解析断链。
-- **checksum 与 length 两态覆盖**:TCP/UDP 伪首部自动绑定就近 IP 层(多层 IP 绑内层)。未写则自动计算/修正,显式写值即关闭对应自动计算、值原样上 wire(构造错误 checksum / 撒谎长度)。checksum 覆盖 ipv4/tcp/udp/icmp/icmpv6;length 覆盖 ipv4(`total_length`/`header_length`)、ipv6(`payload_length`)、tcp(`header_length`)、udp(`total_length`);4 位字段(`header_length`)上限 0xF。icmp/icmpv6/vlan/gre/eth 不开放长度字段(gopacket 不读 `FixLengths`)。flow 中暂不支持,请用 standalone packet。
+- **checksum 与 length 两态覆盖**:TCP/UDP 伪首部自动绑定就近 IP 层(多层 IP 绑内层)。未写则自动计算/修正,显式写值即关闭对应自动计算、值原样上 wire(构造错误 checksum / 撒谎长度)。checksum 覆盖 ipv4/tcp/udp/icmp/icmpv6;length 覆盖 ipv4(`total_length`/`header_length`)、ipv6(`payload_length`)、tcp(`header_length`)、udp(`total_length`);16 位字段上限 `0xFFFF`,4 位字段(`header_length`)可写入 0-15、上限 `0xF`(其中 5-15 仅是规范头长度范围,0-4 为合法畸形值)。icmp/icmpv6/vlan/gre/eth 不开放长度字段(gopacket 不读 `FixLengths`)。flow 中暂不支持,请用 standalone packet。
 - **`@file(<path>)`**:任意 string 字段可写文件占位符,解析时(`Parse`)替换为文件原始字节(支持二进制)。CLI 的 `Load` 即「读文件 → `Parse`」,相对路径相对 scenario 文件所在目录;MCP server 直接 `Parse`,相对路径相对 `workdir`。`@@` 转义为字面 `@`。
 - **`Hex` 字段**(ethertype/tpid/type/checksum/length):接受十进制或 `0x88a8` 形式。
 - **确定性**:同 scenario + seed → 逐字节相同 pcap;全程不用 `time.Now()`。

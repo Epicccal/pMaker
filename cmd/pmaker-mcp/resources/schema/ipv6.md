@@ -12,7 +12,7 @@
 | `traffic_class` | uint8 | 否 | 流量类别 |
 | `flow_label` | uint32 | 否 | 流标签 |
 | `next_header` | string | 否 | 显式覆盖下一层协议(`tcp`/`udp`/`icmpv6`/`ipv4`/`ipv6`);制造断链用 |
-| `payload_length` | `Hex` | 否 | 两态覆盖:不写=自动计算(载荷字节数,不含 40B 头);写值=原样上 wire(构造撒谎长度) |
+| `payload_length` | `Hex` | 否 | 两态覆盖(16 位,上限 `0xFFFF`):不写=自动计算(载荷字节数,不含 40B 头);写值=原样上 wire(构造撒谎长度),`0x10000+` 会在校验阶段被拒 |
 
 ## next-proto 串接
 
