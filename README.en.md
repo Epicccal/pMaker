@@ -38,7 +38,7 @@ and regression-friendly.
 | **Declarative YAML** | Describe packets/flows as code; reviewable & diff-able |
 | **Arbitrary layer nesting** | QinQ, GRE tunnels, recursive encapsulation — no fixed L2/L3/L4 slots |
 | **Stateful TCP flows** | Auto handshake, seq/ack derivation, MSS segmentation, FIN/RST teardown |
-| **Malformed & evasion** | Per-field `fix_lengths`/`checksum` overrides, `payload_hex` raw injection, broken next-proto chains |
+| **Malformed & evasion** | Per-field `checksum`/`length` overrides, `payload_hex` raw injection, broken next-proto chains |
 | **Deterministic output** | Same scenario + seed → byte-identical pcap |
 | **Pure Go** | Static cross-platform binary via `pcapgo` |
 | **MCP server** | Expose generate/validate as Model Context Protocol tools for LLM agents |

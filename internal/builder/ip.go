@@ -2,7 +2,6 @@ package builder
 
 import (
 	"fmt"
-	"log/slog"
 	"net"
 
 	"github.com/gopacket/gopacket/layers"
@@ -55,9 +54,6 @@ func buildIPv4(f *scenario.IPv4Fields, next string) (*layers.IPv4, error) {
 	}
 	if f.Checksum != nil {
 		ip.Checksum = uint16(*f.Checksum)
-	}
-	if f.FixLengths != nil {
-		slog.Warn("最小版忽略 ipv4 fix_lengths 畸形开关,序列化为合规包", "src", f.Src, "dst", f.Dst)
 	}
 	return ip, nil
 }

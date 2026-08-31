@@ -23,7 +23,7 @@ echo 及错误报文。校验和依赖 IPv6 伪首部(builder 自动绑定)。
 | `quote_from` | string | 否 | 引用本 scenario 里另一个具名 packet 的 stack 作 quote |
 | `mtu` | uint32 | 否 | 仅 `packet_too_big`(type 2):下一跳 MTU |
 | `pointer` | uint32 | 否 | 仅 `parameter_problem`(type 4):出错字节偏移 |
-| `checksum` | `Hex` | 否 | 三态覆盖:不写=自动计算(伪首部绑就近 IPv6);写值=关闭自动计算,原样上 wire;`0` 也照单全收 |
+| `checksum` | `Hex` | 否 | 两态覆盖:不写=自动计算(伪首部绑就近 IPv6);写值=关闭自动计算,原样上 wire;`0` 也照单全收 |
 
 ## 已知 type 名称
 

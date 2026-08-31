@@ -31,7 +31,7 @@ packets:
   - name: ip-probe-parameter-problem
     stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
-      - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, protocol: udp, checksum: 0xdead, fix_lengths: false }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, protocol: udp, checksum: 0xdead }
       - udp:  { sport: 40000, dport: 65001 }
       - payload_hex: 0xdeadbeef
 
@@ -44,6 +44,6 @@ packets:
           code: 0
           quote:
             stack:
-              - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, protocol: udp, checksum: 0xdead, fix_lengths: false }
+              - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, protocol: udp, checksum: 0xdead }
               - udp: { sport: 40000, dport: 65001 }
               - payload_hex: 0xdeadbeef

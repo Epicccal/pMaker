@@ -8,7 +8,7 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-// 本文件覆盖 tcp/udp checksum 三态覆盖:
+// 本文件覆盖 tcp/udp checksum 两态覆盖:
 //   - tcp:写了 → 回读等于指定值;没写 → 自动计算非零
 //   - udp:写了非零 → 回读等于指定值;写了 0 → 回读等于 0(不被 0xffff 翻转)且 length 正确
 //

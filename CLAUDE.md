@@ -261,7 +261,11 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 **未实现 / 简化**:
 
 - flow 的 overlap / 重传 / IP 分片未做(乱序与段间 RTT 已由 `message.offset_time` / `segment.interval` 覆盖)。
-- `checksum` 已实现三态覆盖(ipv4/tcp/udp/icmp/icmpv6):不写=自动计算,显式写值=关闭自动计算、值原样上 wire;`fix_lengths` 仍解析但忽略(独立一轮做)。原始字节兜底(`payload_hex`)已可用。
+- `checksum` 与 `length` 均为两态覆盖(nil=自动计算/修正,非 nil=原样落值,关闭自动计算/修正)。
+  checksum 覆盖 ipv4/tcp/udp/icmp/icmpv6;length 覆盖 ipv4(`total_length`/`header_length`)、
+  ipv6(`payload_length`)、tcp(`header_length`)、udp(`total_length`)。icmp/icmpv6/vlan/gre/eth
+  不开放长度字段 —— gopacket 这几层的 `SerializeTo` 不读 `FixLengths`,加了也是空接线。
+  原始字节兜底(`payload_hex`)已可用。
 - HTTP/EML 头部与 SMTP 参数保留 YAML 声明顺序输出、支持重复键(`scenario.HeaderMap` 有序键值集合,见 `internal/scenario/header_map.go`)。
 
 > **源码组织**:builder 与 scenario 包已按职责拆分。
@@ -553,7 +557,7 @@ golangci-lint run # 若已安装
   如 `+1.5s`/`+500ms`)可选;跨流依赖用 `flow.start_after` / `message.start_after`。
   **完整时间语义(各 offset 参照点、start_after 规则)见上文「时间编排与汇流」,此处不重复**。
   按 `Time` 稳定排序后写盘;`base_time` 只能是绝对时刻(由 `AbsTime` 类型保证)。
-- 畸形用例通过**显式开关**表达意图:`fix_lengths: false` / `checksum: 0xdead` / 覆盖 `type` 断链 / `payload_hex: "0x…"`.
+- 畸形用例通过**显式值字段**表达意图:`total_length: 9999` / `header_length: 0` / `checksum: 0xdead` / 覆盖 `type` 断链 / `payload_hex: "0x…"`.
 
 示意(最终 schema 以 `internal/scenario` 的类型定义为准):
 
@@ -582,7 +586,7 @@ packets:
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb", ethertype: 0x8100 }
       - vlan: { vid: 100, type: 0xffff }   # 显式覆盖 next-proto,制造解析断链
-      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", checksum: 0xdead, fix_lengths: false }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", checksum: 0xdead, total_length: 9999 }
       - payload_hex: 0xdeadbeef                # gopacket 无法表达时直接落原始字节
 ```
 

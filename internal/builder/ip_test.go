@@ -8,7 +8,7 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-// 本文件覆盖 ipv4 checksum 三态覆盖:写了 → 回读等于指定值;没写 → 自动计算非零且正确。
+// 本文件覆盖 ipv4 checksum 两态覆盖:写了 → 回读等于指定值;没写 → 自动计算非零且正确。
 
 // hexPtr 取 scenario.Hex 指针,供 *Hex 字段构造。
 func hexPtr(v scenario.Hex) *scenario.Hex { return &v }
