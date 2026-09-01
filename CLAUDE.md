@@ -170,13 +170,13 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   `+OK`/`-ERR`/`+`(大小写不敏感;`+` 是 RFC 1734/4954 SASL 续行挑战,单字符 `+` 而非 `+OK`);
   未列入的命令、非标状态指示符报错,引导改用 `payload`/`payload_hex`
   (与全项目「非标值走原始字节兜底」一致)。命令/状态原样输出(不强制大小写),保留 `user`/`+ok` 等大小写
-  构造能力(RFC 1939 §3 命令大小写不敏感,是合规测试点)。args 按 `pop3ArgsRule` 校验有/无
+  构造能力(RFC 1939 §3 命令大小写不敏感,是合规测试点)。args 按 `pop3ArgsPolicy` 校验有/无
   (required/forbidden/optional):必带 USER/PASS/APOP/RETR/DELE/TOP/AUTH,禁带 STAT/NOOP/RSET/QUIT/CAPA/STLS,
   可选 LIST/UIDL(无参=多行,有参=msg# 单行)。
 - **多行响应复用 `eml_data` 子结构**:RETR/TOP 返回 RFC 5322 邮件内容,直接嵌入 `EMLDataFields` 作 `eml`
   字段(非独立层),由 POP3 接入层(`serializePOP3Resp` 的 eml 分支)取 `serializeEMLData` 纯内容后
   强制 dot-stuffing + `<CRLF>.<CRLF>` 终止符(与 SMTP DATA 同一成帧规则,由各自接入层强制)。
-  `lines` 多行(LIST/UIDL/CAPA)逐行 dot-stuff + 追加终止符(复用 `dotStuff`,接入层职责)。
+  `lines` 多行(LIST/UIDL/CAPA)逐行 dot-stuff + 追加终止符(复用 `dotframe.ApplyDotStuffing`,接入层职责)。
   `status` 行本身不参与 dot-stuff(只有 status 行之后的多行正文才 dot-stuff,与 POP3 语义一致)。
   CAPA 响应用 `lines`(能力标签不区分大小写,如 `SASL CRAM-MD5 KERBEROS_V4`、`STLS`,RFC 2449)。
 - **eml 子结构校验委托**:`eml` 非空时委托 `validateEMLDataFields` 校验(模式互斥/raw_hex 等),无需在
@@ -203,7 +203,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   = 头注入(畸形);重复头/有序头(RFC 5322 §3.6 Received)结构化模式已支持(`HeaderMap` 保序、
   允许重复 key),无需走 `raw`。
   `body` 支持 `@file(path)` 注入;行结束符结构化模式自动归一化(裸 `\n` → `\r\n`,抹平 YAML `|` 块标量等常用写法带入的裸 `\n`),raw 模式不归一化(保留精确字节)。
-- 成帧助手 `builder.ApplyDotStuffing` / `AppendDotTerminator`(导出,供接入层调用);
+- 成帧助手 `dotframe.ApplyDotStuffing` / `AppendDotTerminator`(`internal/util/dotframe`,供接入层调用);
   序列化纯函数 `builder.serializeEMLData`(协议无关,只产内容,不放在 `smtp.go`);
   校验 `scenario.validateEMLDataFields`(模式互斥、raw/raw_hex 互斥、空内容);
   接入 `PayloadBytes`/`serializeStack`/`validateLayer`/flow message 白名单/`summaryLayerName`。
@@ -249,7 +249,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - **确定性压缩**:gzip/deflate/deflate_raw 走 `github.com/klauspost/compress` 的 `flate`/`gzip`/`zlib`(API 级 drop-in 替代标准库,输出字节与标准库不同但同库内确定性),级别 `flate.BestSpeed`、MTIME 归零;`br` 级别 `brotli.BestSpeed`(quality=0);`zstd` 走 `github.com/klauspost/compress/zstd`,包级缓存编码器 + `WithEncoderLevel(SpeedFastest)` + `WithEncoderConcurrency(1)` + `EncodeAll`(单 goroutine、消除调度不确定,README 保证同代码版本同输入同输出);`compress`(UNIX LZW/.Z)纯 Go 实现(`internal/util/compress/lzw.go`,klauspost `lzw` 只支持 GIF/PDF 风味不支持 .Z 故自实现),3 字节头 `[0x1F 0x9D 0x90]`(maxbits=16|块模式),LSB-first 连续位打包、码宽在 `freeEnt > maxcode+1` 时升档、表满(65536)冻结不发清除码(与 gunzip 的 uncompress 兼容)。
   均不用 `time.Now()`(逐字节可复现)。chunked 分帧:块长十六进制、终止块 `0\r\n\r\n`、空 body 仅终止块;`chunked.size` 0/缺省=整段一块、>0=切分(<0 硬错,上限 1 MiB)。
 - **一致性告警**(软错,`scenario/http_consistency.go`,与 FTP 端口告警同一套 `Warnings`):CL+TE 冲突、TE/CE 头与列表不符或缺失、`chunked` 不在末位、多个 `chunked`;1xx/204 带 body、304 在 `auto_content_length: true` 时出 Warning(保留畸形构造能力)。HEAD 与 CONNECT 响应均不做特殊处理(响应层无请求方法上下文)。
-- 序列化纯函数 `builder.applyContentCodings` / `applyTransferCodings` / `chunkedFrame` / `applyAutoContentLength`(`builder/http_coding.go`);
+- 序列化纯函数 `builder.applyContentCodings` / `applyTransferCodings` / `applyAutoContentLength`(`builder/http_coding.go`)+ `chunked.Frame`(`internal/util/chunked`);
   校验 `scenario.validateHTTPCodings`(`http_validate.go`);管线入口 `serializeHTTPReq`/`Resp` 的 `httpPayload`(`builder/http.go`)。compress LZW 编解码原语 `compress.EncodeLZW` / `compress.DecodeLZW`(`internal/util/compress/lzw.go`,`EncodeLZW` 被 `compressCoding` 接线至 CE/TE fold;`DecodeLZW` 供 builder/golden 测试做 round-trip 验证)。
 
 **已实现 flow**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
