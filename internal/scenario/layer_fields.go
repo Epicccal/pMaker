@@ -238,7 +238,7 @@ type (
 	// lines:多行普通行列表(LIST/UIDL 扫描列表、CAPA 能力列表),逐行 dot-stuff +
 	//   追加 <CRLF>.<CRLF> 终止符(与 eml_data 同一 dot-stuff 规则)。
 	// eml:多行 RFC 5322 邮件内容(RETR/TOP 返回的正文),复用 EMLDataFields 子结构
-	//   (builder.serializeEMLData 只产纯 RFC 5322 内容、不含成帧;dot-stuff + 终止符
+	//   (builder.SerializeEMLData 只产纯 RFC 5322 内容、不含成帧;dot-stuff + 终止符
 	//   由 POP3 接入层 serializePOP3Resp 在其返回后强制追加,与 lines 分支同一职责)。
 	//   与 lines 互斥。
 	POP3ResponseFields struct {
@@ -271,8 +271,8 @@ type (
 	// Received 链按序排列)与有序头。headers 值裸透传不转义,值含
 	// \r\n + 空白可实现 RFC 5322 §2.2.3 folding(合规),值含 \r\n + 非空白为头注入(畸形)。
 	// body 支持 @file(path) 注入外部文件内容(file_placeholder.go 反射遍历自动覆盖)。
-	// body 行结束符:结构化模式自动把裸 \n 归一化为 \r\n(builder.normalizeCRLF,
-	// 抹平 YAML `|` 块标量等常用写法带入的裸 \n);raw 模式不归一化(保留精确字节,
+	// body 行结束符:结构化模式自动把裸 \n 归一化为 \r\n(util/crlf.NormalizeCRLF,
+	// builder 与 scenario 的 IMAP literal 一致性告警共用同一份原语);raw 模式不归一化(保留精确字节,
 	// 构造非标换行畸形)。
 	EMLDataFields struct {
 		Headers   HeaderMap      `yaml:"headers"`   // 结构化模式：邮件头（RFC 5322），保留声明顺序、支持重复头

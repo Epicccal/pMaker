@@ -9,7 +9,7 @@ import (
 	"github.com/Epicccal/pMaker/internal/writer"
 )
 
-// 本文件覆盖 eml_data 应用层序列化。eml_data 是协议无关的**内容层**：serializeEMLData
+// 本文件覆盖 eml_data 应用层序列化。eml_data 是协议无关的**内容层**：SerializeEMLData
 // 只产 RFC 5322 内容字节（headers+空行+body 或 raw），成帧（dot-stuffing + <CRLF>.<CRLF>
 // 终止符）由接入层强制。eml_data standalone 层 = SMTP DATA 正文，经 PayloadBytes /
 // serializeStack 序列化时接入层强制成帧（dotframe.ApplyDotStuffing + dotframe.AppendDotTerminator）。
