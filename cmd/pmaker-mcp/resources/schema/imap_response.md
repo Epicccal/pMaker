@@ -139,4 +139,4 @@ packets:
 
 ## 相关
 
-`pmaker://schema/imap_request`、`pmaker://schema/eml_data`、`pmaker://schema/tcp_session`、`pmaker://examples`
+`pmaker://schema/imap_request`、`pmaker://schema/eml_data`、`pmaker://schema/_why_imap_grouping`、`pmaker://schema/tcp_session`、`pmaker://examples`

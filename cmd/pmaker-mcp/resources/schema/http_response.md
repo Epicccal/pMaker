@@ -143,4 +143,4 @@ packets:
 
 ## 相关
 
-`pmaker://schema/http_request`、`pmaker://schema/multipart`、`pmaker://schema/tcp_session`、`pmaker://examples`
+`pmaker://schema/http_request`、`pmaker://schema/multipart`、`pmaker://schema/_why_http_framing`、`pmaker://schema/tcp_session`、`pmaker://examples`
