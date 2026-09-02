@@ -556,6 +556,14 @@ func validateLayer(l Layer) error {
 		if err := validatePOP3ResponseFields(f); err != nil {
 			return err
 		}
+	case *IMAPRequestFields:
+		if err := validateIMAPRequestFields(f); err != nil {
+			return err
+		}
+	case *IMAPResponseFields:
+		if err := validateIMAPResponseFields(f); err != nil {
+			return err
+		}
 	case *EMLDataFields:
 		if err := validateEMLDataFields(f); err != nil {
 			return err
