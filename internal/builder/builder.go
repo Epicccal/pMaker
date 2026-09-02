@@ -207,6 +207,18 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 				return nil, fmt.Errorf("pop3_response: %w", err)
 			}
 			add(gopacket.Payload(b), nil, lengthOverrideInfo{})
+		case *scenario.IMAPRequestFields:
+			b, err := serializeIMAPReq(f)
+			if err != nil {
+				return nil, fmt.Errorf("imap_request: %w", err)
+			}
+			add(gopacket.Payload(b), nil, lengthOverrideInfo{})
+		case *scenario.IMAPResponseFields:
+			b, err := serializeIMAPResp(f)
+			if err != nil {
+				return nil, fmt.Errorf("imap_response: %w", err)
+			}
+			add(gopacket.Payload(b), nil, lengthOverrideInfo{})
 		case *scenario.EMLDataFields:
 			b, err := serializeEMLDataFramed(f)
 			if err != nil {
