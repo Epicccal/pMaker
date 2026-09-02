@@ -1,74 +1,146 @@
 # http_response —— HTTP 响应(L7,走 tcp)
 
+一条响应 = 一个 `http_response` 层,序列化为 TCP payload `VERSION STATUS REASON\r\n` + headers + `\r\n` + body。
+字段与 `http_request` 对称(仅请求行↔状态行不同)。通则见 `pmaker://schema/_conventions`。
+
+## 骨架
+
 ```yaml
-- http_response:
-    version: HTTP/1.1
-    status: 200
-    reason: OK
-    auto_content_length: true
-    content_encoding: gzip
-    headers:
-      Server: nginx/1.24.0
-      Content-Type: text/html; charset=utf-8
-      Content-Encoding: gzip
-      Content-Length: 0            # 占位值,auto_content_length: true 会原位覆盖为压缩后长度
-    body: |
-      <html><body>Hello</body></html>
+link_type: ethernet
+flows:
+  - name: http-get
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request: { method: GET, url: /, headers: { Host: example.com } }
+      - from: dst
+        stack:
+          - http_response:
+              status: 200
+              reason: OK
+              auto_content_length: true
+              headers: { Content-Type: text/plain }
+              body: "hello\r\n"
 ```
+
+## 字段
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `version` | string | 否 | 缺省 HTTP/1.1;非空需符合 `HTTP/x.y` 文法(如 `HTTP/1.0`/`HTTP/2`/`HTTP/3.0`),否则报错并引导 `payload`/`payload_hex` |
-| `status` | int | 否 | 状态码;空值(0)走默认 200,非空需在 100-599 |
-| `reason` | string | 否 | 状态短语 |
-| `headers` | map[string]string | 否 | 头部,保留声明顺序、支持重复头。头是用户自由文本,**不驱动成帧/编码** |
-| `body` | string | 否 | 响应体;可用 `@file(...)` 注入;与 `multipart` 互斥 |
-| `multipart` | object | 否 | MIME multipart body(RFC 2046);`auto_content_length: true` 按其序列化后实际长度计算;与 `body` 互斥;详见 `pmaker://schema/multipart` |
-| `auto_content_length` | bool | 否 | `true`=回填/覆盖 `Content-Length` 头值(存在则原位覆盖、位置不变;缺则末尾追加);`false`(缺省)=不动 Header。算的是 `content_encoding` 之后、`transfer_encoding` 成帧之前的长度。**与 `transfer_encoding` 非空互斥(硬错)** |
-| `content_encoding` | 标量或序列 | 否 | 表示层编码,按列表顺序应用(RFC 9110 §8.4);标量 `gzip` 或序列 `[deflate, gzip]`(`[A,B]`=`B(A(body))`)。元素 ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`zstd`/`compress`(大小写不敏感、前后空白裁剪)。链式/异常编码栈走此字段。`br`(Brotli,RFC 7932)与 `zstd`(Zstandard,RFC 8478)均仅限 `content_encoding`,不能用于 `transfer_encoding`;`compress`(UNIX compress/LZW,RFC 9110 §8.4.1.1)历史遗留编码,CE 与 TE 均合法,现代客户端支持度低,适合 evasion 测试 |
-| `transfer_encoding` | 标量或序列 | 否 | 传输层编码/成帧,按列表顺序应用(RFC 9112 §6.1);标量 `chunked` 或序列 `[gzip, chunked]`。元素 ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress`(大小写不敏感、前后空白裁剪)。`chunked` 应位于末位(非末位/多个 `chunked` 触发 Warning 但照常出包);`br`/`zstd` 不是标准传输编码,不能用于 `transfer_encoding`。**与 `auto_content_length: true` 互斥(硬错)** |
-| `chunked` | object | 否 | chunked 成帧专属参数,仅 `transfer_encoding` 含 `chunked` 时有效;字段 `size`(int):0/缺省=整段一块,>0=按指定大小切分(块长自动十六进制),<0 硬错。始终追加终止块 `0\r\n\r\n` |
+| `version` | string | 否 | 缺省 `HTTP/1.1`;非空须 `HTTP/x.y` 文法,否则报错并引导 `payload`/`payload_hex` |
+| `status` | int | 否 | 空值(0)走默认 200;非空须 100-599,越界报错 |
+| `reason` | string | 否 | 状态短语,缺省 `http.StatusText(status)` |
+| `headers` | map | 否 | 头部,保留声明顺序、支持重复头(如多个 `Set-Cookie`);自由文本,**不驱动成帧/编码** |
+| `body` | string | 否 | 响应体;可用 `@file(...)` 注入;与 `multipart` 互斥;**不归一化换行** |
+| `multipart` | 子结构 | 否 | MIME multipart body(RFC 2046);与 `body` 互斥;详见 `pmaker://schema/multipart` |
+| `auto_content_length` | bool | 否 | `true`=回填/覆盖 `Content-Length` 头值;**与 `transfer_encoding` 非空互斥(硬错)** |
+| `content_encoding` | 标量 / 序列 | 否 | 表示层编码,按序应用(CE fold);元素 ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`zstd`/`compress` |
+| `transfer_encoding` | 标量 / 序列 | 否 | 传输层编码/成帧,按序应用(TE fold);元素 ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress` |
+| `chunked` | object | 否 | chunked 成帧参数,仅 TE 含 `chunked` 时有效;`size`:0=整段一块,>0=切分 |
 
-> headers 保留 YAML 声明顺序输出(不再按 key 字典序);支持重复头(如多个 `Set-Cookie`)。
+## 作用顺序
 
-### 作用顺序与语义
+与 `http_request` 完全相同:**body 生产 → `content_encoding`(CE fold)→ `transfer_encoding`(TE 成帧)**;
+`auto_content_length` 算 CE 之后、TE 成帧之前的长度。`[A,B]` = `B(A(body))`。
 
-HTTP body 经固定三步:**body 生产(字面/`multipart`)→ `content_encoding` → `transfer_encoding` 成帧**;
-`auto_content_length` 算的是 `content_encoding` 之后、成帧之前的长度。
-成帧不解析头、头不驱动成帧 —— 走私(CLA.TE / TE.CL)、evasion 靠「关掉外置开关 + 头里自由手写」构造,不需为每种畸形单独加 opt-out。
+## 组合规则
 
-- **自动 CL 的唯一入口是 `auto_content_length: true`**(原位覆盖占位 `Content-Length` 头值,或末尾追加)。头里的 `Content-Length` 值原样上 wire,工具不识别任何特殊写法。
-- **`auto_content_length` 的语义边界**:它算的是实际 wire body 长度,**不理解 HTTP 消息语义**。1xx/204/304 会出 Warning 但照常出包(保留畸形构造能力);**HEAD 与 CONNECT 响应均不做特殊处理**(响应层无请求方法上下文,一个 2xx 是否为 CONNECT 响应无从判定;需用户手写正确 CL 且按需写 body)。
-- **互斥规则依据的是 HTTP framing 语义,不是"是否可以计算出字节长度"**:任何非空 `transfer_encoding` 的存在都令发送方不得发 CL(RFC 9112 §6.1),包括 `transfer_encoding: gzip` 这类最终 wire body 定长的情形 —— TE 一旦存在,framing 语义由 TE 接管,CL 并存会令中间代理歧义。需同时有 TE 和 CL 时(走私等畸形),设 `auto_content_length: false` 并在 `headers` 手写 CL。
-- **`transfer_encoding` 列表顺序 = fold 应用顺序**;`chunked` 应位于末位(RFC 9112),非末位或多个 `chunked` 触发 Warning,但工具仍按列表顺序机械 fold 产出字节,适用于 evasion 测试。
+- `version` 非空须 `HTTP/x.y` 文法;`status` 非空须 100-599(越界如 `99` / `600` 报错)。
+- `auto_content_length: true` 且 `transfer_encoding` 非空 → **硬错**(framing 互斥)。
+- `auto_content_length: true` 且 ≥2 个 `Content-Length` 头 → **硬错**(覆盖目标歧义)。
+- `body` 与 `multipart` 互斥(同设硬错)。
+- `chunked` 子结构仅 TE 含 `chunked` 时有效;`chunked.size` 不可为负、不可超 1 MiB。
+- `content_encoding` 含 `chunked` → 硬错;`transfer_encoding` 含 `br`/`zstd` → 硬错。
+- `version` / `reason` **可含 CR/LF**(响应拆分是受支持的畸形构造,不拦截)。
 
-### 内容协商(编写场景时的约定,非工具行为)
+## 一致性告警(软告警,非硬错)
 
-RFC 9110 §12.5.3:服务器只应在客户端 `Accept-Encoding` 声明接受某内容编码时,才用该编码回响应。
-工具**不做跨层推断**(响应层拿不到请求层的任何信息,`auto_content_length` 那条"响应层无请求方法上下文"
-是同一个限制的另一面),因此协商一致性由**编写场景的人/模型**保证:
+- TE 非空但 `Transfer-Encoding` 头缺失 / 不符;CE 非空但 `Content-Encoding` 头缺失 / 不符 → 疑似漏声明。
+- `headers` 有显式 `Content-Length` 且 TE 非空 → CL+TE 冲突(走私特征),不删不硬错。
+- `chunked` 不在 TE 末位 / 含多个 `chunked` → 异常编码栈,放行。
+- **`status` 1xx / 204 带 body 且 `auto_content_length: true`** → 软告警(RFC 9110:1xx/204 禁止 body 与 CL)。
+- **`status` 304 且 `auto_content_length: true`** → 软告警(304 的 CL 语义是 200 body 长度,非当前 wire body)。
 
-- 本层设了 `content_encoding` 时,同场景对应请求的 `headers` 应带 `Accept-Encoding` 并包含该编码
-  (`br` → `Accept-Encoding: gzip, br`;`gzip`/`deflate` 同理),否则抓包在真实网络中不成立
-  —— 未协商却回 `Content-Encoding: br` 属于服务器行为异常。链式编码(如 `[deflate, gzip]`)
-  应让请求声明其中**最终对外可见的那层**(列表末位,即最后 fold 上去的编码)。
-- **故意不协商是合法测试点**,工具不拦、不告警、不改写:验证客户端/中间设备如何处理未协商的编码响应、
-  或构造 `Accept-Encoding: identity` 却仍压缩的响应,都直接省略/写错请求侧头部即可。
-- 一致性告警只覆盖**本层内部**(`content_encoding` 列表与本层 `Content-Encoding` 头是否相符),
-  **不检查请求-响应之间的协商**;`warnings` 里没有告警不代表协商正确。
+## 静默陷阱
 
-### 校验
+- **头不驱动成帧**:同 `http_request`,成帧只认外置参数;头里写 `Transfer-Encoding` 不分块。
+- **`auto_content_length` 不理解消息语义**:只按当前 body 字节填 CL。1xx/204/304 出告警但照填;
+  **HEAD / CONNECT 响应不做特殊处理**(响应层无请求方法上下文,一个 2xx 是否为 CONNECT 响应无从判定;
+  需用户手写正确 CL 且按需写 body)。
+- **`body` 不归一化换行**:YAML `|` 块标量带入裸 `\n`;协议要 CRLF 写 `"a\r\nb"`。
+- **内容协商靠人/模型保证**:本层设了 `content_encoding` 时,同场景对应请求应带 `Accept-Encoding`。
+  工具不做跨层推断(响应层拿不到请求层任何信息);故意不协商是合法测试点,不拦不告警。
+  一致性告警只覆盖本层内部(CE 列表与本层 `Content-Encoding` 头是否相符),**不检查请求-响应协商**。
 
-- `version` 非空时需符合 `HTTP/x.y` 文法(大小写敏感,`HTTP` 为大写;允许 `HTTP/2` 这类无 minor 写法);非标值报错并引导改用 `payload`/`payload_hex`。
-- `status` 空值(0)合法(走 builder 默认 200);非空需在 100-599,越界(如 99/600)报错并引导 `payload`/`payload_hex`。
-- `version`/`reason` **可含 CR/LF**:响应拆分是受支持的畸形构造场景,不拦截。需要精确字节的其他畸形另可走 `payload`/`payload_hex`。
-- `content_encoding` 每个元素 ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`zstd`/`compress`(`chunked` 是传输编码,放进 `content_encoding` 报错;`br`/`zstd` 仅限 `content_encoding`,不能用于 `transfer_encoding`);`transfer_encoding` 每个元素 ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress`(`br`/`zstd` 不是标准传输编码,放进 `transfer_encoding` 报错);非法元素报错并引导 `payload`/`payload_hex`。
-- `auto_content_length: true` 且 `transfer_encoding` 非空 → **硬错**(framing 互斥);`auto_content_length: true` 且 `headers` 有 ≥2 个 `Content-Length` → **硬错**(覆盖目标歧义)。
-- `chunked` 子结构仅在 `transfer_encoding` 含 `chunked` 时有效(否则硬错);`chunked.size` 不可为负、不可超过固定上限(1 MiB)。
+## 畸形构造
 
-### 一致性告警(非硬错)
+| 想构造 | 用 |
+|--------|-----|
+| 响应拆分(CRLF 注入) | `reason` / `version` 里写 `\r\n` |
+| CLA.TE / TE.CL | `auto_content_length: false` + `transfer_encoding` + headers 手写 `Content-Length` |
+| 非标 status / version | `payload` / `payload_hex` |
+| 1xx/204 带 body / 304 带错误 CL | `auto_content_length: true` + 对应 status,出软告警,包照出 |
+| 未协商的编码响应 | 省略 / 写错请求侧 `Accept-Encoding`,不拦不告警 |
 
-- `transfer_encoding` 非空但 `Transfer-Encoding` 头缺失 / 头文本与列表不符 → 疑似漏声明(或故意 evasion)。
-- `content_encoding` 非空但 `Content-Encoding` 头缺失 / 头文本与列表不符 → 疑似漏声明(或故意 evasion)。
-- `headers` 有显式 `Content-Length` 且 `transfer_encoding` 非空 → RFC 9112 §6.1 CL+TE 冲突(走私特征);不删不硬错。
-- `transfer_encoding` 中 `chunked` 不在末位 / 含多个 `chunked` → 非常规顺序 / 异常编码栈(IDS 绕过特征);放行。
+## 报错 → 改法
+
+| 报错含 | 改法 |
+|--------|------|
+| `status 99 越界(合法 100-599` | status 空值合法(默认 200);非空须 100-599。非标 status 走 `payload` / `payload_hex` |
+| `version "1.1" 非 HTTP/x.y 文法` | version 须 `HTTP/x.y`。非标 version 走 `payload` / `payload_hex` |
+| `auto_content_length 与 transfer_encoding 非空互斥` | TE 存在时不得自动 CL。走私设 `auto_content_length: false` 并手写 CL |
+| `multipart 与 body 不可同设` | multipart 本身就是 body,二选一 |
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1, dport: 80, flags: [PSH, ACK] }
+      - http_response: { status: 99 }
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1, dport: 80, flags: [PSH, ACK] }
+      - http_response: { version: "1.1", status: 200 }
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1, dport: 80, flags: [PSH, ACK] }
+      - http_response:
+          auto_content_length: true
+          transfer_encoding: chunked
+          body: "x"
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1, dport: 80, flags: [PSH, ACK] }
+      - http_response:
+          body: "x"
+          multipart: { boundary: "b" }
+```
+
+## 相关
+
+`pmaker://schema/http_request`、`pmaker://schema/multipart`、`pmaker://schema/tcp_session`、`pmaker://examples`

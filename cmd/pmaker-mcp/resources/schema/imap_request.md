@@ -1,102 +1,149 @@
-# imap_request —— IMAP4rev2 客户端命令(L7,走 tcp)
+# imap_request —— IMAP 客户端命令(L7,走 tcp,IMAP4rev2 RFC 9051)
 
-一条 IMAP 客户端命令 = 一个 `imap_request` 层,序列化为 TCP payload 字节。IMAP4rev2
-(RFC 9051)命令有三种形式,由字段组合决定:
+一条客户端输入 = 一个 `imap_request` 层,序列化为 TCP payload。IMAP 是「行 + 长度前缀混合定界」
+(RFC 9051 §2.2):literal 嵌在命令中间,前后都有文本。通则见 `pmaker://schema/_conventions`。
 
-- **命令行形式(A)**:`tag` + `command`(+ `args` + `literal`),输出 `tag SP command[ SP args][ SP literal]\r\n`。
-- **裸行形式(B)**:仅 `line`,输出 `line\r\n`。一等字段,不推到 `payload`。承担三种整行内容:
-  IDLE 退出的 `DONE`、**SASL 认证的 base64 续行**(接在服务器 `+` 挑战之后)、
-  **取消同步 literal 的 `*`**(RFC 9051 §4.3)。
-- **literal 八位组形式(C)**:`literal.emit: data`,仅输出 literal 数据 + `\r\n`
-  (同步 literal 三段式的第③段,接在服务器 `+` 续行之后)。
-
-`tag` 原样输出(不强制大小写);`command` 校验已知命令表(大小写不敏感),未列入的命令
-报错并引导 `payload`/`payload_hex`(与全项目「非标值走原始字节兜底」一致)。
-
-命令行形式(带 args):
+## 骨架
 
 ```yaml
-- imap_request: { tag: "a001", command: "LOGIN", args: "alice secret" }
-- imap_request: { tag: "a002", command: "SELECT", args: "INBOX" }
-- imap_request: { tag: "a003", command: "IDLE" }   # 无 args
+link_type: ethernet
+flows:
+  - name: imap-login
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.143", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 143, client_isn: 1000, server_isn: 5000 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - imap_request: { tag: A001, command: LOGIN, args: "alice secret" }
+      - from: dst
+        stack:
+          - imap_response: { tag: A001, status: OK, text: "LOGIN completed" }
 ```
 
-裸行形式(形式 B,`line` 承担全部整行内容):
-
-```yaml
-- imap_request: { line: "DONE" }                    # 退出 IDLE
-- imap_request: { line: "dXNlcgB1c2VyAHBhc3M=" }    # SASL base64 续行(接服务器 "+" 挑战)
-- imap_request: { line: "*" }                       # 取消同步 literal(RFC 9051 §4.3)
-```
-
-同步 literal 三段式 APPEND(① 命令行 + 前缀 `emit: prefix`;③ 八位组 `emit: data`,
-内容走 `eml` 子结构,两处写同一份内容保证字节一致):
-
-```yaml
-# ① 命令行 + literal 前缀(仅 {n}\r\n,无数据)
-- imap_request:
-    tag: "a003"
-    command: "APPEND"
-    args: 'INBOX (\Seen) "01-Jan-2024 12:00:00 +0000"'
-    literal:
-      emit: "prefix"
-      eml:
-        headers:
-          From: alice@example.com
-          Subject: Appended
-        body: "Hello via APPEND.\r\n"
-# ③ 八位组数据 + 收尾 CRLF(仅数据,接在服务器 + 续行之后)
-- imap_request:
-    literal:
-      emit: "data"
-      eml:
-        headers:
-          From: alice@example.com
-          Subject: Appended
-        body: "Hello via APPEND.\r\n"
-```
-
-非同步 literal(`{n+}`,client 一次发完命令 + 数据,无需 `+` 续行):
-
-```yaml
-- imap_request:
-    tag: "a001"
-    command: "APPEND"
-    args: "INBOX"
-    literal:
-      sync: false
-      data: "raw literal octets"
-```
+## 字段
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `tag` | string | 形式 A 必填 | 命令标签(atom,原样输出);**不能含 `+`** 及 atom-specials(`( ) { SP % * " \`、CTL);非法 tag 走 `payload`/`payload_hex` |
-| `command` | string | 形式 A 必填 | RFC 9051 已知命令(大小写不敏感,校验后原样输出);未列入走 `payload`/`payload_hex` |
-| `args` | string | 视命令 | 命令参数(按命令策略要求有/无);**不能含 `\r` / `\n`** |
-| `line` | string | 形式 B 必填 | 裸行内容:`DONE`(退出 IDLE)/ SASL base64 续行 / `*`(取消同步 literal);与 `tag`/`command`/`args`/`literal` 互斥(裸行无参数位,整行内容都写在 `line` 里,尾随垃圾等畸形亦然);**不能含 `\r` / `\n`** |
-| `literal` | `IMAPLiteral` 子结构 | 否 | 命令行内嵌 literal(同步 `{n}` / 非同步 `{n+}` / 二进制 `~{n}`);详见下表 |
+| `tag` | string | 形式 A 必填 | 1*<ASTRING-CHAR except `+`>;`+` 被排除(与 continuation 歧义);`]` 合法;大小写敏感 |
+| `command` | string | 形式 A 必填 | 已知命令表(大小写不敏感、原样输出);非标走 `payload`/`payload_hex` |
+| `args` | string | 条件 | 命令参数,裸透传不解析;有/无按命令策略;**禁含 `\r` / `\n`** |
+| `line` | string | 形式 B | 裸行(DONE / SASL base64 续行 / 取消 literal 的 `*`);与 tag/command/args 互斥;**禁含 `\r` / `\n`** |
+| `literal` | `IMAPLiteral` 子结构 | 条件 | 长度前缀八位组,可附在命令行末尾或作形式 C 独立消息;见下方 |
 
-## IMAPLiteral 子结构(请求侧)
+## 三形式(互斥,由字段组合决定)
 
-literal 是 IMAP 的「行 + 长度前缀」混合成帧核心(RFC 9051 §2.2):`{n}\r\n` 前缀 +
-n 字节八位组,可嵌在命令/响应文本中间。client→server 同步 literal(`{n}`)须等待
-服务器 `+` 续行才能发数据,故一条命令在线上拆成三条 message(① 前缀 / ② `+` 续行 /
-③ 数据),用 `emit` 三态控制每段输出什么;非同步 literal(`{n+}`)client 一次发完。
+- **形式 A 命令行**:`tag` + `command`(+ `args` + `literal`)→ `tag SP command[ SP args][ SP literal]\r\n`。
+- **形式 B 裸行**:仅 `line`(如 IDLE 退出 `DONE`)→ `line\r\n`。
+- **形式 C 八位组**:`literal.emit: data` → 仅 literal 数据 + `\r\n`(同步 literal 第③段)。
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `eml` | `eml_data` 子结构 | 三选一 | RFC 5322 邮件内容(headers + body),复用 `eml_data` 子结构(纯内容字节,IMAP 加 `{n}\r\n` 前缀,**不做 dot-stuffing/终止符**);详见 `pmaker://schema/eml_data` |
-| `data` | string | 三选一 | literal 文本内容(裸透传,不归一化 CRLF) |
-| `data_hex` | string | 三选一 | literal 二进制内容(hex;**不可用 `@file`**,二进制走 `data` + `@file`) |
-| `octets` | int(指针) | 否 | n 的**两态覆盖**:省略(nil)= 自动按实际字节数计算;显式赋值=原样落值(关闭自动计算,构造「计数撒谎」解析器攻击,校验产软告警不阻断);**≥0** |
-| `sync` | bool(指针) | 否 | `true`(缺省)= 同步 literal `{n}`(须等 `+` 续行);`false`= 非同步 `{n+}`(一次发完);**服务器→客户端方向禁用 `false`**(RFC 9051 服务器只发同步 literal) |
-| `binary` | bool | 否 | `true`= 二进制 literal 前缀 `~{n}`(RFC 9051 §2.2.2,允许 NUL 等任意字节);**二进制 literal 无非同步形式**(`binary: true` 且 `sync: false` → 硬错) |
-| `emit` | string | 否 | 控制本层输出哪段:`full`(缺省)= `{n}\r\n` + 数据;`prefix`= 仅 `{n}\r\n`(同步 literal 第①段);`data`= 仅数据 + `\r\n`(第③段) |
+`literal.emit` 三态:`full`(缺省,`{n}\r\n`+数据)/ `prefix`(仅 `{n}\r\n`,第①段)/ `data`(仅数据+`\r\n`,第③段)。
+同步 literal(`{n}`,client→server)须等服务器 `+` 续行才能发数据,故一条命令拆三条 message
+(① 前缀 / ② `+` 续行 / ③ 数据);非同步(`{n+}`)一次发完。
 
-> **三形式互斥**:`line` 与 `tag`/`command`/`args`/`literal` 互斥;`literal.emit: data` 与
-> `tag`/`command`/`args`/`line` 互斥。**eml / data / data_hex 三选一**,全空报错。
-> `octets` 的两态覆盖与本项目的 checksum/length 覆盖同一套语义:不写则自动算,写了就原样落值,
-> 保证畸形包不会被自动修正掉。literal 内容走 `eml` 子结构时,n 自动按邮件内容的实际字节数计算。
-> 非法 tag 字符、命令行的间距/成帧畸形(如 tag 与 command 之间缺空格、行尾非 CRLF)走
-> `payload`/`payload_hex` 手拼精确字节。多事件序列不需要新关键字:同一段 TCP payload 内
-> 放多个 `imap_*` 层(按声明顺序拼接);跨 TCP 段的会话时序用 flow 的 `messages`。
+## IMAPLiteral 子结构(嵌在 `literal` 字段,非独立层)
+
+| 字段 | 说明 |
+|------|------|
+| `eml` / `data` / `data_hex` | 八位组内容三选一(互斥);`eml` 复用 `eml_data` 子结构取纯内容;`data_hex` **不可用 `@file`** |
+| `octets` | 两态覆盖:nil=自动算实际字节数;非 nil=原样落值(关闭自动计算,构造「计数撒谎」) |
+| `sync` | 缺省 true=`{n}`;false=`{n+}` 非同步(**仅 client→server**) |
+| `binary` | true=`~{n}` literal8(**仅 server→client**;`binary && !sync` 硬错) |
+| `emit` | `full`(缺省)/ `prefix` / `data` |
+
+## 组合规则
+
+- `line` 与 `tag`/`command`/`args` 互斥(形式 B 与形式 A)。
+- `literal.emit: data`(形式 C)不得带 `tag`/`command`/`args`/`line`。
+- 形式 A:`tag` 经字符集校验(非空、不含 `+` 与 atom-specials)、`command` 在已知表内,
+  `args` 按命令策略判有/无(required/forbidden/optional)。
+- 所有文本字段(`args` / `line`)禁含 `\r` / `\n`(会注入额外命令行)。
+- `literal`:内容三选一;`octets` 非 nil 须非负;`emit ∈ {full/prefix/data}`;
+  `sync: false` 仅 client→server;`binary: true` 须 `sync: true`(literal8 无 `{n+}`)。
+
+**已知命令**:CAPABILITY/LOGOUT/NOOP/LOGIN/AUTHENTICATE/STARTTLS/APPEND/CREATE/DELETE/ENABLE/
+EXAMINE/LIST/NAMESPACE/RENAME/SELECT/STATUS/SUBSCRIBE/UNSUBSCRIBE/IDLE/LSUB/CLOSE/UNSELECT/
+EXPUNGE/COPY/MOVE/FETCH/STORE/SEARCH/UID/CHECK(rev1 ∪ rev2 联合)。
+
+## 一致性告警(软告警)
+
+- `literal.octets` 显式值与实际字节数不符 → 软告警(「计数撒谎」是合法畸形,告警仅供复核,不阻断)。
+
+## 静默陷阱
+
+- **同步 literal 须手动拆三条 message**:写 `literal: { sync: true, ... }` + `emit: full` 会在一条
+  消息里把 `{n}\r\n`+数据一次发出,**不会**等服务器 `+`。合规的同步 literal 要拆成 ① `emit: prefix`
+  ② 服务器 `imap_response: { tag: "+", ... }` ③ `emit: data` 三条 message,靠 flow `messages` 排时序。
+- **`literal.eml` 走 `eml_data` 纯内容,IMAP 加 `{n}\r\n` 前缀,不做 dot-stuffing / 终止符**
+  (IMAP 靠长度前缀定界,与 SMTP/POP3 不同)。把 SMTP 的成帧心智搬过来会出错。
+- **`octets` 计数撒谎只告警不拦**:写 `octets: 9999` 而实际 342 字节会原样落值,这是构造解析器攻击
+  的正道,但笔误也同样只告警。
+- **`command` 拼错是硬错**(如 `LOGN`),无数字兜底 —— 与 `dns.type` 的数字回退不同。
+- **`tag` 大小写敏感**(与 command/status 不同),`A001` 与 `a001` 是不同 tag。
+- **非标间距状态行**(如 `* OK[UIDVALIDITY 1]` 缺空格)不走 `data`,走 `payload` / `payload_hex` 手拼。
+
+## 畸形构造
+
+| 想构造 | 用 |
+|--------|-----|
+| 私有 / 非标命令 | `payload` / `payload_hex` |
+| 非标 tag(含 `+` / atom-specials) | `payload` / `payload_hex` |
+| literal 计数撒谎 | `octets: 9999`(原样落值,出软告警) |
+| 非同步 literal `{n+}` | `sync: false`(仅 client→server) |
+| `~{n+}`(未定义 token) | `payload_hex`(`binary && !sync` 被拦) |
+| 非标间距 / 缺空格状态行 | `payload` / `payload_hex` |
+
+## 报错 → 改法
+
+| 报错含 | 改法 |
+|--------|------|
+| `需要 tag` | 形式 A 命令行 `tag` 必填。裸行走 `line`,纯八位组用 `literal.emit: data` |
+| `未知 IMAP 命令` | 命令不在已知表内。私有 / 非标命令改用 `payload` / `payload_hex` |
+| `tag "A+001" 含 '+',IMAP tag 不得包含 '+'` | tag 不得含 `+` 与 atom-specials(`]` 合法)。非标 tag 走 `payload` / `payload_hex` |
+| `line 与 tag/command/args 互斥` | 裸行(形式 B)整行内容写在 `line` 里,不混 tag/command/args |
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.143" }
+      - tcp:  { sport: 49152, dport: 143, flags: [PSH, ACK] }
+      - imap_request: { command: LOGIN, args: "a b" }
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.143" }
+      - tcp:  { sport: 49152, dport: 143, flags: [PSH, ACK] }
+      - imap_request: { tag: A001, command: LOGN, args: "a b" }
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.143" }
+      - tcp:  { sport: 49152, dport: 143, flags: [PSH, ACK] }
+      - imap_request: { tag: "A+001", command: LOGIN, args: "a b" }
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.143" }
+      - tcp:  { sport: 49152, dport: 143, flags: [PSH, ACK] }
+      - imap_request: { tag: A001, command: LOGIN, args: "a b", line: DONE }
+```
+
+## 相关
+
+`pmaker://schema/imap_response`、`pmaker://schema/eml_data`、`pmaker://schema/tcp_session`、`pmaker://examples`

@@ -34,14 +34,7 @@ var nonLayerSchemaDocs = map[string]bool{
 // 过不了 Parse+Validate,故整文件跳过。
 //
 // 批次 ④ 每重写一个文件就删掉对应一行;清空后连同本变量与下方的跳过分支一并删除。
-var pendingSnippetFiles = map[string]bool{
-	"eml_data":      true,
-	"http_request":  true,
-	"http_response": true,
-	"imap_request":  true,
-	"imap_response": true,
-	"multipart":     true,
-}
+var pendingSnippetFiles = map[string]bool{}
 
 // ---------- 1. 覆盖性:层名 ⇄ 文档 ----------
 
@@ -216,7 +209,7 @@ func errorTableSnippets(t *testing.T, name string) []string {
 	t.Helper()
 	var out []string
 	inSection := false
-	for _, line := range strings.Split(schemaDocText(t, name), "\n") {
+	for line := range strings.SplitSeq(schemaDocText(t, name), "\n") {
 		if rest, ok := strings.CutPrefix(line, "## "); ok {
 			inSection = strings.HasPrefix(strings.TrimSpace(rest), "报错")
 			continue
