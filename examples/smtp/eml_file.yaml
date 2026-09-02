@@ -9,7 +9,9 @@
 #   - eml_data 原始模式(raw):整封邮件(headers + multipart body)裸透传、不归一化换行,
 #     保留文件精确字节(sample.eml 本身即 CRLF + multipart/mixed 带附件);
 #   - 接入层(SMTP DATA)强制成帧:自动 dot-stuffing + <CRLF>.<CRLF> 终止符;
-#   - 106KB 正文经 mss 1460 自动分段,验证大邮件的 TCP 分段与 seq 推导。
+#   - segment.mss: 1460 按 MSS 切段(1460 = tcp.mss 通告值),避免单段 >65535
+#     触发 IPv4 total_length uint16 截断(tip:tcp.mss 只进 SYN 通告 option,
+#     不参与应用层切段 —— 切段由 message.segment.mss 驱动)。
 link_type: ethernet
 seed: 42
 base_time: "2024-01-01T00:00:00Z"
@@ -74,8 +76,12 @@ flows:
           - smtp_response: { code: 354, message: "End data with <CR><LF>.<CR><LF>" }
 
       # ★ 整封邮件由 @file 注入(raw 模式:字节精确,不归一化换行)
-      #   接入层自动 dot-stuffing + 追加 <CRLF>.<CRLF> 终止符
+      #   接入层自动 dot-stuffing + 追加 <CRLF>.<CRLF> 终止符;
+      #   segment.mss: 1460 按 MSS 切段(1460 = tcp.mss 通告值),避免单段 >65535
+      #   触发 IPv4 total_length uint16 截断(tip:tcp.mss 只进 SYN 通告 option,
+      #   不参与应用层切段 —— 切段由 message.segment.mss 驱动)。
       - from: src
+        segment: { mss: 1460 }
         stack:
           - eml_data:
               raw: "@file(assets/sample.eml)"

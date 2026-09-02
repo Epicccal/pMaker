@@ -29,7 +29,7 @@ func serializePOP3Req(f *scenario.POP3RequestFields) []byte {
 //     (RFC 1939 §3 多行响应首行可带说明文本,如 LIST 的 "+OK 2 messages (320 octets)")。
 //   - 多行正文(lines):各行 CRLF join → dotStuff → 追加 <CRLF>.<CRLF> 终止符。正文行做
 //     RFC 1939 §3 dot-stuffing(行首 . → ..),与 eml_data 同一规则;status 行不参与 stuffing。
-//   - 多行正文(eml):serializeEMLData(eml) 取纯 RFC 5322 内容,由 POP3 接入层强制成帧
+//   - 多行正文(eml):SerializeEMLData(eml) 取纯 RFC 5322 内容,由 POP3 接入层强制成帧
 //     (dot-stuffing + <CRLF>.<CRLF> 终止符,与 lines 分支同一职责)。POP3 RETR/TOP 的
 //     正文即 RFC 5322 邮件内容,成帧规则与 SMTP DATA 相同,由各自接入层强制。
 //
@@ -58,10 +58,10 @@ func serializePOP3Resp(f *scenario.POP3ResponseFields) ([]byte, error) {
 		return b.Bytes(), nil
 	}
 
-	// 3. eml 多行:复用 serializeEMLData 取纯 RFC 5322 内容,由 POP3 接入层强制成帧
+	// 3. eml 多行:复用 SerializeEMLData 取纯 RFC 5322 内容,由 POP3 接入层强制成帧
 	//    (dot-stuffing + <CRLF>.<CRLF> 终止符,RFC 1939 §3,无 opt-out;与 lines 分支
 	//    同一成帧职责)。缺 dot-stuffing/缺终止符等畸形走 payload/payload_hex。
-	eml, err := serializeEMLData(f.EML)
+	eml, err := SerializeEMLData(f.EML)
 	if err != nil {
 		return nil, err
 	}

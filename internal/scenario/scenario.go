@@ -92,13 +92,14 @@ func Validate(s *Scenario) error {
 // Warnings 返回场景的软告警(非硬错):不影响生成,但提示配置可能不自洽,
 // 供 CLI 在生成后输出供用户复核。当前覆盖 FTP 控制通道 227/PORT 协商端口与
 // 数据连接 dst IP:port 的一致性、MIME multipart boundary/CTE 一致性、
-// HTTP 编码(CLA+TE 冲突、TE/CE 头与列表不符等)一致性检查
-// (畸形用例可能故意不一致,故只告警不阻断)。
+// HTTP 编码(CLA+TE 冲突、TE/CE 头与列表不符等)一致性、IMAP literal 计数覆盖值
+// 一致性检查(畸形用例可能故意不一致,故只告警不阻断)。
 func Warnings(s *Scenario) []string {
 	var ws []string
 	ws = append(ws, CheckFTPDataPortConsistency(s)...)
 	ws = append(ws, CheckMultipartConsistency(s)...)
 	ws = append(ws, CheckHTTPConsistency(s)...)
+	ws = append(ws, CheckIMAPLiteralConsistency(s)...)
 	return ws
 }
 
@@ -246,6 +247,10 @@ func isPayloadProducingLayer(l Layer) bool {
 		return l.Type == "pop3_request"
 	case *POP3ResponseFields:
 		return l.Type == "pop3_response"
+	case *IMAPRequestFields:
+		return l.Type == "imap_request"
+	case *IMAPResponseFields:
+		return l.Type == "imap_response"
 	case *EMLDataFields:
 		return l.Type == "eml_data"
 	case *PayloadFields:
@@ -550,6 +555,14 @@ func validateLayer(l Layer) error {
 		}
 	case *POP3ResponseFields:
 		if err := validatePOP3ResponseFields(f); err != nil {
+			return err
+		}
+	case *IMAPRequestFields:
+		if err := validateIMAPRequestFields(f); err != nil {
+			return err
+		}
+	case *IMAPResponseFields:
+		if err := validateIMAPResponseFields(f); err != nil {
 			return err
 		}
 	case *EMLDataFields:

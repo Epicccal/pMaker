@@ -33,4 +33,4 @@
 - 可选:NOOP/HELP/ATRN
 - `params` 仅 MAIL/RCPT 有效,给其他 verb 报错
 
-> DATA 正文用 `eml_data` 层结构化构造（headers + body，SMTP 接入层自动 dot-stuffing 与终止符）；也可用 `payload`/`payload_hex` 兜底（自行 dot-stuff + 终止符）。
+> DATA 正文用 `eml_data` 层结构化构造（headers + body，SMTP 会自动做 dot-stuffing 并追加终止符）；也可用 `payload`/`payload_hex` 兜底（自行 dot-stuff + 终止符）。

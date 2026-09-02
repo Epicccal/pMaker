@@ -1,0 +1,123 @@
+# examples/imap/select_fetch.yaml
+#
+# 一次完整 IMAP 会话(RFC 9051):CAPABILITY → LOGIN → SELECT → FETCH BODY[]
+# (服务器 literal 响应,§6.4.5 原文形态)→ LOGOUT。
+#
+# 覆盖点:
+#   - imap_request 命令行形式(tag + command + args);
+#   - imap_response 状态组(tagged OK / untagged OK [code] text);
+#   - imap_response 数据组(untagged FLAGS / EXISTS / FETCH,含 literal + tail,
+#     literal 嵌在括号表达式中间:前有 data 文本、后有 tail ")");
+#   - 多条 untagged 响应共处一个 TCP 段(层栈重复,零新关键字);
+#   - literal 内容走 eml 子结构(复用 eml_data,IMAP 加 {n}\r\n 前缀,无 dot-stuffing)。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: imap-fetch
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.143", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 143, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器问候(untagged PREAUTH 不适用,用 OK)
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              status: "OK"
+              text: "IMAP4rev2 Service Ready"
+
+      # CAPABILITY
+      - from: src
+        stack:
+          - imap_request: { tag: "a001", command: "CAPABILITY" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              data: "CAPABILITY IMAP4rev1 IMAP4rev2 IDLE MOVE QUOTA"
+          - imap_response:
+              tag: "a001"
+              status: "OK"
+              text: "CAPABILITY completed"
+
+      # LOGIN
+      - from: src
+        stack:
+          - imap_request: { tag: "a002", command: "LOGIN", args: "alice secret" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "a002"
+              status: "OK"
+              code: "CAPABILITY IMAP4rev2 IDLE MOVE"
+              text: "LOGIN completed"
+
+      # SELECT INBOX(多条 untagged + tagged OK 共处一段)
+      - from: src
+        stack:
+          - imap_request: { tag: "a003", command: "SELECT", args: "INBOX" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              data: "FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)"
+          - imap_response:
+              tag: "*"
+              data: "42 EXISTS"
+          - imap_response:
+              tag: "*"
+              status: "OK"
+              code: "UIDVALIDITY 3857529045"
+              text: "UIDs valid"
+          - imap_response:
+              tag: "a003"
+              status: "OK"
+              code: "READ-WRITE"
+              text: "SELECT completed"
+
+      # FETCH 1 BODY[](服务器 literal:RFC 9051 §6.4.5 形态)
+      - from: src
+        stack:
+          - imap_request: { tag: "a004", command: "FETCH", args: "1 BODY[]" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              data: "1 FETCH (BODY[] "
+              literal:
+                eml:
+                  headers:
+                    From: "alice@example.com"
+                    To: "bob@example.net"
+                    Subject: "Hello"
+                    Date: "Thu, 01 Jan 2024 00:00:00 +0000"
+                  body: "Hi Bob,\r\nThis is a test message.\r\n"
+              tail: ")"
+          - imap_response:
+              tag: "a004"
+              status: "OK"
+              text: "FETCH completed"
+
+      # LOGOUT
+      - from: src
+        stack:
+          - imap_request: { tag: "a005", command: "LOGOUT" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              status: "BYE"
+              text: "IMAP4rev2 Server logging out"
+          - imap_response:
+              tag: "a005"
+              status: "OK"
+              text: "LOGOUT completed"

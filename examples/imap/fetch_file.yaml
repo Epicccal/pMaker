@@ -1,0 +1,100 @@
+# examples/imap/fetch_file.yaml
+#
+# IMAP FETCH 下载一封真实邮件:FETCH BODY[] 响应的 literal 内容由 @file 占位符从
+# assets/sample.eml 注入(与 smtp/eml_file.yaml、pop3/retr_file.yaml 同一份 sample.eml,
+# 上传/下载三方对称)。
+#
+# 覆盖点:
+#   - @file(assets/sample.eml) 把外部 .eml 文件原始字节注入 imap_response.literal.eml 子结构;
+#   - eml 原始模式(raw):整封邮件(headers + multipart body)裸透传、不归一化换行,
+#     保留文件精确字节(IMAP literal 不做 dot-stuffing,靠 {n}\r\n 长度前缀定界,与 SMTP/POP3 不同);
+#   - literal 自动计数:n 按 eml_data 纯内容字节数自动算(106458),{n}\r\n 前缀;
+#   - literal 嵌在数据组括号表达式中间(前有 data 文本 "1 FETCH (BODY[] "、后有 tail ")");
+#   - segment.mss: 1460 按 MSS 切段(1460 = tcp.mss 通告值),避免单段 >65535
+#     触发 IPv4 total_length uint16 截断(tip:tcp.mss 只进 SYN 通告 option,
+#     不参与应用层切段 —— 切段由 message.segment.mss 驱动)。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: imap-fetch-file
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.143", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 143, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器问候
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              status: "OK"
+              text: "IMAP4rev2 Service Ready"
+
+      # LOGIN
+      - from: src
+        stack:
+          - imap_request: { tag: "a001", command: "LOGIN", args: "alice secret" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "a001"
+              status: "OK"
+              text: "LOGIN completed"
+
+      # SELECT INBOX
+      - from: src
+        stack:
+          - imap_request: { tag: "a002", command: "SELECT", args: "INBOX" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              data: "1 EXISTS"
+          - imap_response:
+              tag: "a002"
+              status: "OK"
+              code: "READ-WRITE"
+              text: "SELECT completed"
+
+      # ★ FETCH 1 BODY[]:整封邮件由 @file 注入(raw 模式:字节精确,不归一化换行)
+      #   IMAP literal 靠 {n}\r\n 长度前缀定界,无 dot-stuffing/终止符;
+      #   literal 嵌在 "1 FETCH (BODY[] " 与 tail ")" 之间。
+      - from: src
+        stack:
+          - imap_request: { tag: "a003", command: "FETCH", args: "1 BODY[]" }
+
+      - from: dst
+        segment: { mss: 1460 }
+        stack:
+          - imap_response:
+              tag: "*"
+              data: "1 FETCH (BODY[] "
+              literal:
+                eml:
+                  raw: "@file(assets/sample.eml)"
+              tail: ")"
+          - imap_response:
+              tag: "a003"
+              status: "OK"
+              text: "FETCH completed"
+
+      # LOGOUT
+      - from: src
+        stack:
+          - imap_request: { tag: "a004", command: "LOGOUT" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              status: "BYE"
+              text: "IMAP4rev2 Server logging out"
+          - imap_response:
+              tag: "a004"
+              status: "OK"
+              text: "LOGOUT completed"

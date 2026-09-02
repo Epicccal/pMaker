@@ -8,7 +8,9 @@
 #   - eml 原始模式(raw):整封邮件(headers + multipart body)裸透传、不归一化换行,
 #     保留文件精确字节(与 smtp/eml_file.yaml 同一份 sample.eml,上传/下载对称);
 #   - 接入层(POP3 RETR)强制成帧:自动 dot-stuffing + <CRLF>.<CRLF> 终止符;
-#   - 106KB 正文经 mss 1460 自动分段,验证大邮件的 TCP 分段与 seq 推导。
+#   - segment.mss: 1460 按 MSS 切段(1460 = tcp.mss 通告值),避免单段 >65535
+#     触发 IPv4 total_length uint16 截断(tip:tcp.mss 只进 SYN 通告 option,
+#     不参与应用层切段 —— 切段由 message.segment.mss 驱动)。
 link_type: ethernet
 seed: 42
 base_time: "2024-01-01T00:00:00Z"
@@ -61,6 +63,7 @@ flows:
           - pop3_request: { command: RETR, args: "1" }
 
       - from: dst
+        segment: { mss: 1460 }
         stack:
           - pop3_response:
               status: "+OK"

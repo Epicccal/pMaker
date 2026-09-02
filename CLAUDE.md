@@ -61,7 +61,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层)
 - L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)
 - L4:`tcp`、`udp`
-- 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`eml_data`
+- 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data`
 - 兜底:`payload`、`payload_hex`(原始字节)
 
 **已实现特性**:
@@ -174,7 +174,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   (required/forbidden/optional):必带 USER/PASS/APOP/RETR/DELE/TOP/AUTH,禁带 STAT/NOOP/RSET/QUIT/CAPA/STLS,
   可选 LIST/UIDL(无参=多行,有参=msg# 单行)。
 - **多行响应复用 `eml_data` 子结构**:RETR/TOP 返回 RFC 5322 邮件内容,直接嵌入 `EMLDataFields` 作 `eml`
-  字段(非独立层),由 POP3 接入层(`serializePOP3Resp` 的 eml 分支)取 `serializeEMLData` 纯内容后
+  字段(非独立层),由 POP3 接入层(`serializePOP3Resp` 的 eml 分支)取 `SerializeEMLData` 纯内容后
   强制 dot-stuffing + `<CRLF>.<CRLF>` 终止符(与 SMTP DATA 同一成帧规则,由各自接入层强制)。
   `lines` 多行(LIST/UIDL/CAPA)逐行 dot-stuff + 追加终止符(复用 `dotframe.ApplyDotStuffing`,接入层职责)。
   `status` 行本身不参与 dot-stuff(只有 status 行之后的多行正文才 dot-stuff,与 POP3 语义一致)。
@@ -184,14 +184,55 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 - gopacket 无 POP3 layer,自己序列化为 `gopacket.Payload`(同 HTTP/FTP/TELNET/SMTP);不引入 gopacket
   layer、不碰 IP 层 next-proto 串接、无独立 checksum(由 TCP 构造器处理)。
 
+**IMAP 专项(IMAP4rev2,RFC 9051,行 + 长度前缀混合成帧)**:
+
+- 一个 `imap_request` 层 = 一条 IMAP 客户端命令,一个 `imap_response` 层 = 一条 IMAP 服务器响应,
+  均序列化为 TCP payload 字节。IMAP 的成帧是「**行 + 长度前缀混合**」(RFC 9051 §2.2):命令/响应
+  主体是文本行,但可在行中间嵌入 literal(`{n}\r\n` 前缀 + n 字节八位组),literal 之前/之后都可有文本。
+- **imap_request 三形式**(由字段组合决定,互斥):
+  - 形式 A 命令行:`tag` + `command`(+ `args` + `literal`)→ `tag SP command[ SP args][ SP literal]\r\n`。
+  - 形式 B 裸行:仅 `line`(如 IDLE 退出 `DONE`)→ `line\r\n`,一等字段不推到 `payload`。
+  - 形式 C literal 八位组:`literal.emit: data` → 仅 literal 数据 + `\r\n`(同步 literal 三段式第③段)。
+  `emit` 三态控制 literal 输出哪段:`full`(缺省,`{n}\r\n`+数据)/ `prefix`(仅 `{n}\r\n`,第①段)/
+  `data`(仅数据+`\r\n`,第③段)。同步 literal({n},client→server)须等服务器 `+` 续行,故一条命令
+  拆三条 message(① 前缀 / ② `+` 续行 / ③ 数据);非同步({n+})一次发完。
+- **imap_response tag 三态 + 两组分流**:`*`=untagged / 具体 tag=tagged / `+`=continuation。
+  **状态组**(`status`+`code`+`text`)与**数据组**(`data`+`literal`+`tail`)**互斥**(决策 7):
+  状态组输出 `prefix status[ [code]][ SP text]\r\n`,数据组输出 `prefix data[ literal][tail]\r\n`
+  (literal 嵌在括号表达式中间,前有 data 文本、后有 tail `)`)。continuation(`tag:"+"`)只用 `text`。
+  **data 的首 token 不能是 `OK`/`NO`/`BAD`/`PREAUTH`/`BYE`**(否则与状态组歧义,走 status 组)。
+- **IMAPLiteral 子结构**(嵌在 `imap_request`/`imap_response` 的 `literal` 字段,非独立层):三选一内容源
+  (`eml` 复用 `eml_data` 子结构产纯内容 / `data` 文本 / `data_hex` 二进制;`data_hex` 不可用 `@file`)+
+  `octets`(**两态覆盖**指针:nil=自动按实际字节数算 n,非 nil=原样落值关闭自动计算,构造「计数撒谎」
+  解析器攻击,校验产软告警不阻断,对齐 checksum/length 覆盖语义)+ `sync`(指针:true=同步 `{n}`,
+  false=非同步 `{n+}`;**服务器方向禁用 false**)+ `binary`(true=`~{n}` 二进制前缀;**binary && !sync 硬错**,
+  RFC 9051 §2.2.2 二进制 literal 无非同步形式)+ `emit`。literal 的 `eml` 走 `SerializeEMLData` 纯内容,
+  IMAP 加 `{n}\r\n` 前缀、**不做 dot-stuffing/终止符**(IMAP 成帧靠长度前缀,不靠点终止符,与 SMTP/POP3 不同)。
+- **命令/tag/状态校验对齐 DNS/FTP/SMTP/POP3 模式**:`command` 在已知命令表内(rev1 ∪ rev2 联合,大小写不敏感、
+  原样输出);`tag` 不能含 `+` 及 atom-specials(`( ) { SP % * " \`、CTL);`status` 为 `OK`/`NO`/`BAD`/
+  `PREAUTH`/`BYE`(大小写不敏感、原样输出);`code` 不能含 `]`(括号配对歧义)。未列入的命令、非标状态、
+  非法 tag 走 `payload`/`payload_hex`(与全项目「非标值走原始字节兜底」一致)。args 按命令策略判有/无。
+- **一致性告警**(`scenario.CheckIMAPLiteralConsistency`,非硬错,与 FTP 端口/multipart 告警同一套 `Warnings`):
+  `octets` 显式值与实际字节数不符(计数撒谎)。scenario 侧 byte 计数本地重实现 `imapLiteralEMLBytes`
+  (不引 builder,避免 scenario→builder 循环依赖);行结束符归一化复用 `internal/util/crlf.NormalizeCRLF`
+  (与 `builder.SerializeEMLData` 共用同一份原语,消除两处重复实现漂移);multipart 内容无法在 scenario 侧算
+  (跳过,仅对 eml/data/data_hex 计数)。字节拼装口径(headers + 空行 + body、raw/raw_hex 透传)由跨包
+  等价测试 `internal/scenario/imap_consistency_test.go` 的 `TestIMAPLiteralEMLBytes_EquivToBuilder` 锁定
+  (同一组 `EMLDataFields` 喂入,断言 `imapLiteralEMLBytes` 与 `builder.SerializeEMLData` 逐字节相等),
+  把「靠人保持同步」变成「靠测试保持同步」。
+- **非标间距状态行**(如 `* OK[UIDVALIDITY 1]UIDs valid` 缺空格)**不走 `data` 抄近路**,走 `payload`/
+  `payload_hex` 手拼(决策 7)。多响应共段靠层栈重复(零新关键字,与 HTTP/FTP/SMTP/POP3 同构),跨段时序靠 flow `messages`。
+- gopacket 无 IMAP layer,自己序列化为 `gopacket.Payload`(同 HTTP/FTP/TELNET/SMTP/POP3);不引入 gopacket
+  layer、不碰 IP 层 next-proto 串接、无独立 checksum(由 TCP 构造器处理)。
+
 **EML DATA 专项(协议无关 RFC 5322 内容层)**:
 
 - 一个 `eml_data` 层 = 一封 RFC 5322 邮件内容(headers + body),序列化为 TCP payload 字节,
   与 `smtp_request`/`smtp_response` 同级。**协议无关的内容层**:RFC 5322 内容是 SMTP/POP3/IMAP 的共同核心,
-  `serializeEMLData` 只产内容字节,**不含成帧**。成帧(framing)是传输协议的职责,由接入层强制,
+  `SerializeEMLData` 只产内容字节,**不含成帧**。成帧(framing)是传输协议的职责,由接入层强制,
   不在内容层暴露开关 —— SMTP DATA(RFC 5321 §4.5.2)与 POP3 RETR(RFC 1939 §3)的接入层
   (eml_data standalone 层分支 / `serializePOP3Resp` 的 eml 分支)强制 dot-stuffing +
-  `<CRLF>.<CRLF>` 终止符,无 opt-out;IMAP FETCH(RFC 9051,未来)由 `imap_response` builder
+  `<CRLF>.<CRLF>` 终止符,无 opt-out;IMAP FETCH(RFC 9051)由 `imap_response` builder
   用长度前缀 `{n}\r\n` 包装纯内容字节(无 dot-stuffing/终止符),同样不操作内容层字段。
   缺 dot-stuffing / 缺终止符等成帧畸形走 `payload`/`payload_hex` 原始字节兜底
   (与全项目「非标值走原始字节」一致)。
@@ -204,7 +245,10 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   允许重复 key),无需走 `raw`。
   `body` 支持 `@file(path)` 注入;行结束符结构化模式自动归一化(裸 `\n` → `\r\n`,抹平 YAML `|` 块标量等常用写法带入的裸 `\n`),raw 模式不归一化(保留精确字节)。
 - 成帧助手 `dotframe.ApplyDotStuffing` / `AppendDotTerminator`(`internal/util/dotframe`,供接入层调用);
-  序列化纯函数 `builder.serializeEMLData`(协议无关,只产内容,不放在 `smtp.go`);
+  行结束符归一化原语 `crlf.NormalizeCRLF`(`internal/util/crlf`,builder 与 scenario 的 IMAP literal
+  一致性告警共用同一份,避免 scenario→builder 循环依赖下的重复实现漂移);
+  序列化纯函数 `builder.SerializeEMLData`(协议无关,只产内容,不放在 `smtp.go`;
+  导出以供跨包等价测试锁定字节口径);
   校验 `scenario.validateEMLDataFields`(模式互斥、raw/raw_hex 互斥、空内容);
   接入 `PayloadBytes`/`serializeStack`/`validateLayer`/flow message 白名单/`summaryLayerName`。
   gopacket 无 EML layer,自己序列化为 `gopacket.Payload`。
@@ -223,9 +267,9 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   **boundary 碰撞告警**在 builder 序列化阶段(`slog.Warn`):part 编码后 body 逐行扫描,某行独占 `--<boundary>`
   → 告警(RFC 2046 §5.1.1:分界符须独占一行,解析端会误判切分);按行匹配避免行内子串误报。
 - EML 下 multipart 字节作为 content,作用顺序固定「编码 → 拼装 → stuff(接入层) → terminate(接入层)」:
-  `serializeEMLData` 产纯内容(编码 → 拼装),接入层(SMTP/POP3)做 stuff + terminate。dot-stuff 作用于
+  `SerializeEMLData` 产纯内容(编码 → 拼装),接入层(SMTP/POP3)做 stuff + terminate。dot-stuff 作用于
   编码后整段 content(boundary 行 `--` 开头不受影响;base64 字母表不含 `.` 行首不会是 `.`;`none`/QP 的 part
-  body 行首 `.` 被 stuff 成 `..` 是 SMTP 传输透明性的正确形态)。multipart 字节不再经 `normalizeCRLF`。
+  body 行首 `.` 被 stuff 成 `..` 是 SMTP 传输透明性的正确形态)。multipart 字节不再经 `crlf.NormalizeCRLF`。
 - **v1 限制**:不支持嵌套 multipart(`multipart/mixed` 内嵌 `multipart/alternative`)与 preamble/epilogue
   (首 boundary 前、尾 boundary 后的可选文本);需要时走既有 `raw`/`raw_hex` 手拼。缺终止符等畸形统一走 `raw`/`payload_hex`。
 - 序列化纯函数 `builder.serializeMultipart`(手工拼装,不引 `mime/multipart`,便于后续加畸形开关);
@@ -273,12 +317,12 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 > builder 包:
 > - `builder.go`:层栈序列化入口 `BuildPlanned` + `serializeStack` 分派。
 > - `dns.go`(构包)/ `dns_enum.go`(枚举映射)/ `dns_raw.go`(原始层)。
-> - `http.go` / `ftp.go` / `telnet.go` / `smtp.go` / `pop3.go`(POP3 命令/响应,多行复用 eml_data) / `eml_data.go`(协议无关 RFC 5322 正文) / `multipart.go`(RFC 2046 multipart body,被 http/eml 嵌套调用) / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
+> - `http.go` / `ftp.go` / `telnet.go` / `smtp.go` / `pop3.go`(POP3 命令/响应,多行复用 eml_data) / `imap.go`(IMAP4rev2 命令/响应,行+长度前缀混合成帧) / `eml_data.go`(协议无关 RFC 5322 正文) / `multipart.go`(RFC 2046 multipart body,被 http/eml 嵌套调用) / `icmp.go` / `icmpv6.go` / `ip.go` / `l2.go` / `transport.go` / `payload.go`:各协议构造。
 >
 > scenario 包(详见 `doc.go`):
 > - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields + `MultipartBody`/`MultipartPart` 子结构)、
 >   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Parse/Load/Validate/Warnings)、`start_after_graph.go`、
->   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_command.go`(SMTP verb/响应码校验)、`pop3_command.go`(POP3 命令/状态校验)、`eml_data.go`(RFC 5322 正文校验)、`multipart.go`(RFC 2046 multipart 校验 + boundary 校验)、`multipart_consistency.go`(boundary/CTE 一致性告警)、
+>   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_command.go`(SMTP verb/响应码校验)、`pop3_command.go`(POP3 命令/状态校验)、`imap_command.go`(IMAP 命令/tag/状态/literal 校验)、`imap_consistency.go`(IMAP literal octets 计数撒谎告警)、`eml_data.go`(RFC 5322 正文校验)、`multipart.go`(RFC 2046 multipart 校验 + boundary 校验)、`multipart_consistency.go`(boundary/CTE 一致性告警)、
 >   `http_validate.go`(HTTP 字段校验)、`summary_layers.go`(摘要层名白名单,供 internal/summary 与 flow 调用)、`file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
 >
 > 测试按「一一对应 + 公共辅助集中」组织,详见下文「测试文件命名规约」。

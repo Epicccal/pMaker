@@ -25,6 +25,10 @@
 //   - telnet_command.go:     TELNET 命令/option 合法基线校验(RFC 854 + 扩展)。
 //   - smtp_command.go:       SMTP 信封 verb / 响应码合法基线校验(RFC 5321 + 扩展)。
 //   - pop3_command.go:       POP3 命令 / 状态指示符合法基线校验(RFC 1939 + 扩展)。
+//   - imap_command.go:       IMAP 命令 / 响应字段合法基线校验(RFC 9051,行+长度前缀混合定界)。
+//   - imap_consistency.go:   IMAP literal 计数覆盖值一致性告警(octets ≠ 实际字节数;行结束符
+//     归一化复用 internal/util/crlf,与 builder.SerializeEMLData 共用同一份原语,字节拼装口径
+//     由跨包等价测试锁定,避免 scenario→builder 循环依赖下的重复实现漂移)。
 //   - eml_data.go:           RFC 5322 正文层校验(协议无关,SMTP/POP3/IMAP 共用)。
 //   - multipart.go:          MIME multipart 校验 + boundary 校验(RFC 2046)。
 //   - multipart_consistency.go: multipart boundary/CTE 一致性告警。

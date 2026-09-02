@@ -1,0 +1,68 @@
+# examples/imap/malformed.yaml
+#
+# IMAP 畸形示例,演示四类畸形与对应通道:
+#
+#   ① literal 计数撒谎:声明 octets: 9999 而实际只有 10 字节(构造「计数撒谎」解析器攻击)。
+#      结构化路径原样落值(octets 两态覆盖,关闭自动计算),是这类畸形用例的唯一手段;
+#      校验产出软告警但不阻断(畸形用例必须能通过 Validate)。
+#   ② literal 前缀后直接断连:emit=prefix 输出 {n}\r\n 后本应有续行 + 与数据,
+#      这里只发前缀就断(standalone packet,单包,无后续 flow),模拟同步 literal 中途断连。
+#   ③ 非法 tag(含 +):结构化 imap_request 拒绝 tag 含 +(RFC 9051 §9 排除 +),
+#      走 payload_hex 手拼非法 tag 字节。
+#   ④ 缺空格的状态行畸形:"* OK[UIDVALIDITY 1]UIDs valid"(非标间距,
+#      决策 7 明确不走 data 抄近路,走 payload_hex 手拼)。
+#
+# 流量验证关注点:literal 计数与实际字节的解析器攻击、同步 literal 中途断连、
+# 非法 tag 字符、缺空格状态行的成帧畸形。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+packets:
+  # ① literal 计数撒谎:FETCH 响应 literal 声明 octets: 9999,实际 "hello" = 5 字节。
+  #    结构化路径原样落值(关自动计算);校验产软告警但不阻断。
+  - name: literal-count-lie
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.143", dst: "10.0.0.10", ttl: 64 }
+      - tcp:  { sport: 143, dport: 50000, flags: [PSH, ACK], seq: 1001, ack: 2001 }
+      - imap_response:
+          tag: "*"
+          data: "1 FETCH (BODY[] "
+          literal:
+            data: "hello"
+            octets: 9999
+          tail: ")"
+
+  # ② literal 前缀后直接断连:emit=prefix 只发 {5}\r\n,无后续 + 与数据(standalone,单包)。
+  - name: literal-prefix-disconnect
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.143", ttl: 64 }
+      - tcp:  { sport: 50001, dport: 143, flags: [PSH, ACK], seq: 2001, ack: 1001 }
+      - imap_request:
+          tag: "a001"
+          command: "APPEND"
+          args: "INBOX"
+          literal:
+            data: "hello"
+            emit: "prefix"
+
+  # ③ 非法 tag(含 +):结构化路径拒绝 tag 含 +,走 payload_hex 手拼 "a+1 NOOP\r\n"。
+  #    字节:a+1 NOOP\r\n
+  - name: illegal-tag
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.143", ttl: 64 }
+      - tcp:  { sport: 50002, dport: 143, flags: [PSH, ACK], seq: 3001, ack: 1001 }
+      - payload_hex: "0x612b31204e4f4f500d0a"
+
+  # ④ 缺空格的状态行畸形:"* OK[UIDVALIDITY 1]UIDs valid\r\n"
+  #    决策 7:非标间距状态行不走 data 抄近路,走 payload_hex 手拼。
+  #    字节:* OK[UIDVALIDITY 1]UIDs valid\r\n
+  - name: nonstandard-spacing-status
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.143", dst: "10.0.0.10", ttl: 64 }
+      - tcp:  { sport: 143, dport: 50002, flags: [PSH, ACK], seq: 5001, ack: 3023 }
+      - payload_hex: "0x2a204f4b5b55494456414c494449545920315d554944732076616c69640d0a"
