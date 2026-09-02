@@ -64,6 +64,24 @@ func TestResourceSchemaOverview(t *testing.T) {
 	}
 }
 
+// _conventions 是单独 AddResource 注册的固定 resource(URI 与 {layer} 模板路径重合,
+// 精确匹配优先)。这条测试同时兜住 embed 指令:裸 `//go:embed resources/schema` 会静默
+// 跳过 `_` 前缀文件,导致本资源在运行期 404 而编译期毫无提示。
+func TestResourceSchemaConventions(t *testing.T) {
+	srv, _ := newTestServer(t)
+	defer srv.Close()
+
+	tc := readResource(t, srv, "pmaker://schema/_conventions")
+	for _, want := range []string{"两态", "@file", "payload_hex"} {
+		if !strings.Contains(tc.Text, want) {
+			t.Errorf("_conventions 应含 %q,得到: %q", want, tc.Text)
+		}
+	}
+	if tc.MIMEType != schemaMIME {
+		t.Errorf("MIMEType=%q, 期望 %q", tc.MIMEType, schemaMIME)
+	}
+}
+
 func TestResourceSchemaLayerTCP(t *testing.T) {
 	srv, _ := newTestServer(t)
 	defer srv.Close()
@@ -318,12 +336,15 @@ func TestListEmbeddedLayers(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("embed schema 目录应非空")
 	}
-	// overview 被排除。
-	if slices.Contains(got, "overview") {
-		t.Error("overview 不应列入可用层名")
+	// 非层文档全部被排除:通则(overview / _conventions)与子结构(multipart)
+	// 都有 .md 却不能写进 stack,混进 404 提示会诱导模型写出必然被拒的 YAML。
+	for _, notLayer := range []string{"overview", "_conventions", "multipart"} {
+		if slices.Contains(got, notLayer) {
+			t.Errorf("%q 不是层,不应列入可用层名", notLayer)
+		}
 	}
-	// 应含已知层。
-	for _, want := range []string{"eth", "tcp", "dns"} {
+	// 应含已知层(含 payload_hex 这类标量层)。
+	for _, want := range []string{"eth", "tcp", "dns", "payload_hex"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("listEmbeddedLayers 应含 %q", want)
 		}

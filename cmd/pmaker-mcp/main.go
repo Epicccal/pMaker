@@ -24,7 +24,11 @@ import (
 // version 由构建时 -ldflags 注入,默认 "dev"。
 var version = "dev"
 
-//go:embed resources/schema
+// 通配 `all:` 前缀不可省:裸 `//go:embed resources/schema` 会静默跳过 `_` / `.` 开头的文件,
+// 而 `_conventions.md`、`_why_*.md` 正是这种命名(下划线前缀标记「非层文档」)。
+// 少了它,pmaker://schema/_conventions 会在运行期 404 而编译期无任何提示。
+//
+//go:embed all:resources/schema
 var schemaFS embed.FS
 
 const schemaMIME = "text/markdown"

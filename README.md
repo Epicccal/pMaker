@@ -179,6 +179,7 @@ CGO_ENABLED=0 go build -o bin/pmaker-mcp ./cmd/pmaker-mcp
 | 资源 | 作用 |
 |------|------|
 | `pmaker://schema` | 语法总览 |
+| `pmaker://schema/_conventions` | 全局通则（两态覆盖 / `@file` / Hex / 兜底 / 成帧），写任意场景前读一次 |
 | `pmaker://schema/{layer}` | 单层字段速查 |
 | `pmaker://examples` | 示例清单（动态扫描） |
 | `pmaker://examples/{protocol}/{name}` | 单个示例 YAML 原文 |

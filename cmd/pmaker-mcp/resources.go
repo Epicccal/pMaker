@@ -11,6 +11,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
 // ---------- resources: 把语法知识带内喂给模型 ----------
@@ -22,12 +24,17 @@ type resourceRegistrar interface {
 	AddResourceTemplate(template mcp.ResourceTemplate, handler server.ResourceTemplateHandlerFunc)
 }
 
-// registerResources 注册 4 个 resource(2 个固定 + 2 个 template)。
+// registerResources 注册 5 个 resource(3 个固定 + 2 个 template)。
 // 内容全部来自文件(embed 的 schema 目录 / workdir 的 examples 目录),
 // 加协议只需新增 schema/<proto>.md 或 examples/<proto>/*.yaml,Go 代码零改动。
 func (c config) registerResources(srv resourceRegistrar) {
 	// pmaker://schema —— 语法总览(读 embed 的 overview.md)。
 	srv.AddResource(schemaOverviewResource(), c.handleSchemaOverview)
+	// pmaker://schema/_conventions —— 全局通则(两态覆盖 / @file / Hex / 兜底 / 成帧)。
+	// 单独 AddResource 而非只靠 {layer} 模板命中:template 不出现在 MCP resources/list 里,
+	// 而通则是「写任意 YAML 前读一次」的东西,模型不该靠猜 URI 才能发现它。
+	// URI 与 template 路径重合,mcp-go 精确匹配优先。
+	srv.AddResource(schemaConventionsResource(), c.handleSchemaConventions)
 	// pmaker://schema/{layer} —— 单协议字段速查(embed)。
 	srv.AddResourceTemplate(schemaLayerTemplate(), c.handleSchemaLayer)
 	// pmaker://examples —— 示例清单(动态扫 workdir/examples)。
@@ -38,6 +45,13 @@ func (c config) registerResources(srv resourceRegistrar) {
 
 func schemaOverviewResource() mcp.Resource {
 	return mcp.NewResource("pmaker://schema", "pMaker 场景语法总览",
+		mcp.WithMIMEType(schemaMIME),
+	)
+}
+
+func schemaConventionsResource() mcp.Resource {
+	return mcp.NewResource("pmaker://schema/_conventions", "pMaker 全局通则",
+		mcp.WithResourceDescription("两态覆盖 / @file / Hex / 原始字节兜底 / 成帧总则,写任意场景 YAML 前读一次"),
 		mcp.WithMIMEType(schemaMIME),
 	)
 }
@@ -64,12 +78,23 @@ func exampleFileTemplate() mcp.ResourceTemplate {
 
 // handleSchemaOverview 返回 embed 的 overview.md。
 func (c config) handleSchemaOverview(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-	data, err := schemaFS.ReadFile("resources/schema/overview.md")
+	return embeddedSchemaDoc(req.Params.URI, "overview")
+}
+
+// handleSchemaConventions 返回 embed 的 _conventions.md(全局通则)。
+func (c config) handleSchemaConventions(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	return embeddedSchemaDoc(req.Params.URI, "_conventions")
+}
+
+// embeddedSchemaDoc 读 embed 的 schema/<name>.md 并包装成 resource contents。
+// name 由调用方给定(非用户输入),故不需要再过 isSafeName。
+func embeddedSchemaDoc(uri, name string) ([]mcp.ResourceContents, error) {
+	data, err := schemaFS.ReadFile("resources/schema/" + name + ".md")
 	if err != nil {
-		return nil, fmt.Errorf("读取 overview: %w", err)
+		return nil, fmt.Errorf("读取 %s: %w", name, err)
 	}
 	return []mcp.ResourceContents{mcp.TextResourceContents{
-		URI:      req.Params.URI,
+		URI:      uri,
 		MIMEType: schemaMIME,
 		Text:     string(data),
 	}}, nil
@@ -199,11 +224,20 @@ func isSafeName(s string) bool {
 	return true
 }
 
-// listEmbeddedLayers 列出 embed 里 schema/ 下可用的层名(去 .md 后缀),按字典序。
+// listEmbeddedLayers 列出可作为 `pmaker://schema/{layer}` 推荐值的**真实层名**,按字典序。
+//
+// 只取「既是 scenario 合法层名、又有 embed 文档」的交集:schema/ 下还躺着 overview、
+// _conventions 等通则文档与 multipart 这类子结构文档,它们不是层、不能写进 stack,
+// 若混进 404 提示会诱导模型写出 `- multipart: {...}` 这种必然被拒的 YAML。
+// 交集口径也免去了在此维护第二份「非层文档」名单——层名以 scenario.LayerTypes() 为准。
 func listEmbeddedLayers() []string {
 	entries, err := fs.ReadDir(schemaFS, "resources/schema")
 	if err != nil {
 		return nil
+	}
+	isLayer := make(map[string]bool, len(scenario.LayerTypes()))
+	for _, n := range scenario.LayerTypes() {
+		isLayer[n] = true
 	}
 	var names []string
 	for _, e := range entries {
@@ -211,7 +245,7 @@ func listEmbeddedLayers() []string {
 			continue
 		}
 		n := strings.TrimSuffix(e.Name(), ".md")
-		if n != "" && n != "overview" {
+		if isLayer[n] {
 			names = append(names, n)
 		}
 	}

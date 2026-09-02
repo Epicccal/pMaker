@@ -66,7 +66,7 @@ func generateYAMLTool() mcp.Tool {
 				"返回 valid=true 与落盘路径;校验失败不落盘,返回 valid=false + 结构化 errors(每个带字段路径,"+
 				"如 \"packet[2].stack[1].vlan: vid 缺失\"),供调用方据以修正后重试。"+
 				"这是写场景 YAML 的主入口:你(模型)自行编写 YAML,本工具负责校验合法性并归档。"+
-				"如不熟悉 YAML 语法,先读 resource pmaker://schema 与 pmaker://examples。"),
+				"如不熟悉 YAML 语法,先读 resource pmaker://schema、pmaker://schema/_conventions 与 pmaker://examples。"),
 		mcp.WithString("yaml",
 			mcp.Required(),
 			mcp.Description("场景 YAML 文本(完整文件内容,由调用方编写)")),
@@ -135,7 +135,7 @@ func generatePcapTool() mcp.Tool {
 				"与 generate_yaml 共用同一套校验逻辑:校验失败不写文件,返回 errors 清单(带字段路径);"+
 				"成功返回 pcap 路径、包数与每包摘要,并在 yaml/ 目录同步归档同名场景 YAML(仅扩展名不同)。"+
 				"output_name 仅文件名(不含路径,防路径穿越),文件落到 server 配置的 workdir/pcap/。"+
-				"如不熟悉 YAML 语法,先读 resource pmaker://schema 与 pmaker://examples。"),
+				"如不熟悉 YAML 语法,先读 resource pmaker://schema、pmaker://schema/_conventions 与 pmaker://examples。"),
 		mcp.WithString("yaml",
 			mcp.Required(),
 			mcp.Description("场景 YAML 文本(完整文件内容)")),
