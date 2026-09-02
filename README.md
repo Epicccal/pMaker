@@ -50,7 +50,7 @@
 | L3 | `ipv4`、`ipv6`、`gre` | next-proto 自动推导 + 覆盖 |
 | L4 | `tcp`、`udp` | checksum 绑定最近一层 IP |
 | 控制层 | `icmp`、`icmpv6` | echo + 错误报文 |
-| 应用层 | `dns`、`http`、`ftp`、`smtp`、`pop3`、`telnet`、`eml_data` | 结构化字段 + 原始回退；`eml_data` 为协议无关 RFC 5322 内容层，SMTP DATA / POP3 RETR 共用 |
+| 应用层 | `dns`、`http`、`ftp`、`smtp`、`pop3`、`imap`、`telnet`、`eml_data` | 结构化字段 + 原始回退；`eml_data` 为协议无关 RFC 5322 内容层，SMTP DATA / POP3 RETR / IMAP FETCH literal 共用 |
 | 保底字段 | `payload`、`payload_hex` | 用于畸形的原始字节 |
 
 ## 快速开始
