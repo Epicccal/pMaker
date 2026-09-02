@@ -1,0 +1,107 @@
+# examples/imap/idle_done.yaml
+#
+# IDLE(RFC 2177,已并入 9051 核心文法):客户端进入 IDLE 等待服务器推送,
+# 收到未读通知后用裸行 "DONE" 退出 IDLE。
+#
+# 覆盖点:
+#   - imap_request 命令行形式(IDLE,无 args);
+#   - imap_response continuation(tag="+",IDLE 确认);
+#   - imap_response 数据组(untagged EXISTS 推送,服务器主动);
+#   - imap_request 裸行形式(line: "DONE",IDLE 唯一退出方式 —— 形式 B 一等字段,
+#     不推到 payload,是合规主线流程);
+#   - IDLE 结束后的 tagged OK 响应。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: imap-idle
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.143", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 143, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器问候
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              status: "OK"
+              text: "IMAP4rev2 Service Ready"
+
+      # LOGIN
+      - from: src
+        stack:
+          - imap_request: { tag: "a001", command: "LOGIN", args: "alice secret" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "a001"
+              status: "OK"
+              text: "LOGIN completed"
+
+      # SELECT INBOX
+      - from: src
+        stack:
+          - imap_request: { tag: "a002", command: "SELECT", args: "INBOX" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              data: "5 EXISTS"
+          - imap_response:
+              tag: "a002"
+              status: "OK"
+              code: "READ-WRITE"
+              text: "SELECT completed"
+
+      # 进入 IDLE(无 args)
+      - from: src
+        stack:
+          - imap_request: { tag: "a003", command: "IDLE" }
+
+      # 服务器确认 IDLE(continuation,+ 前缀)
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "+"
+              text: "idling"
+
+      # 服务器推送新邮件通知(untagged EXISTS,服务器主动)
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              data: "6 EXISTS"
+
+      # 客户端退出 IDLE(裸行 DONE,形式 B 一等字段)
+      - from: src
+        stack:
+          - imap_request: { line: "DONE" }
+
+      # IDLE 结束的 tagged OK
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "a003"
+              status: "OK"
+              text: "IDLE terminated"
+
+      # LOGOUT
+      - from: src
+        stack:
+          - imap_request: { tag: "a004", command: "LOGOUT" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              status: "BYE"
+              text: "Logging out"
+          - imap_response:
+              tag: "a004"
+              status: "OK"
+              text: "LOGOUT completed"

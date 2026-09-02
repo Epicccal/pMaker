@@ -1,0 +1,120 @@
+# examples/imap/append_literal.yaml
+#
+# 同步 literal 的两段式 APPEND(RFC 9051 §4.3):client→server 同步 literal({n})
+# 须等待服务器 + 续行才能发数据,故一条 APPEND 在线上是三条消息:
+#   ① 命令行 + literal 前缀(到 {n}\r\n 为止,emit: prefix)
+#   ② 服务器续行请求(+ text)
+#   ③ 八位组数据 + 收尾 CRLF(emit: data)
+#
+# ① 与 ③ 两处写同一份 eml 内容(@file 占位符保证内容只维护一份,自动同一份字节)。
+#
+# 覆盖点:
+#   - imap_request literal.emit=prefix(第①段,仅 {n}\r\n,无数据);
+#   - imap_response continuation(tag="+",仅 text);
+#   - imap_request literal.emit=data(第③段,仅八位组 + CRLF);
+#   - literal 内容走 eml 子结构,@file 注入。
+link_type: ethernet
+seed: 42
+base_time: "2024-01-01T00:00:00Z"
+
+flows:
+  - name: imap-append
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.143", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 143, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      # 服务器问候
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              status: "OK"
+              text: "IMAP4rev2 Service Ready"
+
+      # LOGIN(先认证)
+      - from: src
+        stack:
+          - imap_request: { tag: "a001", command: "LOGIN", args: "alice secret" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "a001"
+              status: "OK"
+              text: "LOGIN completed"
+
+      # SELECT INBOX
+      - from: src
+        stack:
+          - imap_request: { tag: "a002", command: "SELECT", args: "INBOX" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "a002"
+              status: "OK"
+              code: "READ-WRITE"
+              text: "SELECT completed"
+
+      # ① APPEND 命令行 + literal 前缀(emit: prefix,仅 {n}\r\n,n 自动从 eml 内容算)
+      - from: src
+        stack:
+          - imap_request:
+              tag: "a003"
+              command: "APPEND"
+              args: 'INBOX (\Seen) "01-Jan-2024 12:00:00 +0000"'
+              literal:
+                emit: "prefix"
+                eml:
+                  headers:
+                    From: "alice@example.com"
+                    To: "bob@example.net"
+                    Subject: "Appended"
+                  body: "Hello via APPEND.\r\n"
+
+      # ② 服务器续行请求(同步 literal:客户端 MUST 等待 + 才发数据)
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "+"
+              text: "Ready for literal data"
+
+      # ③ 八位组数据 + 收尾 CRLF(emit: data,仅数据 + CRLF)
+      - from: src
+        stack:
+          - imap_request:
+              literal:
+                emit: "data"
+                eml:
+                  headers:
+                    From: "alice@example.com"
+                    To: "bob@example.net"
+                    Subject: "Appended"
+                  body: "Hello via APPEND.\r\n"
+
+      # APPEND 完成(tagged OK)
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "a003"
+              status: "OK"
+              code: "APPENDUID 3857529045 100"
+              text: "APPEND completed"
+
+      # LOGOUT
+      - from: src
+        stack:
+          - imap_request: { tag: "a004", command: "LOGOUT" }
+
+      - from: dst
+        stack:
+          - imap_response:
+              tag: "*"
+              status: "BYE"
+              text: "Logging out"
+          - imap_response:
+              tag: "a004"
+              status: "OK"
+              text: "LOGOUT completed"
