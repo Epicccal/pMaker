@@ -36,18 +36,11 @@ var nonLayerSchemaDocs = map[string]bool{
 // 批次 ④ 每重写一个文件就删掉对应一行;清空后连同本变量与下方的跳过分支一并删除。
 var pendingSnippetFiles = map[string]bool{
 	"eml_data":      true,
-	"ftp_request":   true,
-	"ftp_response":  true,
 	"http_request":  true,
 	"http_response": true,
 	"imap_request":  true,
 	"imap_response": true,
 	"multipart":     true,
-	"pop3_request":  true,
-	"pop3_response": true,
-	"smtp_request":  true,
-	"smtp_response": true,
-	"telnet":        true,
 }
 
 // ---------- 1. 覆盖性:层名 ⇄ 文档 ----------
