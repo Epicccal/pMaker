@@ -29,4 +29,6 @@
 - payload_hex: "0xdeadbeef"
 ```
 
+详见 `pmaker://schema/payload_hex`。
+
 > `payload_hex` 是 hex 编码字段,`@file` 注入原始字节会破坏 hex 语义;二进制内容请用 `payload`。

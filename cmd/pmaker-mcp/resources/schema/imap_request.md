@@ -4,7 +4,9 @@
 (RFC 9051)命令有三种形式,由字段组合决定:
 
 - **命令行形式(A)**:`tag` + `command`(+ `args` + `literal`),输出 `tag SP command[ SP args][ SP literal]\r\n`。
-- **裸行形式(B)**:仅 `line`(如 IDLE 退出 `DONE`),输出 `line\r\n`。一等字段,不推到 `payload`。
+- **裸行形式(B)**:仅 `line`,输出 `line\r\n`。一等字段,不推到 `payload`。承担三种整行内容:
+  IDLE 退出的 `DONE`、**SASL 认证的 base64 续行**(接在服务器 `+` 挑战之后)、
+  **取消同步 literal 的 `*`**(RFC 9051 §4.3)。
 - **literal 八位组形式(C)**:`literal.emit: data`,仅输出 literal 数据 + `\r\n`
   (同步 literal 三段式的第③段,接在服务器 `+` 续行之后)。
 
@@ -19,11 +21,12 @@
 - imap_request: { tag: "a003", command: "IDLE" }   # 无 args
 ```
 
-裸行形式(IDLE 退出 `DONE`,形式 B):
+裸行形式(形式 B,`line` 承担全部整行内容):
 
 ```yaml
-- imap_request:
-    line: "DONE"
+- imap_request: { line: "DONE" }                    # 退出 IDLE
+- imap_request: { line: "dXNlcgB1c2VyAHBhc3M=" }    # SASL base64 续行(接服务器 "+" 挑战)
+- imap_request: { line: "*" }                       # 取消同步 literal(RFC 9051 §4.3)
 ```
 
 同步 literal 三段式 APPEND(① 命令行 + 前缀 `emit: prefix`;③ 八位组 `emit: data`,
@@ -70,7 +73,7 @@
 | `tag` | string | 形式 A 必填 | 命令标签(atom,原样输出);**不能含 `+`** 及 atom-specials(`( ) { SP % * " \`、CTL);非法 tag 走 `payload`/`payload_hex` |
 | `command` | string | 形式 A 必填 | RFC 9051 已知命令(大小写不敏感,校验后原样输出);未列入走 `payload`/`payload_hex` |
 | `args` | string | 视命令 | 命令参数(按命令策略要求有/无);**不能含 `\r` / `\n`** |
-| `line` | string | 形式 B 必填 | 裸行内容(如 `DONE`);与 `tag`/`command`/`args`/`literal` 互斥(裸行无参数位,整行内容都写在 `line` 里,尾随垃圾等畸形亦然);**不能含 `\r` / `\n`** |
+| `line` | string | 形式 B 必填 | 裸行内容:`DONE`(退出 IDLE)/ SASL base64 续行 / `*`(取消同步 literal);与 `tag`/`command`/`args`/`literal` 互斥(裸行无参数位,整行内容都写在 `line` 里,尾随垃圾等畸形亦然);**不能含 `\r` / `\n`** |
 | `literal` | `IMAPLiteral` 子结构 | 否 | 命令行内嵌 literal(同步 `{n}` / 非同步 `{n+}` / 二进制 `~{n}`);详见下表 |
 
 ## IMAPLiteral 子结构(请求侧)
