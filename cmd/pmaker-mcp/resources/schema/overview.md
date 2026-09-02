@@ -49,7 +49,7 @@ flows:
       - from: src              # src | dst
         message_id: req1       # 可选,供其它 flow 的 start_after 引用
         offset_time: +100ms    # 可选,相对上一条消息末尾
-        segment: { mss: 8, interval: "+10ms" }  # 可选,切段 + 段间隔
+        segment: { mss: 8, interval: "+10ms" }  # 可选,切段大小 + 段间隔;与 tcp.mss 通告值无关
         stack:
           - http_request: { method: GET, url: /index.html, headers: { Host: example.com } }
       - from: dst
@@ -58,6 +58,8 @@ flows:
 ```
 
 **约束**:flow.stack 须含 `eth` + `tcp` + 恰好一个网络层(`ipv4` 或 `ipv6`);每条 message 须 ≥1 个 payload 生产层,按声明顺序拼接(standalone packet 同此规则)。
+
+**单段字节上限(写大 body 时必读)**:一条 message 的全部字节默认作为**单个 TCP 段**发出 —— 不写 `segment.mss` 就不切段,`tcp.mss` 也不会代劳(它只是 SYN 通告值,见 `pmaker://schema/tcp`)。而单个包受 IP 长度字段约束(uint16,上限 65535):超出时 `total_length` / `payload_length` 会**静默回绕**成错误值,不报错、包体不截断,产出的是解析端会当场读歪的包。因此 body 可能较大时 —— **尤其是用 `@file(...)` 注入外部文件** —— 必须显式写 `segment.mss` 切段,取值通常与本 flow `tcp.mss` 的通告值一致(如 `segment: { mss: 1460 }`)。几百字节的小 body 无需写。
 
 ## 时间字段
 
