@@ -51,7 +51,6 @@ var pendingSnippetFiles = map[string]bool{
 	"ipv4":          true,
 	"ipv6":          true,
 	"multipart":     true,
-	"overview":      true,
 	"payload":       true,
 	"payload_hex":   true,
 	"pop3_request":  true,
