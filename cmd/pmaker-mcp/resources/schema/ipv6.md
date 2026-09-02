@@ -1,19 +1,93 @@
 # ipv6 —— IPv6 层(L3)
 
+网络层。字段与 `ipv4` 一一对应但命名不同(`hop_limit` / `next_header` / `payload_length`)。
+通则(两态覆盖 / 兜底 / `@file`)见 `pmaker://schema/_conventions`。
+
+## 骨架
+
 ```yaml
-- ipv6: { src: "2001:db8::1", dst: "2001:db8::2", hop_limit: 64, traffic_class: 0, flow_label: 0, next_header: tcp }
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::1", dst: "2001:db8::2", hop_limit: 64 }
+      - tcp:  { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }
 ```
+
+## 字段
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `src` | IPv6 字符串 | 是 | 源地址 |
 | `dst` | IPv6 字符串 | 是 | 目的地址 |
-| `hop_limit` | uint8 | 否 | 跳数限制(类比 IPv4 ttl),缺省 64 |
+| `hop_limit` | uint8 | 否(缺省 64) | 跳数限制(对应 IPv4 的 `ttl`) |
 | `traffic_class` | uint8 | 否 | 流量类别 |
 | `flow_label` | uint32 | 否 | 流标签 |
-| `next_header` | string | 否 | 显式覆盖下一层协议(`tcp`/`udp`/`icmpv6`/`ipv4`/`ipv6`);制造断链用 |
-| `payload_length` | `Hex` | 否 | 两态覆盖(16 位,上限 `0xFFFF`):不写=自动计算(载荷字节数,不含 40B 头);写值=原样上 wire(构造撒谎长度),`0x10000+` 会在校验阶段被拒 |
+| `next_header` | **枚举名** | 否 | 覆盖下一层协议号,**只认名字**:`tcp` `udp` `icmp` `icmpv6`/`icmp6` `gre` `ipv4` `ipv6` |
+| `payload_length` | `Hex` | 否 | 两态覆盖(16 位):不写=自动计算(**不含** 40 字节固定头);写值=原样上 wire |
 
-## next-proto 串接
+next-header 自动推导:后接 `tcp` → 6、`udp` → 17、`icmpv6` → 58、`gre` → 47、`ipv6` → 41、
+**其余一切情况一律落 6(TCP)**,见「静默陷阱」。
 
-后接 `tcp` → 6;`udp` → 17;`icmpv6` → 58;显式 `next_header` 制造断链。`payload_length` 两态覆盖构造撒谎长度。
+## 组合规则(硬错)
+
+- `src` / `dst` 缺一不可;**必须是真 IPv6**,`src: "10.0.0.1"` 会在出包阶段报
+  `src ip "10.0.0.1" 不是合法 IPv6`(`generate_yaml` 阶段放行)。
+- IPv6 无头部校验和,故本层**无 `checksum` 字段**;上层 TCP/UDP/ICMPv6 的校验和照常绑 IPv6 伪首部。
+- 无 `header_length`(IPv6 固定 40 字节头)。
+- `flow.stack` 里不能写 `payload_length`(length 覆盖在 flow 中被拒),这类畸形走 `packets`。
+- `flow.stack` 的网络层 `ipv4` / `ipv6` 二选一,不能同时出现。
+
+## 静默陷阱
+
+- **`next_header` 只认上表那几个名字,其它一律静默变成 TCP(6)**。写 `next_header: 43`
+  (Routing 扩展头)或 `next_header: hopopt` 都出 6,不报错、不告警。
+- 扩展头(Hop-by-Hop、Routing、Fragment、Destination Options)**完全未实现**。IPv6 分片、
+  扩展头链规避等场景只能整段 `payload_hex` 手拼。
+- 覆盖 `payload_length` 会给整包关掉 `FixLengths`,同包其它层的自动长度也随之失效。
+- `payload_length` 的自动值**不含** 40 字节固定头 —— 与 `ipv4.total_length`(含头)相反,
+  手写覆盖值时别照搬 IPv4 的算法。
+
+## 畸形构造
+
+| 想构造 | 用 |
+|--------|-----|
+| 撒谎的载荷长度 | `payload_length: 9999` |
+| 解析断链 | `next_header: udp` 但下一层实际写 `tcp` |
+| 扩展头链 / IPv6 分片 | 无字段,整段 `payload_hex` |
+| 错误的上层校验和 | 写在 `tcp` / `udp` / `icmpv6` 的 `checksum` 上 |
+
+## 报错 → 改法
+
+| 报错含 | 改法 |
+|--------|------|
+| `ipv6.payload_length 超出 16 位` | 上限 `0xFFFF`(IPv6 载荷长度就是 16 位)。Jumbogram(RFC 2675,长度 0 + Hop-by-Hop 选项)当前不支持,走 `payload_hex` |
+| `stack 的网络层 ipv4 与 ipv6 不可同时出现` | 这是 `flow.stack` 的约束(一条 TCP 连接只有一个网络层)。要构造 IPv6-in-IPv4 之类的隧道会话,用 `packets` 逐包写 |
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - ipv6: { src: "2001:db8::1", dst: "2001:db8::2", payload_length: 0x10000 }
+      - tcp:  { sport: 1, dport: 2 }
+```
+
+```yaml-bad
+link_type: ethernet
+flows:
+  - name: f
+    stack:
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.80" }
+      - ipv6:        { src: "2001:db8::1", dst: "2001:db8::2" }
+      - tcp:         { sport: 49152, dport: 80 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - payload: { payload: "hi" }
+```
+
+## 相关
+
+`pmaker://schema/ipv4`、`pmaker://schema/icmpv6`、`pmaker://schema/tcp`、`pmaker://schema/payload_hex`
