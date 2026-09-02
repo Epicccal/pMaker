@@ -146,6 +146,12 @@ func decodeFields(typ string, val *yaml.Node) (any, error) {
 	case "pop3_response":
 		var f POP3ResponseFields
 		return &f, decodeKnownFields(val, typ, &f)
+	case "imap_request":
+		var f IMAPRequestFields
+		return &f, decodeKnownFields(val, typ, &f)
+	case "imap_response":
+		var f IMAPResponseFields
+		return &f, decodeKnownFields(val, typ, &f)
 	case "eml_data":
 		var f EMLDataFields
 		return &f, decodeKnownFields(val, typ, &f)

@@ -246,6 +246,10 @@ func isPayloadProducingLayer(l Layer) bool {
 		return l.Type == "pop3_request"
 	case *POP3ResponseFields:
 		return l.Type == "pop3_response"
+	case *IMAPRequestFields:
+		return l.Type == "imap_request"
+	case *IMAPResponseFields:
+		return l.Type == "imap_response"
 	case *EMLDataFields:
 		return l.Type == "eml_data"
 	case *PayloadFields:

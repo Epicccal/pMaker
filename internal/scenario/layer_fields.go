@@ -248,6 +248,75 @@ type (
 		EML     *EMLDataFields `yaml:"eml"`     // 多行 RFC 5322 正文(RETR/TOP);复用 eml_data 子结构(其只产纯内容,dot-stuff + 终止符由 POP3 接入层追加);与 lines 互斥
 	}
 
+	// IMAPRequestFields 是一条 IMAP 客户端输入(RFC 9051)。三形式互斥:
+	//   A. 命令行:tag + command [+ args] [+ literal],序列化为 "tag SP command [SP args] [SP literal]\r\n"
+	//   B. 裸行:  line(DONE / AUTHENTICATE 续行 base64 / 取消 literal 的 "*"),序列化为 "line\r\n"
+	//   C. 八位组:literal.emit = data(同步 literal 的第二个 TCP 消息),序列化为 <八位组> + "\r\n"
+	//
+	// IMAP 是「行 + 长度前缀混合定界」(RFC 9051 §2.2):literal 嵌在命令/响应中间,前后都有
+	// 文本。client→server 同步 literal({n})须等待服务器 + 续行才能发数据,故一条 APPEND 在线上
+	// 是三条消息(① 命令行+{n}\r\n ② 服务器 + ③ 八位组+CRLF),用 emit 三态表达(决策 4)。
+	//
+	// tag 原样输出(不强制大写),保留大小写构造能力(RFC 9051 §2.2 tag 大小写敏感);
+	// tag 字符集:1*<any ASTRING-CHAR except "+">,+ 被显式排除(与 continuation 的 + 前缀歧义),
+	// ] 合法(resp-specials)。非标/私有命令、非末位 literal 等结构化路径表达不了的形态走
+	// payload/payload_hex(与全项目「非标值走原始字节兜底」一致)。
+	IMAPRequestFields struct {
+		Tag     string       `yaml:"tag"`     // 1*<any ASTRING-CHAR except "+">;形式 A 必填;非空、不含 + 与 atom-specials
+		Command string       `yaml:"command"` // 已知命令表(大小写不敏感,原样输出);形式 A 必填;非标/私有命令走 payload/payload_hex
+		Args    string       `yaml:"args"`    // 命令参数裸透传,不解析;有/无按命令策略校验;禁含裸 \r \n
+		Line    string       `yaml:"line"`    // 形式 B:裸行文本(DONE / SASL base64 续行 / 取消 literal 的 *);与 tag/command/args 互斥;禁含裸 \r \n
+		Literal *IMAPLiteral `yaml:"literal"` // 长度前缀八位组(可附在命令行末尾,或 emit=data 作为形式 C 独立消息)
+	}
+
+	// IMAPResponseFields 是一条 IMAP 服务器响应(RFC 9051)。tag 三态定型:具体 tag = tagged;
+	// "*" = untagged;"+" = continuation。首 token ∈ {tag, *, +} 三选一且互斥。
+	//
+	// 字段分两组,由文法判别、互斥(决策 7):
+	//   状态组 status+code+text —— resp-cond-state(OK/NO/BAD)/ resp-cond-bye(BYE)/ resp-cond-auth(PREAUTH)
+	//   数据组 data+literal+tail —— mailbox-data / message-data / capability-data / enable-data
+	// 未标记状态响应(如 "* OK [UIDVALIDITY 3857529045] UIDs valid")走状态组,
+	// 不得写进 data;非标间距等成帧畸形走 payload / payload_hex。
+	//
+	// data 的首 token 不得为 OK/NO/BAD/PREAUTH/BYE(那是状态形式,后跟 SP 或行尾,大小写不敏感)——
+	// 这条才真正封死「状态响应误写进 data」的歧义。data/literal/tail 须依附数据组;
+	// code/text 须依附状态组。tag "+" 时仅 text 允许(continue-req = "+" SP (resp-text / base64) CRLF)。
+	IMAPResponseFields struct {
+		Tag     string       `yaml:"tag"`     // tag / "*" / "+";空报错
+		Status  string       `yaml:"status"`  // OK/NO/BAD/PREAUTH/BYE(大小写不敏感,原样输出);tagged(具体 tag)仅 OK/NO/BAD;依附状态组
+		Code    string       `yaml:"code"`    // resp-text-code 方括号内内容,不做白名单(atom 兜底,开放扩展槽);禁含 ] 与裸 \r \n;依附状态组
+		Text    string       `yaml:"text"`    // resp-text 的 text 部分;tag "+" 时唯一允许的字段;禁含裸 \r \n;依附状态组
+		Data    string       `yaml:"data"`    // 数据形式响应体(literal 之前的文本);仅 tag "*";首 token 不得为 OK/NO/BAD/PREAUTH/BYE;禁含裸 \r \n
+		Literal *IMAPLiteral `yaml:"literal"` // 嵌在 data 之后的长度前缀内容;须依附 data(非空)
+		Tail    string       `yaml:"tail"`    // literal 之后的文本(如 msg-att 的收尾 ")");须依附 data(非空);禁含裸 \r \n
+	}
+
+	// IMAPLiteral 是一段长度前缀八位组(RFC 9051 §4.3)。IMAP 的核心定界机制:
+	// "{" number64 ["+"] "}" CRLF *CHAR8(同步 {n} / 非同步 {n+})或
+	// "~{" number64 "}" CRLF *OCTET(literal8 BINARY,仅 server→client)。
+	//
+	// 八位组内容三选一:eml(复用 eml_data 子结构,取纯 RFC 5322 内容,IMAP 加 {n} 前缀,
+	// 不做 dot-stuffing/终止符)/ data(字面八位组)/ data_hex(十六进制,配 binary: true)。
+	//
+	// octets 两态覆盖(nil = 自动算实际字节数;非 nil = 原样落值,关闭自动计算),对齐
+	// checksum / length 先例:声明 octets: 9999 而实际 342 字节是构造「计数撒谎」解析器
+	// 攻击用例的唯一手段,必须原样落值。计数不一致产软告警(非硬错)。
+	//
+	// sync 缺省 true = {n};false = {n+} 非同步(仅 client→server,server MUST NOT 发)。
+	// binary true = literal8 "~{n}"(仅 server→client BINARY FETCH);literal8 文法上无 {n+}
+	// 非同步形式,故 binary: true 且 sync: false → 硬错(决策 8)。
+	// emit: full(缺省)= {n}\r\n+数据;prefix = 仅 {n}\r\n(同步 literal 第①段);
+	// data = 仅数据(同步 literal 第③段)。
+	IMAPLiteral struct {
+		EML     *EMLDataFields `yaml:"eml"`      // RFC 5322 内容,复用 eml_data 子结构(取纯内容,IMAP 加 {n} 前缀,无 dot-stuffing/终止符)
+		Data    string         `yaml:"data"`     // 字面八位组
+		DataHex string         `yaml:"data_hex"` // 十六进制八位组(二进制,配 binary: true)
+		Octets  *int           `yaml:"octets"`   // 两态:nil=自动算;非 nil=原样落值(关闭自动计算)
+		Sync    *bool          `yaml:"sync"`     // 缺省 true={n};false={n+} 非同步,仅 client→server
+		Binary  bool           `yaml:"binary"`   // true=literal8 "~{n}"(RFC 9051 §4.3.1,仅 server→client)
+		Emit    string         `yaml:"emit"`     // full(缺省)/prefix/data
+	}
+
 	// EMLDataFields 是一封 RFC 5322 邮件内容(headers + body)，协议无关的**内容层**。
 	// 一个 eml_data 层 = 一封完整邮件内容，序列化为 TCP payload 字节（纯 RFC 5322 内容，
 	// 不含成帧）。
