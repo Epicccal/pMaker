@@ -29,6 +29,6 @@
 - 禁带 args:STAT / NOOP / RSET / QUIT / CAPA / STLS
 - 可选 args:LIST / UIDL(无参=多行响应;有参=msg#,单行响应)
 
-> 命令大小写不敏感;非标/私有命令请用 `payload`/`payload_hex`。RETR/TOP 的响应正文用 `pop3_response` 的 `eml` 字段(复用 `eml_data` 子结构,POP3 接入层自动 dot-stuffing + 终止符)。
+> 命令大小写不敏感;非标/私有命令请用 `payload`/`payload_hex`。RETR/TOP 的响应正文用 `pop3_response` 的 `eml` 字段(字段与 `eml_data` 同构,POP3 会自动做 dot-stuffing 并追加终止符)。
 >
 > **SASL 续行响应限制**:`pop3_request` 的 `command` 必填且恒输出,无法产生 SASL 续行所需的裸 base64 行(RFC 1734 §3:AUTH 后续往返是 "a line containing a BASE64 encoded string",无命令前缀)。客户端的 SASL 续行响应须用 `payload`/`payload_hex` 承载裸 base64(参见 `examples/pop3/auth_sasl.yaml`)。
