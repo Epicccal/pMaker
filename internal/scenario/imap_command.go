@@ -127,14 +127,9 @@ func validateIMAPCommand(c string) (string, error) {
 
 // imapStatusWords 是 IMAP 响应状态码白名单(RFC 9051 §9 resp-cond-state / resp-cond-bye / resp-cond-auth)。
 // tagged 响应仅 OK/NO/BAD(resp-cond-state);PREAUTH/BYE 只能 untagged。
+//
+// 这几个关键字只会出现在 Status 参数中，不应当出现在 Data 开头，避免用户误写
 var imapStatusWords = map[string]bool{
-	"OK": true, "NO": true, "BAD": true, "PREAUTH": true, "BYE": true,
-}
-
-// imapDataForbiddenFirstTokens 是数据形式 data 字段首 token 不得取的词
-// (RFC 9051 §9:这些词是状态形式首 token,数据形式首 token 恒为数字或 FLAGS/LIST/STATUS 等 atom,
-// 与这五个词不碰)。判别式照抄文法,封死「状态响应误写进 data」的歧义(决策 7)。
-var imapDataForbiddenFirstTokens = map[string]bool{
 	"OK": true, "NO": true, "BAD": true, "PREAUTH": true, "BYE": true,
 }
 
@@ -409,5 +404,5 @@ func imapDataFirstTokenIsStatus(data string) bool {
 		}
 	}
 	tok := strings.ToUpper(t[:end])
-	return imapDataForbiddenFirstTokens[tok]
+	return imapStatusWords[tok]
 }
