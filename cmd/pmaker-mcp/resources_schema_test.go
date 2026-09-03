@@ -29,13 +29,6 @@ var nonLayerSchemaDocs = map[string]bool{
 	"multipart": true, // 子结构(嵌在 http_*/eml_data 内),不能写进 stack
 }
 
-// pendingSnippetFiles 列出尚未按新 fence 约定重写的 schema 文档。
-// 它们的 ```yaml fence 目前多是片段(如 `- eth: { ... }`)而非完整 scenario,
-// 过不了 Parse+Validate,故整文件跳过。
-//
-// 批次 ④ 每重写一个文件就删掉对应一行;清空后连同本变量与下方的跳过分支一并删除。
-var pendingSnippetFiles = map[string]bool{}
-
 // ---------- 1. 覆盖性:层名 ⇄ 文档 ----------
 
 func TestSchemaLayerCoverage(t *testing.T) {
@@ -62,9 +55,6 @@ func TestSchemaLayerCoverage(t *testing.T) {
 
 func TestSchemaSnippetsValid(t *testing.T) {
 	for _, name := range schemaDocNames(t) {
-		if pendingSnippetFiles[name] {
-			continue
-		}
 		t.Run(name, func(t *testing.T) {
 			for _, f := range schemaFences(t, name) {
 				err := parseAndValidate(f.body)

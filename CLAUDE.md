@@ -86,10 +86,11 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   `generate_yaml`(校验模型自写的场景 YAML,通过则落盘到 workdir/yaml/ 归档/复现,返回带字段路径的结构化错误)、
   `generate_pcap`(校验同一份 YAML 并出包到 workdir/pcap/,同时在 workdir/yaml/ 同步归档同名场景 YAML,文件名一致仅扩展名不同)。两工具共用同一套校验逻辑(`scenario.Parse` + `Validate` +
   `Warnings`,从 YAML 文本解析,无文件路径依赖);`validate` 不再单独成工具——校验是前两个工具的内建步骤。
-  另暴露 **Resources**(`pmaker://schema`、`pmaker://schema/{layer}`、`pmaker://examples`、
-  `pmaker://examples/{protocol}/{name}`)把语法与示例带内喂给模型:schema 每协议一份 markdown
-  (`cmd/pmaker-mcp/resources/schema/<proto>.md`,整体 embed),examples 动态扫 workdir;
-  加协议只加文件、Go 代码零改动。
+  另暴露 **Resources**(`pmaker://schema`、`pmaker://schema/_conventions`、`pmaker://schema/{layer}`、
+  `pmaker://examples`、`pmaker://examples/{protocol}/{name}`)把语法与示例带内喂给模型:
+  `_conventions` 是全局通则(两态覆盖 / `@file` / Hex / 兜底 / 成帧,写任意场景前读一次),
+  schema 每协议一份 markdown(`cmd/pmaker-mcp/resources/schema/<proto>.md`,整体 embed),
+  examples 动态扫 workdir;加协议只加文件、Go 代码零改动。
 - **文件占位符 `@file(<path>)`**:在 `scenario.Parse` 阶段扫描全部 string 字段,把 `@file(...)`
   替换为对应文件的原始字节(支持二进制;可只占字段值的一部分,可多个拼接;`@@` 转义为字面 `@`,
   裸 `@` 原样保留)。绝对路径原样用;相对路径相对 `baseDir`(CLI 传 scenario 文件所在目录,
