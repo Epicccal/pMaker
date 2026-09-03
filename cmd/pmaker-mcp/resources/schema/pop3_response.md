@@ -1,67 +1,99 @@
 # pop3_response —— POP3 服务器响应(L7,走 tcp)
 
-单行 `+OK`/`-ERR [text]\r\n`,或多行(`status` 行 + 正文 + `<CRLF>.<CRLF>` 终止符);
-SASL 续行挑战为 `+ [base64]\r\n`(RFC 1734/4954,单字符 `+` 而非 `+OK`)。
-`status` 原样输出(不强制大写),保留 `+ok`/`-err` 等大小写构造能力;非标状态指示符走
-`payload`/`payload_hex`。
+一条响应 = 一个 `pop3_response` 层,序列化为 TCP payload。单行 `+OK`/`-ERR [text]\r\n`,
+或多行(`status` 行 + 正文 + `<CRLF>.<CRLF>` 终止符);SASL 续行挑战为 `+ [base64]\r\n`
+(RFC 1734/4954,单字符 `+` 而非 `+OK`)。`status` 原样输出(不强制大写)。
+通则见 `pmaker://schema/_conventions`。
 
-单行(`message`):
-
-```yaml
-- pop3_response:
-    status: "+OK"
-    message: "POP3 server ready"
-```
-
-多行普通行列表(`lines`,如 LIST/UIDL 扫描列表、CAPA 能力列表):
+## 骨架
 
 ```yaml
-- pop3_response:
-    status: "+OK"
-    lines:
-      - "1 1200"
-      - "2 840"
-      - "3 512"
+link_type: ethernet
+flows:
+  - name: pop3-greeting
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.110", dst: "10.0.0.10", ttl: 64 }
+      - tcp:  { sport: 110, dport: 49152, client_isn: 1000, server_isn: 5000 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - pop3_response: { status: "+OK", message: "POP3 server ready" }
 ```
 
-多行 RFC 5322 邮件正文(`eml`,RETR/TOP,复用 `eml_data` 子结构):
-
-```yaml
-- pop3_response:
-    status: "+OK"
-    eml:
-      headers:
-        From: alice@example.com
-        Subject: Hello
-      body: "Hi there.\r\n"
-```
-
-多行响应首行带说明文本(`message` + `lines`/`eml`,RFC 1939 §3 合法形态):
-LIST 的 `+OK 2 messages (320 octets)`、CAPA 的 `+OK Capability list follows`、
-RETR 的 `+OK message 1 follows` 等都是首行带文本的多行响应。
-
-```yaml
-- pop3_response:
-    status: "+OK"
-    message: "2 messages (320 octets)"
-    lines:
-      - "1 1200"
-      - "2 2000"
-```
-
-SASL 续行挑战(`status: "+"`,`message` 承载 base64 挑战,RFC 1734/4954):
-
-```yaml
-- pop3_response:
-    status: "+"
-    message: "AGFsaWNlAHNlY3JldA=="
-```
+## 字段
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `status` | string | 是 | `+OK` / `-ERR` / `+`(大小写不敏感,原样输出);`+` 为 RFC 1734/4954 SASL 续行挑战;非标状态指示符走 `payload`/`payload_hex` |
-| `message` | string | 否 | 状态行附带文本:单独非空=单行 `status message\r\n`(SASL 续行则承载 base64 挑战);与 `lines`/`eml` 组合=多行首行带说明文本(RFC 1939 §3);**不能含 `\r` / `\n`**(注入换行符会产出额外响应行,畸形 POP3 字节流请用 `payload`/`payload_hex`) |
-| `lines` | []string | 否 | 多行普通行(LIST/UIDL/CAPA…);逐行 dot-stuffing + `<CRLF>.<CRLF>` 终止符;与 `eml` 互斥。**每个元素是一行逻辑内容,不应包含换行符(`\n`/`\r\n`)**——行边界由 builder 在 join 时注入 `\r\n`,元素内嵌换行符不会被识别为行边界,dot-stuffing 也不会在该位置生效。需要构造含嵌入换行的行(畸形场景)请用 `payload`/`payload_hex`。 |
-| `eml` | `eml_data` 子结构 | 否 | 多行 RFC 5322 正文(RETR/TOP);字段与 `eml_data` 同构(POP3 会自动做 dot-stuffing 并追加终止符),详见 `pmaker://schema/eml_data`;与 `lines` 互斥 |
+| `status` | string | **是** | `+OK` / `-ERR` / `+`(大小写不敏感、**原样输出**);`+` = RFC 1734/4954 SASL 续行挑战 |
+| `message` | string | 条件 | 状态行附带文本;**不能含 `\r` / `\n`** |
+| `lines` | []string | 条件 | 多行普通行(LIST/UIDL/CAPA);**每元素 = 一行,不应含换行符**——行边界由 builder 注入 |
+| `eml` | `eml_data` 子结构 | 条件 | 多行 RFC 5322 正文(RETR/TOP)→ `pmaker://schema/eml_data` |
 
-> `message` 可与 `lines`/`eml` 任意组合(多行首行带说明文本),也可单独(单行响应);`lines` 与 `eml` 互斥。`message`/`lines`/`eml` 至少其一非空(裸 status 行走 `payload`/`payload_hex`)。**多行正文(`lines`/`eml`)仅 `+OK` 可用** —— RFC 1939 §3 多行响应均 `+OK` 起始(LIST/RETR/TOP/UIDL/CAPA);`-ERR` 永远单行,RFC 1734/4954 SASL 续行 `+` 也是单行挑战,二者搭配 `lines`/`eml` 会被校验拦截(非标多行响应请用 `payload`/`payload_hex`)。多行正文(dot-stuffing + `<CRLF>.<CRLF>`)与 SMTP DATA 同一框架规则;`status` 行不参与 dot-stuff。CAPA 响应用 `lines`(能力标签不区分大小写,如 `SASL CRAM-MD5 KERBEROS_V4`、`STLS`)。SASL 续行挑战用 `status: "+"` + `message: <base64>`(RFC 1734/4954)。**客户端的 SASL 续行响应是一行裸 base64(RFC 1734 §3:"a line containing a BASE64 encoded string",无命令前缀),`pop3_request` 的 `command` 恒输出、无法产生裸 base64 行,须用 `payload`/`payload_hex` 承载**(与私有命令走原始字节兜底同理)。
+`message` / `lines` / `eml` 三者至少其一非空;`lines` 与 `eml` 互斥。
+
+## 组合规则(硬错)
+
+- `status` 非空且为 `+OK` / `-ERR` / `+`(大小写不敏感);非标状态指示符走 `payload` / `payload_hex`。
+- `lines` 与 `eml` 互斥(多行正文二选一)。
+- `message` 可与 `lines` / `eml` 组合 → 多行响应首行带说明文本(RFC 1939 §3 合法形态,
+  如 LIST 的 `+OK 2 messages (320 octets)`、CAPA 的 `+OK Capability list follows`)。
+- **多行正文(`lines` / `eml`)仅 `+OK` 可用**:`-ERR` 永远单行,`+` 是单行 SASL 挑战,
+  二者搭配 `lines` / `eml` 会被拦。
+- `message` / `lines` 元素不能含 `\r` / `\n`(会注入额外响应行)。
+- `eml` 非空时委托 `eml_data` 子结构校验(见 `pmaker://schema/eml_data`)。
+
+## 静默陷阱
+
+- **`lines` 元素内嵌 `\n` 不会成为行边界**,dot-stuffing 也不在该位置生效 → 产出的字节与
+  预期不符且无告警。需要嵌入换行走 `payload` / `payload_hex`。
+- **`message` 内嵌 `\r` / `\n` 会被校验拦下**(与 `lines` 不同,`message` 是硬错而非静默)。
+- 成帧(dot-stuffing + `<CRLF>.<CRLF>` 终止符)由接入层强制追加,**无 opt-out**;
+  `status` 行本身不参与 dot-stuff(只有其后的多行正文才 stuff)。缺终止符 / 缺 dot-stuffing
+  的成帧畸形走 `payload` / `payload_hex`。
+- CAPA 响应用 `lines`(能力标签不区分大小写,如 `SASL CRAM-MD5 KERBEROS_V4`、`STLS`,RFC 2449)。
+
+## 畸形构造
+
+| 想构造 | 用 |
+|--------|-----|
+| 非标状态指示符(`+OKAY`) | `payload` / `payload_hex` |
+| 裸 status 行(无 text 无正文) | `payload` |
+| 缺终止符 / 缺 dot-stuffing | `payload_hex`(成帧自动追加且不可关闭) |
+| 客户端 SASL 续行(裸 base64 行) | `payload`——`pop3_request.command` 恒输出,产不出裸行 |
+| `lines` 元素含嵌入换行 | `payload` / `payload_hex` |
+
+## 报错 → 改法
+
+`status` 非法一条**不收录**——校验器文案已自带「非标状态指示符请用 payload / payload_hex」。
+下面两条改法有增量信息(指向另一个字段):
+
+| 报错含 | 改法 |
+|--------|------|
+| `lines 与 eml 互斥,只能配置一个多行正文` | 多行正文二选一;首行说明文本改用 `message`,它可与任一多行正文共存 |
+| `永远单行(RFC 1939 §3),不接受多行正文` | 想给 `-ERR` 补说明文本用 `message`;确要非标多行 `-ERR` 走 `payload_hex` |
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.110", dst: "10.0.0.10" }
+      - tcp:  { sport: 110, dport: 49152, flags: [PSH, ACK] }
+      - pop3_response: { status: "+OK", lines: ["1 1200"], eml: { headers: { From: "a@b" } } }
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.110", dst: "10.0.0.10" }
+      - tcp:  { sport: 110, dport: 49152, flags: [PSH, ACK] }
+      - pop3_response: { status: "-ERR", lines: ["boom"] }
+```
+
+## 相关
+
+`pmaker://schema/pop3_request`、`pmaker://schema/eml_data`、`pmaker://schema/tcp_session`、`pmaker://examples/pop3/retr_file.yaml`、`pmaker://examples/pop3/auth_sasl.yaml`

@@ -3,6 +3,7 @@ package scenario
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -75,87 +76,84 @@ func yamlFieldNames(out interface{}) map[string]bool {
 	return allowed
 }
 
-func decodeFields(typ string, val *yaml.Node) (any, error) {
-	switch typ {
-	case "eth":
-		var f EthFields
+// layerDecoder 把一个 layer 的 YAML 值节点解码成对应的 *Fields(或标量层的值类型)。
+// typ 仅用于错误信息(未知字段报错要点名是哪个层)。
+type layerDecoder func(val *yaml.Node, typ string) (any, error)
+
+// fieldsDecoder 生成「解码进 T 并校验未知字段」的标准 decoder,覆盖绝大多数层。
+// 与原 switch 分支逐字等价:即便 decodeKnownFields 报错也返回非 nil 的 *T
+// (调用方 Layer.UnmarshalYAML 只在 err == nil 时用 Fields,此处保持原行为)。
+func fieldsDecoder[T any]() layerDecoder {
+	return func(val *yaml.Node, typ string) (any, error) {
+		var f T
 		return &f, decodeKnownFields(val, typ, &f)
-	case "vlan":
-		var f VLANFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "ipv4":
-		var f IPv4Fields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "ipv6":
-		var f IPv6Fields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "gre":
-		var f GREFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "tcp":
-		var f TCPFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "tcp_session":
-		var f TCPSessionFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "udp":
-		var f UDPFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "icmp":
-		var f ICMPFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "icmpv6", "icmp6":
-		var f ICMPv6Fields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "payload":
-		var f PayloadFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "payload_hex":
+	}
+}
+
+// layerDecoders 是**合法层名的单一真相源**:键 = YAML 里可写的层名,值 = 该层的解码器。
+// 成员关系即「已知层」,LayerTypes() 直接由它派生,decodeFields 也只查它——
+// 加层只在此一处登记,不存在「加了 case 忘了别处、层名有实现却无文档入口」的路径
+// (与 imapCommands / ftpCommands 等单表同一套理由)。
+//
+// MCP 的 schema resource 覆盖性测试(cmd/pmaker-mcp)拿 LayerTypes() 与
+// resources/schema/*.md 双向比对,故新增层必须同步加文档,否则测试红。
+var layerDecoders = map[string]layerDecoder{
+	// L2
+	"eth":  fieldsDecoder[EthFields](),
+	"vlan": fieldsDecoder[VLANFields](),
+	// L3
+	"ipv4": fieldsDecoder[IPv4Fields](),
+	"ipv6": fieldsDecoder[IPv6Fields](),
+	"gre":  fieldsDecoder[GREFields](),
+	// L4
+	"tcp":         fieldsDecoder[TCPFields](),
+	"tcp_session": fieldsDecoder[TCPSessionFields](),
+	"udp":         fieldsDecoder[UDPFields](),
+	// 控制
+	"icmp":   fieldsDecoder[ICMPFields](),
+	"icmpv6": fieldsDecoder[ICMPv6Fields](),
+	"icmp6":  fieldsDecoder[ICMPv6Fields](), // icmpv6 的别名
+	// 应用
+	"dns":           fieldsDecoder[DNSFields](),
+	"http_request":  fieldsDecoder[HTTPReqFields](),
+	"http_response": fieldsDecoder[HTTPRespFields](),
+	"ftp_request":   fieldsDecoder[FTPRequestFields](),
+	"ftp_response":  fieldsDecoder[FTPResponseFields](),
+	"telnet":        fieldsDecoder[TelnetFields](),
+	"smtp_request":  fieldsDecoder[SMTPRequestFields](),
+	"smtp_response": fieldsDecoder[SMTPResponseFields](),
+	"pop3_request":  fieldsDecoder[POP3RequestFields](),
+	"pop3_response": fieldsDecoder[POP3ResponseFields](),
+	"imap_request":  fieldsDecoder[IMAPRequestFields](),
+	"imap_response": fieldsDecoder[IMAPResponseFields](),
+	"eml_data":      fieldsDecoder[EMLDataFields](),
+	// 兜底
+	"payload": fieldsDecoder[PayloadFields](),
+	// payload_hex 是标量层(`- payload_hex: "0x..."`),值不是 map,故不走 fieldsDecoder。
+	"payload_hex": func(val *yaml.Node, _ string) (any, error) {
 		var s string
 		if err := val.Decode(&s); err != nil {
 			return nil, err
 		}
 		return PayloadHex(s), nil
-	case "dns":
-		var f DNSFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "http_request":
-		var f HTTPReqFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "http_response":
-		var f HTTPRespFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "ftp_request":
-		var f FTPRequestFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "ftp_response":
-		var f FTPResponseFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "telnet":
-		var f TelnetFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "smtp_request":
-		var f SMTPRequestFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "smtp_response":
-		var f SMTPResponseFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "pop3_request":
-		var f POP3RequestFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "pop3_response":
-		var f POP3ResponseFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "imap_request":
-		var f IMAPRequestFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "imap_response":
-		var f IMAPResponseFields
-		return &f, decodeKnownFields(val, typ, &f)
-	case "eml_data":
-		var f EMLDataFields
-		return &f, decodeKnownFields(val, typ, &f)
-	default:
+	},
+}
+
+// LayerTypes 返回全部合法层名(字典序),派生自 layerDecoders 这一单一真相源。
+// 供 MCP schema 文档覆盖性测试等「需要枚举全部层」的场景使用。
+func LayerTypes() []string {
+	names := make([]string, 0, len(layerDecoders))
+	for name := range layerDecoders {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func decodeFields(typ string, val *yaml.Node) (any, error) {
+	dec, ok := layerDecoders[typ]
+	if !ok {
 		return nil, fmt.Errorf("未知层类型 %q", typ)
 	}
+	return dec(val, typ)
 }

@@ -86,10 +86,11 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   `generate_yaml`(校验模型自写的场景 YAML,通过则落盘到 workdir/yaml/ 归档/复现,返回带字段路径的结构化错误)、
   `generate_pcap`(校验同一份 YAML 并出包到 workdir/pcap/,同时在 workdir/yaml/ 同步归档同名场景 YAML,文件名一致仅扩展名不同)。两工具共用同一套校验逻辑(`scenario.Parse` + `Validate` +
   `Warnings`,从 YAML 文本解析,无文件路径依赖);`validate` 不再单独成工具——校验是前两个工具的内建步骤。
-  另暴露 **Resources**(`pmaker://schema`、`pmaker://schema/{layer}`、`pmaker://examples`、
-  `pmaker://examples/{protocol}/{name}`)把语法与示例带内喂给模型:schema 每协议一份 markdown
-  (`cmd/pmaker-mcp/resources/schema/<proto>.md`,整体 embed),examples 动态扫 workdir;
-  加协议只加文件、Go 代码零改动。
+  另暴露 **Resources**(`pmaker://schema`、`pmaker://schema/_conventions`、`pmaker://schema/{layer}`、
+  `pmaker://examples`、`pmaker://examples/{protocol}/{name}`)把语法与示例带内喂给模型:
+  `_conventions` 是全局通则(两态覆盖 / `@file` / Hex / 兜底 / 成帧,写任意场景前读一次),
+  schema 每协议一份 markdown(`cmd/pmaker-mcp/resources/schema/<proto>.md`,整体 embed),
+  examples 动态扫 workdir;加协议只加文件、Go 代码零改动。
 - **文件占位符 `@file(<path>)`**:在 `scenario.Parse` 阶段扫描全部 string 字段,把 `@file(...)`
   替换为对应文件的原始字节(支持二进制;可只占字段值的一部分,可多个拼接;`@@` 转义为字面 `@`,
   裸 `@` 原样保留)。绝对路径原样用;相对路径相对 `baseDir`(CLI 传 scenario 文件所在目录,
@@ -685,9 +686,18 @@ packets:
 6. 加 golden 测试并生成基准;`go test -race ./...` 通过。
 7. README/示例文档同步。
 
-> **硬约束**:新增协议、为已有协议加字段、或改动 schema 语义时,**必须同步更新对应的 MCP schema resource**
-> (`cmd/pmaker-mcp/resources/schema/<proto>.md`)。MCP 客户端(其他大模型)靠这些 resource 带内学语法,
-> schema 与实现脱节会让模型写出过时/无效的 YAML。该约束同样适用于新增/改动 MCP 工具与 resource 本身。
+> **schema 与实现同步(由测试保证,不靠人记)**:新增协议、为已有协议加字段、或改动 schema 语义时,
+> **必须同步更新对应的 MCP schema resource**(`cmd/pmaker-mcp/resources/schema/<proto>.md`)。
+> MCP 客户端(其他大模型)靠这些 resource 带内学语法,schema 与实现脱节会让模型写出过时/无效的 YAML。
+> 这条约束不再只靠人执行 —— `cmd/pmaker-mcp/resources_schema_test.go` 的三条测试锁住同步:
+> `TestSchemaLayerCoverage`(层名 ⇄ 文档双向对应,加层忘写文档 / 删层留孤儿文档都会被抓)、
+> `TestSchemaSnippetsValid`(文档里的 ```yaml 片段真能过 `Parse`+`Validate`,`yaml-bad` 片段真能报错)、
+> `TestSchemaErrorTextsExist`(「报错 → 改法」表左列是校验器 error 的真实子串,每行配一个触发它的 `yaml-bad` fence)。
+> 改了校验器措辞或字段语义后跑 `go test ./cmd/pmaker-mcp/`,测试红了就说明文档没跟上 ——
+> 这与 `TestIMAPLiteralEMLBytes_EquivToBuilder` 把「靠人保持同步」变成「靠测试保持同步」是同一思路。
+> 该约束同样适用于新增/改动 MCP 工具与 resource 本身。
 > **新增 MIME 子结构(如 `multipart`)同理**:子结构非层、不能入 `stack`,需在 `overview.md` 的「子结构」
 > 小节登记,并在 `cmd/pmaker-mcp/resources/schema/<子结构>.md` 单独建档;嵌入它的层(http_request/
 > http_response/eml_data)schema 也要加字段说明并链到子结构 schema,确保 MCP 客户端能从总览发现到。
+> **设计立场文档**(`_why_<topic>.md`,如 `_why_http_framing` / `_why_imap_grouping`)承载 RFC 论证,
+> 由层文档的「相关」节引路,仅在模型质疑规则时读;`_` 前缀文件不参与层覆盖性比对,无需注册。

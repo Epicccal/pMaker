@@ -1,91 +1,147 @@
 # http_request —— HTTP 请求(L7,走 tcp)
 
-```yaml
-# 合规 chunked:body 经 gzip 压缩后分块传输;framing 由 TE 接管,不得带 auto_content_length
-- http_request:
-    method: POST
-    url: /api/vulnerable
-    version: HTTP/1.1
-    content_encoding: gzip
-    transfer_encoding: chunked
-    chunked:
-      size: 8
-    headers:
-      Host: example.com
-      Accept-Encoding: gzip, br      # 声明可接受的响应编码;响应侧用 content_encoding 时应与此协商一致
-      Content-Type: application/json
-      Content-Encoding: gzip
-      Transfer-Encoding: chunked
-    body: '{"k":"v"}'
-```
+一条请求 = 一个 `http_request` 层,序列化为 TCP payload `METHOD URL VERSION\r\n` + headers + `\r\n` + body。
+通则见 `pmaker://schema/_conventions`。
+
+## 骨架
 
 ```yaml
-# 合规定长:body 经 gzip 压缩后由 auto_content_length 回填 Content-Length;不得同时给 transfer_encoding
-- http_request:
-    method: POST
-    url: /api/vulnerable
-    version: HTTP/1.1
-    auto_content_length: true
-    content_encoding: gzip
-    headers:
-      Host: example.com
-      Content-Type: application/json
-      Content-Encoding: gzip
-      Content-Length: 0            # 占位值,auto_content_length: true 会原位覆盖为压缩后长度
-    body: '{"k":"v"}'
+link_type: ethernet
+flows:
+  - name: http-get
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /index.html
+              version: HTTP/1.1
+              headers:
+                Host: example.com
 ```
+
+## 字段
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `method` | string | 否 | 缺省 GET |
-| `url` | string | 否 | 请求路径 |
-| `version` | string | 否 | 缺省 HTTP/1.1;非空需符合 `HTTP/x.y` 文法(如 `HTTP/1.0`/`HTTP/2`/`HTTP/3.0`),否则报错并引导 `payload`/`payload_hex` |
-| `headers` | map[string]string | 否 | 头部,保留声明顺序、支持重复头。头是用户自由文本,**不驱动成帧/编码** |
-| `body` | string | 否 | 请求体;可用 `@file(...)` 注入文件内容;与 `multipart` 互斥 |
-| `multipart` | object | 否 | MIME multipart body(RFC 2046);`auto_content_length: true` 按其实际长度计算;与 `body` 互斥;详见 `pmaker://schema/multipart` |
-| `auto_content_length` | bool | 否 | `true`=回填/覆盖 `Content-Length` 头值(存在则原位覆盖、位置不变;缺则末尾追加);`false`(缺省)=不动 Header。算的是 `content_encoding` 之后、`transfer_encoding` 成帧之前的长度。**与 `transfer_encoding` 非空互斥(硬错)** |
-| `content_encoding` | 标量或序列 | 否 | 表示层编码,按列表顺序应用(RFC 9110 §8.4);标量 `gzip` 或序列 `[deflate, gzip]`(`[A,B]`=`B(A(body))`)。元素 ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`zstd`/`compress`(大小写不敏感、前后空白裁剪)。链式/异常编码栈走此字段。`br`(Brotli,RFC 7932)与 `zstd`(Zstandard,RFC 8478)均仅限 `content_encoding`,不能用于 `transfer_encoding`;`compress`(UNIX compress/LZW,RFC 9110 §8.4.1.1)历史遗留编码,CE 与 TE 均合法,现代客户端支持度低,适合 evasion 测试 |
-| `transfer_encoding` | 标量或序列 | 否 | 传输层编码/成帧,按列表顺序应用(RFC 9112 §6.1);标量 `chunked` 或序列 `[gzip, chunked]`。元素 ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress`(大小写不敏感、前后空白裁剪)。`chunked` 应位于末位(非末位/多个 `chunked` 触发 Warning 但照常出包);`br`/`zstd` 不是标准传输编码,不能用于 `transfer_encoding`。**与 `auto_content_length: true` 互斥(硬错)** |
-| `chunked` | object | 否 | chunked 成帧专属参数,仅 `transfer_encoding` 含 `chunked` 时有效;字段 `size`(int):0/缺省=整段一块,>0=按指定大小切分(块长自动十六进制),<0 硬错。始终追加终止块 `0\r\n\r\n` |
+| `method` | string | 否 | 缺省 `GET`;空值合法 |
+| `url` | string | 否 | 请求路径,缺省 `/`;空值合法 |
+| `version` | string | 否 | 缺省 `HTTP/1.1`;非空须符合 `HTTP/x.y` 文法,否则报错并引导 `payload`/`payload_hex` |
+| `headers` | map | 否 | 头部,保留声明顺序、支持重复头(如多个 `Cookie`);头是自由文本,**不驱动成帧/编码** |
+| `body` | string | 否 | 请求体;可用 `@file(...)` 注入;与 `multipart` 互斥;**不归一化换行** |
+| `multipart` | 子结构 | 否 | MIME multipart body(RFC 2046);与 `body` 互斥;详见 `pmaker://schema/multipart` |
+| `auto_content_length` | bool | 否 | `true`=回填/覆盖 `Content-Length` 头值;**与 `transfer_encoding` 非空互斥(硬错)** |
+| `content_encoding` | 标量 / 序列 | 否 | 表示层编码,按序应用(CE fold);元素 ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`zstd`/`compress` |
+| `transfer_encoding` | 标量 / 序列 | 否 | 传输层编码/成帧,按序应用(TE fold);元素 ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress` |
+| `chunked` | object | 否 | chunked 成帧参数,仅 TE 含 `chunked` 时有效;`size`:0=整段一块,>0=切分 |
 
-> headers 保留 YAML 声明顺序输出(不再按 key 字典序);支持重复头(如多个 `Cookie`)。
+## 作用顺序
 
-### 作用顺序与语义
+固定三步:**body 生产(字面 / `multipart`)→ `content_encoding`(CE fold)→ `transfer_encoding`(TE 成帧)**。
+`auto_content_length` 算的是 CE 之后、TE 成帧**之前**的长度,原位覆盖占位 `Content-Length` 头值(缺则末尾追加)。
+`[A,B]` = `B(A(body))`(列表顺序 = fold 顺序)。
 
-HTTP body 经固定三步:**body 生产(字面/`multipart`)→ `content_encoding` → `transfer_encoding` 成帧**;
-`auto_content_length` 算的是 `content_encoding` 之后、成帧之前的长度。
-成帧不解析头、头不驱动成帧 —— 走私(CLA.TE / TE.CL)、evasion 靠「关掉外置开关 + 头里自由手写」构造,不需为每种畸形单独加 opt-out。
+**编码 / 成帧由外置参数驱动,头部不驱动** —— 这是核心立场。合规 chunked / gzip 是一等公民走外置开关;
+走私(CLA.TE / TE.CL)、evasion 靠「关掉外置开关 + 头里自由手写」构造,不为每种畸形单独加 opt-out。
 
-- **自动 CL 的唯一入口是 `auto_content_length: true`**(原位覆盖占位 `Content-Length` 头值,或末尾追加)。头里的 `Content-Length` 值原样上 wire,工具不识别任何特殊写法。
-- **互斥规则依据的是 HTTP framing 语义,不是"是否可以计算出字节长度"**:任何非空 `transfer_encoding` 的存在都令发送方不得发 CL(RFC 9112 §6.1),包括 `transfer_encoding: gzip` 这类最终 wire body 定长的情形 —— TE 一旦存在,framing 语义由 TE 接管,CL 并存会令中间代理歧义。需同时有 TE 和 CL 时(走私等畸形),设 `auto_content_length: false` 并在 `headers` 手写 CL。
-- **`transfer_encoding` 列表顺序 = fold 应用顺序**;`chunked` 应位于末位(RFC 9112),非末位或多个 `chunked` 触发 Warning,但工具仍按列表顺序机械 fold 产出字节,适用于 evasion 测试。
+## 组合规则
 
-### 内容协商(编写场景时的约定,非工具行为)
+- `version` 非空时须 `HTTP/x.y` 文法(大小写敏感,`HTTP` 大写;`HTTP/2` 这类无 minor 写法合法);非标值报错。
+- `auto_content_length: true` 且 `transfer_encoding` 非空 → **硬错**(framing 互斥,RFC 9112 §6.1)。
+- `auto_content_length: true` 且 ≥2 个 `Content-Length` 头 → **硬错**(覆盖目标歧义)。
+- `body` 与 `multipart` 互斥(同设硬错)。
+- `chunked` 子结构仅 TE 含 `chunked` 时有效(否则硬错);`chunked.size` 不可为负、不可超 1 MiB。
+- `content_encoding` 含 `chunked` → 硬错(`chunked` 是传输编码);`transfer_encoding` 含 `br`/`zstd` → 硬错(它们不是标准传输编码)。
+- `method` / `url` / `version` **可含 CR/LF**(CRLF 注入 / 请求走私是受支持的畸形构造,不拦截)。
 
-RFC 9110 §12.5.3:服务器用某种内容编码回响应,前提是客户端在 `Accept-Encoding` 里声明接受该编码。
-工具**不做跨层推断**(层与层互不相识,请求层不知道响应层写了什么,反之亦然),因此协商一致性由**编写场景的人/模型**保证:
-
-- 同一场景里若响应侧设了 `content_encoding`(如 `br`/`gzip`/`deflate`),请求侧 `headers` 应带上
-  `Accept-Encoding` 并包含该编码(如 `Accept-Encoding: gzip, br`),否则抓包在真实网络中不成立
-  —— 未协商却收到 `Content-Encoding: br` 属于服务器行为异常。
-- **故意不协商是合法测试点**:验证客户端/中间设备如何处理未协商的编码响应时,就该省略 `Accept-Encoding`
-  或让它与响应编码不符。工具不拦、不告警、不补头,请求侧 `headers` 始终原样上 wire。
-- `Accept-Encoding` 只是普通请求头(自由文本),**不驱动本层任何编码/成帧行为**;它不会影响
-  `content_encoding` / `transfer_encoding` / `auto_content_length` 的计算。请求自身 body 的编码由
-  `content_encoding` 决定,与 `Accept-Encoding` 无关。
-
-### 校验
-
-- `version` 非空时需符合 `HTTP/x.y` 文法(大小写敏感,`HTTP` 为大写;允许 `HTTP/2` 这类无 minor 写法);非标值(如 `1.1`、`http/1.1`、`HTTP/x.y`)报错并引导改用 `payload`/`payload_hex`。
-- `method`/`url`/`version` **可含 CR/LF**:CRLF 注入(请求走私)是受支持的畸形构造场景,不拦截。需要精确字节的其他畸形(非标 version、私有方法名等)另可走 `payload`/`payload_hex`。
-- `method`/`url` 空值合法(走 builder 默认 GET / `/`),不报错。
-- `content_encoding` 每个元素 ∈ `gzip`/`deflate`/`deflate_raw`/`br`/`zstd`/`compress`(`chunked` 是传输编码,放进 `content_encoding` 报错;`br`/`zstd` 仅限 `content_encoding`,不能用于 `transfer_encoding`);`transfer_encoding` 每个元素 ∈ `chunked`/`gzip`/`deflate`/`deflate_raw`/`compress`(`br`/`zstd` 不是标准传输编码,放进 `transfer_encoding` 报错);非法元素报错并引导 `payload`/`payload_hex`。
-- `auto_content_length: true` 且 `transfer_encoding` 非空 → **硬错**(framing 互斥);`auto_content_length: true` 且 `headers` 有 ≥2 个 `Content-Length` → **硬错**(覆盖目标歧义)。
-- `chunked` 子结构仅在 `transfer_encoding` 含 `chunked` 时有效(否则硬错);`chunked.size` 不可为负、不可超过固定上限(1 MiB)。
-
-### 一致性告警(非硬错)
+## 一致性告警(软告警,非硬错)
 
 - `transfer_encoding` 非空但 `Transfer-Encoding` 头缺失 / 头文本与列表不符 → 疑似漏声明(或故意 evasion)。
-- `content_encoding` 非空但 `Content-Encoding` 头缺失 / 头文本与列表不符 → 疑似漏声明(或故意 evasion)。
-- `headers` 有显式 `Content-Length` 且 `transfer_encoding` 非空 → RFC 9112 §6.1 CL+TE 冲突(走私特征);不删不硬错。
-- `transfer_encoding` 中 `chunked` 不在末位 / 含多个 `chunked` → 非常规顺序 / 异常编码栈(IDS 绕过特征);放行。
+- `content_encoding` 非空但 `Content-Encoding` 头缺失 / 头文本与列表不符 → 同上。
+- `headers` 有显式 `Content-Length` 且 `transfer_encoding` 非空 → CL+TE 冲突(走私特征),不删不硬错。
+- `chunked` 不在 TE 末位 / 含多个 `chunked` → 异常编码栈(IDS 绕过特征),放行。
+
+## 静默陷阱
+
+- **头是自由文本,不驱动成帧**:写了 `Transfer-Encoding: chunked` 头但没给 `transfer_encoding` 字段,
+  body 不会分块;反之给了字段但头里写错值,只告警不拦。成帧**只认外置参数**。
+- **`auto_content_length` 不理解消息语义**:它只按当前 body 字节填 CL。对 1xx / 204 / 304(不应有 body 或
+  CL 语义不同)会出软告警但照填;HEAD / CONNECT 响应侧无请求方法上下文,不做任何处理(响应层同此)。
+- **`body` 不归一化换行**:YAML `|` 块标量带入的是裸 `\n`;协议要 CRLF 就写 `"a\r\nb"`(双引号才解释转义)。
+- **内容协商靠人/模型保证**:响应侧设了 `content_encoding` 时,请求侧 `headers` 应带 `Accept-Encoding`
+  并包含该编码;工具不做跨层推断(请求层不知道响应层写了什么)。故意不协商是合法测试点,不拦不告警。
+- 自动 CL 的**唯一入口**是 `auto_content_length: true`;头里的 `Content-Length` 值原样上 wire,工具不识别
+  任何特殊写法(不会把 `Content-Length: 0` 当占位符)—— 占位语义只在 `auto_content_length: true` 时生效。
+
+## 畸形构造
+
+| 想构造 | 用 |
+|--------|-----|
+| 请求走私(CLF 注入) | `method` / `url` / `version` 里写 `\r\n` |
+| CLA.TE / TE.CL(头里手写 CL + 外置 TE) | `auto_content_length: false` + `transfer_encoding` 字段 + headers 手写 `Content-Length` |
+| 非标 version / 私有方法 | `payload` / `payload_hex` |
+| 异常编码栈(chunked 非末位 / 多 chunked) | `transfer_encoding: [chunked, gzip]`,出软告警,包照出 |
+| 未协商的编码响应 | 省略 / 写错请求侧 `Accept-Encoding`,不拦不告警 |
+
+## 报错 → 改法
+
+| 报错含 | 改法 |
+|--------|------|
+| `version "1.1" 非 HTTP/x.y 文法` | version 须 `HTTP/x.y`(大小写敏感)。非标 version 走 `payload` / `payload_hex` |
+| `content_encoding 元素 "CHUNKED" 非法` | `chunked` 是传输编码,放进 `transfer_encoding` 不是 `content_encoding` |
+| `auto_content_length 与 transfer_encoding 非空互斥` | TE 存在时不得自动 CL。走私需 TE+CL 共存时设 `auto_content_length: false` 并在 headers 手写 CL |
+| `multipart 与 body 不可同设` | multipart 本身就是 body,二选一 |
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1, dport: 80, flags: [PSH, ACK] }
+      - http_request: { version: "1.1", method: GET, url: / }
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1, dport: 80, flags: [PSH, ACK] }
+      - http_request: { content_encoding: chunked }
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1, dport: 80, flags: [PSH, ACK] }
+      - http_request:
+          auto_content_length: true
+          transfer_encoding: chunked
+          body: "x"
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1, dport: 80, flags: [PSH, ACK] }
+      - http_request:
+          body: "x"
+          multipart: { boundary: "b" }
+```
+
+## 相关
+
+`pmaker://schema/http_response`、`pmaker://schema/multipart`、`pmaker://schema/_why_http_framing`、`pmaker://schema/tcp_session`、`pmaker://examples`

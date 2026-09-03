@@ -1,55 +1,79 @@
 # pMaker 场景 YAML 概览
 
-pMaker 用声明式 YAML 描述协议栈与会话,离线生成确定性的 `.pcap` 文件。本文是入口导读;
-各层(eth/ipv4/tcp/dns/…)的完整字段见 `pmaker://schema/<层名>`(如 `pmaker://schema/tcp`)。
+pMaker 用声明式 YAML 描述协议栈与会话,**离线**生成确定性 `.pcap`(不发包)。本文是入口导读。
+
+- 通则(三级边界 / 两态覆盖 / `@file` / 兜底 / 成帧 / 换行)→ **`pmaker://schema/_conventions`,先读这份**
+- 单层字段速查 → `pmaker://schema/<层名>`(如 `pmaker://schema/tcp`)
+- 可直接复制的完整场景 → `pmaker://examples`
+
+## 先看这三条:不报错也不告警的坑
+
+校验器拦不住、也不会告警,但会产出与预期不符的字节。写之前先确认不踩:
+
+1. **单段字节上限**:一条 message / 一个 packet 默认作为**单个 TCP 段**发出。不写
+   `segment.mss` 就不切段(`tcp.mss` 只是 SYN 通告值,不代劳)。超过 IP 长度字段上限(65535)时
+   长度字段**静默回绕**,包体不截断。body 可能较大——**尤其用 `@file` 注入文件**——必须写
+   `segment: { mss: 1460 }`。
+2. **换行不归一化**:`http_*.body`、`payload`、`multipart` 各 part body、`eml_data` 的
+   `raw`/`raw_hex` 均**原样落字节**。YAML 的 `|` 块标量带入的是裸 `\n`;协议要 CRLF 就写
+   `"a\r\nb"`(双引号才解释转义)。仅 `eml_data` 结构化模式(`headers`+`body`)会自动归一化。
+3. **显式值即关闭自动计算**:写了 `checksum` / `total_length` 一类字段就按原值上 wire,
+   自动计算被关掉——这是构造畸形的正道,但**误写**同样不会有任何提示。
+
+其余静默陷阱按层分布,写某层前读该层文档的「静默陷阱」节。
 
 ## 顶层结构
 
-```yaml
-link_type: ethernet          # ethernet(默认)| raw | ipv4 | ipv6
-seed: 42                     # 随机种子,保证同输入逐字节相同
-base_time: 2024-01-01T00:00:00Z  # 可选,唯一绝对时间锚(ISO8601/UTC),缺省=确定性 2020 基准
-packets:                     # 逐包(无状态),与 flows 二选一或共存
+```yaml-sketch
+link_type: ethernet              # ethernet(默认)| raw | ipv4 | ipv6
+seed: 42                         # 随机种子,保证同输入逐字节相同
+base_time: 2024-01-01T00:00:00Z  # 唯一绝对时间锚(ISO8601/UTC),缺省=确定性 2020 基准
+packets:                         # 逐包(无状态),与 flows 二选一或共存
   - stack: [ ... ]
-flows:                       # 有状态会话(TCP 握手/挥手/seq-ack 自动推导)
+flows:                           # 有状态会话(握手/挥手/seq-ack 自动推导)
   - name: ...
     stack: [ ... ]
     messages: [ ... ]
 ```
 
-## packet(逐包,无状态)
+## packets:逐包,无状态
 
-每个 packet 是一个从外到内的有序 `stack`(层列表),元素是单键 map,允许同类型重复(QinQ 双层 vlan)与递归嵌套(GRE 内层再套整包)。
+每个 packet 是一个**从外到内**的有序 `stack`,元素为单键 map,允许同类型重复(QinQ 双层 `vlan`)
+与递归嵌套(GRE 内层再套整包)。next-proto 自动串接,逐层可覆盖(见 `_conventions`)。
 
 ```yaml
+link_type: ethernet
 packets:
-  - name: syn                # 可选,供 quote_from 引用
-    offset_time: +1s         # 可选,相对上一包(第一包相对 base_time)
+  - name: syn              # 可选,供 icmp 的 quote_from 引用
+    offset_time: +1s       # 可选,相对上一包(第一包相对 base_time);缺省 +1ms
     stack:
-      - eth:    { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
-      - ipv4:   { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
-      - tcp:    { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - tcp:  { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }
 ```
 
-## flow(有状态会话)
+**两态覆盖(错误 checksum / 撒谎长度)只在 `packets` 里可用**,flow 展开的包不支持。
 
-`flows` 展开成握手 + 消息 + 挥手的完整包序列,自动维护 seq/ack、MSS 分段。`stack` 中的 `src` = TCP SYN 发起方,`dst` = 接收方。
+## flows:有状态会话
+
+展开成握手 + 消息 + 挥手的完整包序列,自动维护 seq/ack 与分段。
+`stack` 里的 `src` = TCP SYN 发起方,`dst` = 接收方;反向消息自动反转 MAC/IP/端口。
 
 ```yaml
+link_type: ethernet
 flows:
   - name: http-get
     offset_time: +0s          # 可选,流锚 = base_time + offset;缺省=base(跨流并发)
-    start_after: "other-flow" # 可选,"flow名" 或 "flow名.message_id",跨流依赖
     stack:
-      - eth:          { src: "...", dst: "..." }
-      - ipv4:         { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
-      - tcp:          { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
-      - tcp_session:  { open: handshake, close: fin }   # open: handshake|none; close: fin|rst|none
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:         { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
     messages:
-      - from: src              # src | dst
-        message_id: req1       # 可选,供其它 flow 的 start_after 引用
-        offset_time: +100ms    # 可选,相对上一条消息末尾
-        segment: { mss: 8, interval: "+10ms" }  # 可选,切段 + 段间隔
+      - from: src             # src | dst
+        message_id: req1      # 可选,供 start_after 引用
+        offset_time: +100ms   # 可选,相对上一条消息末尾
+        segment: { mss: 1460, interval: "+10ms" }   # 可选,切段大小 + 段间隔
         stack:
           - http_request: { method: GET, url: /index.html, headers: { Host: example.com } }
       - from: dst
@@ -57,42 +81,35 @@ flows:
           - http_response: { status: 200, body: "hi" }
 ```
 
-**约束**:flow.stack 须含 `eth` + `tcp` + 恰好一个网络层(`ipv4` 或 `ipv6`);每条 message 须 ≥1 个 payload 生产层,按声明顺序拼接(standalone packet 同此规则)。
+**硬约束**:`flow.stack` 须含 `eth` + `tcp` + 恰好一个网络层(`ipv4` 或 `ipv6`)+ `tcp_session`;
+每条 message 须 ≥1 个 payload 生产层,同段多层按声明顺序拼接(standalone packet 同此规则)。
 
-## 时间字段
+## 时间
 
-- `base_time`:唯一绝对锚(ISO8601/UTC,如 `2024-01-01T00:00:00Z`),缺省=确定性 2020 基准。
+- `base_time`:唯一绝对锚。其余全是**非负**时长偏移(`+1.5s` / `500ms` / `0s`),负值解析即失败。
 - `packet.offset_time`:相对**上一包**(第一包相对 base);缺省接续 +1ms。
-- `flow.offset_time`:流锚相对 base_time;缺省=base(跨流并发)。
+- `flow.offset_time`:流锚相对 base_time;缺省 = base,即**多条 flow 默认并发**(想顺序就给递增 offset)。
 - `message.offset_time`:相对**上一条消息末尾**(第一条相对握手完成);缺省紧接。
 - `segment.interval`:同消息各数据段间隔,缺省 1ms。
-- 所有 offset 为**非负时长**(如 `+1.5s`/`500ms`/`0s`),负值解析即失败。
-- `start_after`(flow 级 / message 级):`"flow名"`(整流结束)或 `"flow名.message_id"`;禁止同流自引,循环依赖被拦截。
+- `start_after`(flow 级 / message 级):`"flow名"`(整流结束)或 `"flow名.message_id"`(该消息完成)。
+  用于跨流依赖(如 FTP 控制通道触发数据通道);禁止同流自引,循环依赖会被拦下。
 
-## 层类型清单
+## 层清单
 
-| 类别 | 层名 | schema |
-|------|------|--------|
-| L2 | `eth`、`vlan` | `pmaker://schema/eth`、`pmaker://schema/vlan` |
-| L3 | `ipv4`、`ipv6`、`gre` | `pmaker://schema/ipv4`、`pmaker://schema/ipv6`、`pmaker://schema/gre` |
-| L4 | `tcp`、`udp`、`tcp_session`(仅 flow) | `pmaker://schema/tcp`、`pmaker://schema/udp` |
-| 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data` | 对应 `pmaker://schema/<层名>` |
-| 兜底 | `payload`、`payload_hex` | `pmaker://schema/payload` |
+| 类别 | 层名 |
+|------|------|
+| L2 | `eth`、`vlan` |
+| L3 | `ipv4`、`ipv6`、`gre` |
+| L4 | `tcp`、`udp`、`tcp_session`(仅 `flow.stack`) |
+| 控制/应用 | `icmp`、`icmpv6`(别名 `icmp6`)、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data` |
+| 兜底 | `payload`、`payload_hex` |
 
-## 子结构(非层,嵌在层内)
+各层 schema 一律 `pmaker://schema/<层名>`。
 
-部分结构不是独立层,不能单独放入 `stack`,而是作为某些层的子字段:
+## 子结构(非层,不能放进 `stack`)
 
-| 子结构 | 嵌入位置 | schema |
-|--------|----------|--------|
-| `multipart` | `http_request`/`http_response`/`eml_data` 的 `multipart` 字段(MIME multipart body,非层) | `pmaker://schema/multipart` |
-| `eml`(即 `eml_data` 的字段集) | `pop3_response.eml`(RETR/TOP 正文)、`imap_request.literal.eml` / `imap_response.literal.eml`(APPEND/FETCH 正文);SMTP DATA 正文则用独立的 `eml_data` 层。四处共用同一份字段,成帧字节按所在协议自动追加 | `pmaker://schema/eml_data` |
-| `literal` | `imap_request`/`imap_response` 的 `literal` 字段(IMAP 长度前缀 `{n}\r\n` + 八位组) | `pmaker://schema/imap_request` |
-
-## 通用约定
-
-- **next-proto / EtherType 自动串接**:按层栈自动推导,可逐层显式覆盖(`type`/`tpid`/`ethertype`)制造解析断链。
-- **checksum 与 length 两态覆盖**:TCP/UDP 伪首部自动绑定就近 IP 层(多层 IP 绑内层)。未写则自动计算/修正,显式写值即关闭对应自动计算、值原样上 wire(构造错误 checksum / 撒谎长度)。checksum 覆盖 ipv4/tcp/udp/icmp/icmpv6;length 覆盖 ipv4(`total_length`/`header_length`)、ipv6(`payload_length`)、tcp(`header_length`)、udp(`total_length`);16 位字段上限 `0xFFFF`,4 位字段(`header_length`)可写入 0-15、上限 `0xF`(其中 5-15 仅是规范头长度范围,0-4 为合法畸形值)。icmp/icmpv6/vlan/gre/eth 不开放长度字段(gopacket 不读 `FixLengths`)。flow 中暂不支持,请用 standalone packet。
-- **`@file(<path>)`**:任意 string 字段可写文件占位符,解析时(`Parse`)替换为文件原始字节(支持二进制)。CLI 的 `Load` 即「读文件 → `Parse`」,相对路径相对 scenario 文件所在目录;MCP server 直接 `Parse`,相对路径相对 `workdir`。`@@` 转义为字面 `@`。
-- **`Hex` 字段**(ethertype/tpid/type/checksum/length):接受十进制或 `0x88a8` 形式。
-- **确定性**:同 scenario + seed → 逐字节相同 pcap;全程不用 `time.Now()`。
+| 子结构 | 嵌在哪 | schema |
+|--------|--------|--------|
+| `multipart` | `http_request` / `http_response` / `eml_data` 的 `multipart` 字段 | `pmaker://schema/multipart` |
+| `eml` | `pop3_response.eml`(RETR/TOP)、`imap_*.literal.eml`(APPEND/FETCH);SMTP DATA 用独立的 `eml_data` **层**。四处共用同一份字段,成帧按所在协议自动追加 | `pmaker://schema/eml_data` |
+| `literal` | `imap_request` / `imap_response` 的 `literal` 字段(`{n}\r\n` + 八位组) | `pmaker://schema/imap_request` |
