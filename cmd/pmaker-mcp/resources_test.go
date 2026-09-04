@@ -7,8 +7,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -34,18 +32,6 @@ func readResource(t *testing.T, srv *mcptest.Server, uri string) mcp.TextResourc
 		t.Fatalf("期望 TextResourceContents,得到 %T", res.Contents[0])
 	}
 	return tc
-}
-
-// writeExampleYAML 在 workdir 下造一个示例文件,供 examples resource 测试。
-func writeExampleYAML(t *testing.T, workdir, proto, name, body string) {
-	t.Helper()
-	dir := filepath.Join(workdir, "examples", proto)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", dir, err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
-		t.Fatalf("write %s/%s: %v", proto, name, err)
-	}
 }
 
 func TestResourceSchemaOverview(t *testing.T) {
@@ -110,36 +96,34 @@ func TestResourceSchemaLayerUnknown(t *testing.T) {
 }
 
 func TestResourceExamplesList(t *testing.T) {
-	srv, workdir := newTestServer(t)
+	srv, _ := newTestServer(t)
 	defer srv.Close()
 
-	writeExampleYAML(t, workdir, "http", "get.yaml",
-		"# 一次 HTTP GET 请求\nlink_type: ethernet\n")
-	writeExampleYAML(t, workdir, "dns", "query.yaml",
-		"# DNS A 查询\nlink_type: ethernet\n")
-
 	tc := readResource(t, srv, "pmaker://examples")
-	if !strings.Contains(tc.Text, "http/get.yaml") {
-		t.Errorf("examples 应列 http/get.yaml,得到: %q", tc.Text)
+	// 内置示例编译期 embed,任何 workdir 下都能读出;抽查几个真实存在的条目。
+	for _, want := range []string{"http/get.yaml", "dns/query_a.yaml", "icmp/echo.yaml"} {
+		if !strings.Contains(tc.Text, want) {
+			t.Errorf("examples 应列 %s,得到: %q", want, tc.Text)
+		}
 	}
-	if !strings.Contains(tc.Text, "dns/query.yaml") {
-		t.Errorf("examples 应列 dns/query.yaml,得到: %q", tc.Text)
-	}
-	if !strings.Contains(tc.Text, "HTTP GET") {
-		t.Errorf("examples 应含示例描述(首行注释),得到: %q", tc.Text)
+	// 描述来自示例首行注释(如 examples/http/get.yaml 首行 "# examples/http/get.yaml" 之后
+	// 紧跟描述行,embeddedExampleDescription 取首个非空注释行)。
+	if tc.Text == "(无示例)\n" {
+		t.Errorf("examples 不应为空,内置示例已被 embed: %q", tc.Text)
 	}
 }
 
 func TestResourceExampleFile(t *testing.T) {
-	srv, workdir := newTestServer(t)
+	srv, _ := newTestServer(t)
 	defer srv.Close()
 
-	body := "# 示例\nlink_type: ethernet\nseed: 42\npackets: []\n"
-	writeExampleYAML(t, workdir, "icmp", "echo.yaml", body)
-
+	// 读一个真实内置示例,确认原样返回 embed 内容。
 	tc := readResource(t, srv, "pmaker://examples/icmp/echo.yaml")
-	if tc.Text != body {
-		t.Errorf("示例正文应原样返回,得到: %q", tc.Text)
+	if !strings.HasPrefix(tc.Text, "#") {
+		t.Errorf("示例正文应以注释开头,得到前 80 字: %q", tc.Text[:min(80, len(tc.Text))])
+	}
+	if !strings.Contains(tc.Text, "link_type:") {
+		t.Errorf("示例正文应是 YAML 场景,得到: %q", tc.Text)
 	}
 }
 
@@ -154,46 +138,22 @@ func TestResourceExampleFileTraversalRejected(t *testing.T) {
 	}
 }
 
-// ---------- examples 资源:空目录分支 ----------
+// ---------- examples 资源:embed 化后的行为 ----------
 
-func TestResourceExamplesListEmpty(t *testing.T) {
+func TestResourceExamplesListNonEmpty(t *testing.T) {
 	srv, _ := newTestServer(t)
 	defer srv.Close()
-	// workdir 下无 examples 目录 → ReadDir 失败 → 返回提示文本。
+	// embed 化后 examples 永远非空(内置示例随二进制分发),不再有"无 examples 目录"分支。
 	tc := readResource(t, srv, "pmaker://examples")
-	if !strings.Contains(tc.Text, "无 examples") {
-		t.Errorf("无 examples 目录应返回提示,得到: %q", tc.Text)
-	}
-}
-
-func TestResourceExamplesListNoExamples(t *testing.T) {
-	srv, workdir := newTestServer(t)
-	defer srv.Close()
-	// examples 目录存在但无 .yaml → 返回 "(无示例)"。
-	if err := os.MkdirAll(filepath.Join(workdir, "examples", "http"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	// 放一个非 .yaml 文件(应被跳过)。
-	if err := os.WriteFile(filepath.Join(workdir, "examples", "http", "README.md"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// 放一个空子目录(应被跳过:非 .yaml)。
-	if err := os.MkdirAll(filepath.Join(workdir, "examples", "http", "sub"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	tc := readResource(t, srv, "pmaker://examples")
-	if !strings.Contains(tc.Text, "(无示例)") {
-		t.Errorf("无 .yaml 示例应返回 \"(无示例)\",得到: %q", tc.Text)
+	if strings.Contains(tc.Text, "无 examples") || strings.Contains(tc.Text, "(无示例)") {
+		t.Errorf("embed 化后 examples 不应为空提示,得到: %q", tc.Text)
 	}
 }
 
 func TestResourceExampleFileMissing(t *testing.T) {
-	srv, workdir := newTestServer(t)
+	srv, _ := newTestServer(t)
 	defer srv.Close()
-	// 建协议目录但不放目标文件 → ReadFile 失败。
-	if err := os.MkdirAll(filepath.Join(workdir, "examples", "icmp"), 0o750); err != nil {
-		t.Fatal(err)
-	}
+	// 示例走 embed.FS,nope.yaml 不在 embed 树里 → ReadFile 失败。
 	var req mcp.ReadResourceRequest
 	req.Params.URI = "pmaker://examples/icmp/nope.yaml"
 	if _, err := srv.Client().ReadResource(t.Context(), req); err == nil {
@@ -355,44 +315,25 @@ func TestListEmbeddedLayers(t *testing.T) {
 	}
 }
 
-// ---------- exampleDescription ----------
+// ---------- firstCommentDescription ----------
+// exampleDescription 原是从磁盘读 YAML 取首行注释;embed 化后拆出纯函数
+// firstCommentDescription,解析逻辑不变,直接喂字节测试,不再依赖磁盘文件。
 
-func TestExampleDescription(t *testing.T) {
-	dir := t.TempDir()
-	// 首行注释。
-	p := filepath.Join(dir, "a.yaml")
-	if err := os.WriteFile(p, []byte("# 一次 HTTP GET\nlink_type: ethernet\n"), 0o600); err != nil {
-		t.Fatal(err)
+func TestFirstCommentDescription(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"首行注释", "# 一次 HTTP GET\nlink_type: ethernet\n", "一次 HTTP GET"},
+		{"前导空行+注释", "\n\n  # 描述\nlink_type: ethernet\n", "描述"},
+		{"首个非空行非注释→空", "link_type: ethernet\n", ""},
+		{"空行后非注释→空", "\nlink_type: ethernet\n", ""},
+		{"空串→空", "", ""},
 	}
-	if got := exampleDescription(p); got != "一次 HTTP GET" {
-		t.Errorf("首行注释描述 = %q, 期望 %q", got, "一次 HTTP GET")
-	}
-	// 前导空行 + 注释。
-	p2 := filepath.Join(dir, "b.yaml")
-	if err := os.WriteFile(p2, []byte("\n\n  # 描述\nlink_type: ethernet\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := exampleDescription(p2); got != "描述" {
-		t.Errorf("跳过空行后的注释描述 = %q, 期望 %q", got, "描述")
-	}
-	// 首个非空行非注释 → 返回空。
-	p3 := filepath.Join(dir, "c.yaml")
-	if err := os.WriteFile(p3, []byte("link_type: ethernet\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := exampleDescription(p3); got != "" {
-		t.Errorf("非注释首行应返回空,得到 %q", got)
-	}
-	// 空行后非注释行 → 返回空。
-	p4 := filepath.Join(dir, "d.yaml")
-	if err := os.WriteFile(p4, []byte("\nlink_type: ethernet\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := exampleDescription(p4); got != "" {
-		t.Errorf("空行后非注释应返回空,得到 %q", got)
-	}
-	// 读不到文件 → 返回空(不 panic)。
-	if got := exampleDescription(filepath.Join(dir, "nope.yaml")); got != "" {
-		t.Errorf("不存在的文件应返回空,得到 %q", got)
+	for _, c := range cases {
+		if got := firstCommentDescription([]byte(c.body)); got != c.want {
+			t.Errorf("%s: firstCommentDescription = %q, 期望 %q", c.name, got, c.want)
+		}
 	}
 }
