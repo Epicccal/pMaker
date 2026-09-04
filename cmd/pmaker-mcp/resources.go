@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"os"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/Epicccal/pMaker/examples"
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
@@ -25,7 +25,7 @@ type resourceRegistrar interface {
 }
 
 // registerResources 注册 5 个 resource(3 个固定 + 2 个 template)。
-// 内容全部来自文件(embed 的 schema 目录 / workdir 的 examples 目录),
+// 内容全部来自 embed(schema 目录 + examples 目录),不依赖运行期 workdir;
 // 加协议只需新增 schema/<proto>.md 或 examples/<proto>/*.yaml,Go 代码零改动。
 func (c config) registerResources(srv resourceRegistrar) {
 	// pmaker://schema —— 语法总览(读 embed 的 overview.md)。
@@ -37,7 +37,7 @@ func (c config) registerResources(srv resourceRegistrar) {
 	srv.AddResource(schemaConventionsResource(), c.handleSchemaConventions)
 	// pmaker://schema/{layer} —— 单协议字段速查(embed)。
 	srv.AddResourceTemplate(schemaLayerTemplate(), c.handleSchemaLayer)
-	// pmaker://examples —— 示例清单(动态扫 workdir/examples)。
+	// pmaker://examples —— 示例清单(扫 embed 的 examples 树)。
 	srv.AddResource(examplesListResource(), c.handleExamplesList)
 	// pmaker://examples/{protocol}/{name} —— 单个示例正文(YAML 原文)。
 	srv.AddResourceTemplate(exampleFileTemplate(), c.handleExampleFile)
@@ -121,38 +121,41 @@ func (c config) handleSchemaLayer(ctx context.Context, req mcp.ReadResourceReque
 	}}, nil
 }
 
-// handleExamplesList 扫描 workdir/examples/<协议>/*.yaml,返回清单(协议、文件名、描述)。
+// handleExamplesList 列出 embed 的内置示例(examples/<协议>/*.yaml),返回清单(协议、文件名、描述)。
+// examples 编译期 embed 进二进制(见 examples/examples.go 的 `all:*`),故**不依赖 workdir**:
+// 无论 server 以哪个 workdir 启动,模型都能读到与当前二进制同版本的内置示例。
+//
+// examples.FS 的根是 examples/ 包目录本身,所以路径是 "dns/query_a.yaml" 而非
+// "examples/dns/query_a.yaml";本函数枚举顶层目录即得到协议列表。
 func (c config) handleExamplesList(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-	root := filepath.Join(c.workdir, "examples")
-	entries, err := os.ReadDir(root)
+	entries, err := fs.ReadDir(examples.FS, ".")
 	if err != nil {
-		return []mcp.ResourceContents{mcp.TextResourceContents{
-			URI:      req.Params.URI,
-			MIMEType: "text/plain",
-			Text:     "(workdir 下无 examples 目录)\n",
-		}}, nil
+		return nil, fmt.Errorf("读取内置示例清单: %w", err)
 	}
 	var lines []string
 	var protos []string
 	for _, e := range entries {
-		if e.IsDir() {
-			protos = append(protos, e.Name())
+		// 跳过非目录(如 examples.go 本身、assets 散文件);只收顶层协议目录。
+		if !e.IsDir() {
+			continue
 		}
+		protos = append(protos, e.Name())
 	}
 	sort.Strings(protos)
 	for _, proto := range protos {
-		files, err := os.ReadDir(filepath.Join(root, proto))
+		files, err := fs.ReadDir(examples.FS, proto)
 		if err != nil {
-			continue
+			continue // embed 树内不该发生;防御性跳过
 		}
 		for _, f := range files {
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".yaml") {
-				continue
+				continue // 跳过 assets/ 子目录与非 .yaml 文件
 			}
-			desc := exampleDescription(filepath.Join(root, proto, f.Name()))
+			desc := embeddedExampleDescription(proto, f.Name())
 			lines = append(lines, fmt.Sprintf("%s/%s\t%s", proto, f.Name(), desc))
 		}
 	}
+	sort.Strings(lines) // 清单整体按协议|文件名排序,输出确定性可复现
 	text := "(无示例)\n"
 	if len(lines) > 0 {
 		text = strings.Join(lines, "\n") + "\n"
@@ -164,7 +167,7 @@ func (c config) handleExamplesList(ctx context.Context, req mcp.ReadResourceRequ
 	}}, nil
 }
 
-// handleExampleFile 按 {protocol}/{name} 读 workdir/examples 下对应 YAML 原文。
+// handleExampleFile 按 {protocol}/{name} 读 embed 的内置示例 YAML 原文(不依赖 workdir)。
 func (c config) handleExampleFile(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 	proto := templateArg(req, "protocol")
 	name := templateArg(req, "name")
@@ -176,8 +179,10 @@ func (c config) handleExampleFile(ctx context.Context, req mcp.ReadResourceReque
 	if !isSafeName(proto) || !isSafeName(strings.TrimSuffix(name, ".yaml")) {
 		return nil, fmt.Errorf("非法协议或示例名: %q/%q", proto, name)
 	}
-	path := filepath.Join(c.workdir, "examples", proto, name)
-	data, err := os.ReadFile(path)
+	// examples.FS 根是 examples/ 包目录,路径是 "<proto>/<name>" 而非 "examples/<proto>/<name>"。
+	// 用 path.Join 而非 filepath.Join:embed.FS 的路径键永远用正斜杠(即使 Windows 上),
+	// filepath.Join 在 Windows 会用反斜杠拼接,导致 embed.FS.Open 找不到文件。
+	data, err := fs.ReadFile(examples.FS, path.Join(proto, name))
 	if err != nil {
 		return nil, fmt.Errorf("读取示例 %s/%s: %w", proto, name, err)
 	}
@@ -186,6 +191,32 @@ func (c config) handleExampleFile(ctx context.Context, req mcp.ReadResourceReque
 		MIMEType: "text/yaml",
 		Text:     string(data),
 	}}, nil
+}
+
+// embeddedExampleDescription 读取 embed 示例 YAML 的首行注释(# …)作描述;无则返回空串。
+func embeddedExampleDescription(proto, name string) string {
+	// 同上,embed.FS 路径用正斜杠,须用 path.Join。
+	data, err := fs.ReadFile(examples.FS, path.Join(proto, name))
+	if err != nil {
+		return ""
+	}
+	return firstCommentDescription(data)
+}
+
+// firstCommentDescription 返回 YAML 正文首个非空注释行(# …)的内容;无则返回空串。
+// 纯函数,便于独立测试(embed 化前从磁盘读,化后从 embed.FS 读,解析逻辑不变)。
+func firstCommentDescription(data []byte) string {
+	for line := range strings.SplitSeq(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if rest, ok := strings.CutPrefix(trimmed, "#"); ok {
+			return strings.TrimSpace(rest)
+		}
+		return ""
+	}
+	return ""
 }
 
 // templateArg 从 resource template 的 URI 参数里取值。
@@ -251,23 +282,4 @@ func listEmbeddedLayers() []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// exampleDescription 读取示例 YAML 的首行注释(# …)作描述;无则返回空串。
-func exampleDescription(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	for line := range strings.SplitSeq(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		if rest, ok := strings.CutPrefix(trimmed, "#"); ok {
-			return strings.TrimSpace(rest)
-		}
-		return ""
-	}
-	return ""
 }

@@ -90,7 +90,8 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   `pmaker://examples`、`pmaker://examples/{protocol}/{name}`)把语法与示例带内喂给模型:
   `_conventions` 是全局通则(两态覆盖 / `@file` / Hex / 兜底 / 成帧,写任意场景前读一次),
   schema 每协议一份 markdown(`cmd/pmaker-mcp/resources/schema/<proto>.md`,整体 embed),
-  examples 动态扫 workdir;加协议只加文件、Go 代码零改动。
+  examples 目录整体 embed(`examples/examples.go` 的 `all:*`),**不依赖运行时 workdir**——
+  无论 server 以哪个 workdir 启动,模型都能读到与当前二进制同版本的内置示例;加协议只加文件、Go 代码零改动。
 - **文件占位符 `@file(<path>)`**:在 `scenario.Parse` 阶段扫描全部 string 字段,把 `@file(...)`
   替换为对应文件的原始字节(支持二进制;可只占字段值的一部分,可多个拼接;`@@` 转义为字面 `@`,
   裸 `@` 原样保留)。绝对路径原样用;相对路径相对 `baseDir`(CLI 传 scenario 文件所在目录,
@@ -682,7 +683,7 @@ packets:
 3. `internal/builder/` 接线:scenario 字段 → layer;暴露畸形开关(关闭 fix/checksum、raw 注入)。
    **若是封装层**,还须实现 next-proto/ethertype 的自动推导,并允许逐层显式覆盖。
 4. `examples/<协议>/` 加一个规范用例 + 一个畸形用例(单职责、小而聚焦);**封装/隧道层再加一个嵌套用例(如 QinQ / GRE 套接)**。
-5. **同步 MCP resources**:`cmd/pmaker-mcp/resources/schema/<proto>.md` 加该协议的字段速查(schema 目录整体 embed,加文件即生效,Go 代码零改动);`examples/<协议>/` 下的示例由 `pmaker://examples` 动态扫描 workdir 自动收录,无需额外登记。
+5. **同步 MCP resources**:`cmd/pmaker-mcp/resources/schema/<proto>.md` 加该协议的字段速查(schema 目录整体 embed,加文件即生效,Go 代码零改动);`examples/<协议>/` 下的示例随 `examples/examples.go` 的 `all:*` 整体 embed、由 `pmaker://examples` 自动收录,无需额外登记(注意**:新示例须重新编译二进制才生效**,embed 是编译期的)。
 6. 加 golden 测试并生成基准;`go test -race ./...` 通过。
 7. README/示例文档同步。
 
