@@ -167,7 +167,7 @@ func TestParseBackIPv6InGRE(t *testing.T) {
 }
 
 // TestParseBackVLANEdge 回读 vlan_edge,锁定 VLAN 显式覆盖与 VID 边界的 wire 落值:
-// 非标外层 TPID(0x9100)、中间层 tpid(0x88a8)、type 断链(0xffff)、
+// 非标外层 TPID(0x9100)、中间层 type 非标(0x88a8)、type 断链(0xffff)、
 // VID 0(priority tag)与 4095(12 位最大值)。
 func TestParseBackVLANEdge(t *testing.T) {
 	data := generatePcap(t, "../../examples/tunnel/vlan_edge.yaml")
@@ -183,13 +183,13 @@ func TestParseBackVLANEdge(t *testing.T) {
 		t.Errorf("包① eth.EthernetType = %#x,期望 0x9100(非标外层 TPID 原样落 wire)", ethL.EthernetType)
 	}
 
-	// 包②:中间层 tpid=0x88a8 落在外层标签的 Type 上;内层标签可继续解到 IPv4。
+	// 包②:中间层 type=0x88a8 落在外层标签的 Type 上;内层标签可继续解到 IPv4。
 	vlans := vlanLayers(pkts[1].Layers())
 	if len(vlans) < 2 {
 		t.Fatalf("包②期望 2 层 Dot1Q,得到 %d", len(vlans))
 	}
 	if vlans[0].Type != 0x88a8 {
-		t.Errorf("包②外层 Dot1Q.Type = %#x,期望 0x88a8(tpid 覆盖)", vlans[0].Type)
+		t.Errorf("包②外层 Dot1Q.Type = %#x,期望 0x88a8(type 覆盖)", vlans[0].Type)
 	}
 	if vlans[1].Type != layers.EthernetTypeIPv4 {
 		t.Errorf("包②内层 Dot1Q.Type = %#x,期望 0x0800(自动推导)", vlans[1].Type)

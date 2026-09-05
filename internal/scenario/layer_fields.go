@@ -11,8 +11,7 @@ type (
 	}
 	VLANFields struct {
 		VID  uint16 `yaml:"vid"`
-		TPID *Hex   `yaml:"tpid"` // 后一个 VLAN 标签的 TPID(next==vlan 时映射到 Dot1Q.Type)
-		Type *Hex   `yaml:"type"` // 显式覆盖 next-proto(制造断链)
+		Type *Hex   `yaml:"type"` // 显式覆盖本层标签后的 TPID/EtherType(制造断链;缺省自动推导)
 	}
 	IPv4Fields struct {
 		Src      string  `yaml:"src"`
