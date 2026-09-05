@@ -22,8 +22,9 @@ packets:
 | `dst` | MAC 字符串 | 是 | 目的 MAC |
 | `ethertype` | `Hex` | 否 | 覆盖自动推导的 EtherType;QinQ 外层 S-TAG 常用 `0x88a8` |
 
-EtherType 自动推导:后接 `vlan` → `0x8100`、`ipv4` → `0x0800`、`ipv6` → `0x86dd`,
-**其余一切情况(含后接 `payload` / `payload_hex` / 无下一层)一律落 `0x0800`**。
+EtherType 自动推导:后接 `vlan` → `0x8100`、`ipv4` → `0x0800`、`ipv6` → `0x86dd`;
+其余**非 IP 结构化层**(`gre`/`tcp`/`udp`/… 等)报错。兜底例外:后接 `payload` /
+`payload_hex` 或无下一层时仍落 `0x0800`(raw 尾巴无目标层可推,这是惯例缺省)。
 
 ## 组合规则(硬错)
 
@@ -37,8 +38,9 @@ EtherType 自动推导:后接 `vlan` → `0x8100`、`ipv4` → `0x0800`、`ipv6`
   `ethernet` —— 一个 `ipv4` 打头的 stack 会被写进声明为 Ethernet 的 pcap,解析端把 IP 头当 MAC 读,
   不报错不告警。**只有 L3 报文时须显式写 `link_type: raw`**(或 `ipv4` / `ipv6`)。
 - **写了 `ethertype` 就是断链**:值与实际下一层不符不会有任何提示。这正是构造用途,但误写同样无声。
-- 推导表之外的下一层落 `0x0800` 而非其真实 EtherType(如后接 `payload_hex` 手拼的非 IP 报文),
-  需要别的值必须显式写 `ethertype`。
+- 后接 `payload` / `payload_hex` / 无下一层时落 `0x0800` 而非其真实 EtherType
+  (raw 尾巴无目标层可推),需要别的值必须显式写 `ethertype`;其余推导表之外的
+  结构化下一层直接报错。
 
 ## 畸形构造
 

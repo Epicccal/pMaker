@@ -21,9 +21,8 @@ packets:
 无。`- gre: {}` 是唯一合法写法。写任何键都会被拒(见「报错 → 改法」)。
 
 `GRE.Protocol` = **内层 EtherType**,按内层第一层推导:内层 `ipv4` → `0x0800`、
-内层 `ipv6` → `0x86dd`、内层 `vlan` → `0x8100`、内层 `eth`(TEB,二层透传)→ 由
-`ethTypeFor` 落 `0x0800`(**注意:不是 `0x6558`**,见「静默陷阱」)。外层 IP 的
-protocol 自动 = 47。
+内层 `ipv6` → `0x86dd`、内层 `vlan` → `0x8100`;内层为其他层(含 `eth`)报错
+(**注意:TEB `0x6558` 不在推导表内**,见「静默陷阱」)。外层 IP 的 protocol 自动 = 47。
 
 ## 组合规则
 
@@ -34,9 +33,9 @@ protocol 自动 = 47。
 
 ## 静默陷阱
 
-- **TEB(内层是 `eth`,Transparent Ethernet Bridging)的 protocol 不对**。RFC 1701 规定
-  TEB 为 `0x6558`,但本工具的 EtherType 推导表里没有 `eth` 这一项,会落到 default `0x0800`,
-  不报错、不告警。构造 GRE-over-Ethernet 时须自行核对,必要时整段 `payload_hex`。
+- **TEB(内层是 `eth`,Transparent Ethernet Bridging)不可构造**。RFC 1701 规定
+  TEB 为 `0x6558`,但本工具的 EtherType 推导表里没有 `eth` 这一项,构建时报错。
+  构造 GRE-over-Ethernet 时须整段 `payload_hex` 手拼。
 - GRE 头的可选位(Checksum Present / Key Present / Sequence Number Present)与对应字段
   **全部不开放**,恒为 0 —— 也就是说只能生成 4 字节的最简 GRE 头。带 Key 的 GRE(常见于
   运营商隧道)当前无法结构化构造。

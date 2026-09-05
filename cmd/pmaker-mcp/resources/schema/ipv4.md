@@ -27,7 +27,8 @@ packets:
 | `header_length` | `Hex` | 否 | 两态覆盖(IHL,4 位,0-15):不写=自动计算;写值=原样上 wire。5-15 是规范范围,0-4 是合法畸形值 |
 
 next-proto 自动推导:后接 `tcp` → 6、`udp` → 17、`icmp` → 1、`gre` → 47、`ipv4` → 4(IP-in-IP)、
-`ipv6` → 41、**其余一切情况一律落 6(TCP)**,见「静默陷阱」。
+`ipv6` → 41;其余情况(`payload`/`payload_hex`/无下一层)落 6(TCP) 惯例缺省,**其它值一律报错**,
+见「静默陷阱」。
 
 ## 组合规则(硬错)
 
@@ -41,8 +42,8 @@ next-proto 自动推导:后接 `tcp` → 6、`udp` → 17、`icmp` → 1、`gre`
 
 ## 静默陷阱
 
-- **`protocol` 只认上表那几个名字,其它一律静默变成 TCP(6)**。写 `protocol: sctp` 出 6,
-  写 `protocol: 47`(数字)也出 6 —— 不报错、不告警。要指定任意协议号,当前没有字段可用,
+- **`protocol` 只认上表那几个名字**。写 `protocol: sctp` 或 `protocol: 47`(数字)在
+  `generate_pcap` 阶段报错(不再静默变 TCP)。要指定任意协议号,当前没有字段可用,
   只能整段走 `payload_hex` 手拼 IP 头。
 - 覆盖 `total_length` / `header_length` 会给**整包**关掉 `FixLengths`:同一个包里其它层
   (如 `udp.total_length`)的自动长度计算也随之失效。要只让一层撒谎,别的层就得自己写死值。
