@@ -412,6 +412,19 @@ func validateLayer(l Layer) error {
 		if f.Src == "" || f.Dst == "" {
 			return fmt.Errorf("需要 src 与 dst")
 		}
+		if err := validateLengthRange(f.EtherType, 16, "eth.ethertype"); err != nil {
+			return err
+		}
+	case *VLANFields:
+		if err := validateVLANVID(f.VID); err != nil {
+			return err
+		}
+		if err := validateLengthRange(f.TPID, 16, "vlan.tpid"); err != nil {
+			return err
+		}
+		if err := validateLengthRange(f.Type, 16, "vlan.type"); err != nil {
+			return err
+		}
 	case *IPv4Fields:
 		if f.Src == "" || f.Dst == "" {
 			return fmt.Errorf("需要 src 与 dst")
