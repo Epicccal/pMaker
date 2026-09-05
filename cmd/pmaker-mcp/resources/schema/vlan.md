@@ -19,7 +19,7 @@ packets:
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `vid` | uint16 | 否(缺省 0) | VLAN ID |
+| `vid` | uint16 | 否(缺省 0) | VLAN ID(12 位,`0..4095`;>4095 校验报错) |
 | `tpid` | `Hex` | 否 | **下一个标签**的 TPID;**仅当下一层还是 `vlan` 时生效**,见「静默陷阱」 |
 | `type` | `Hex` | 否 | 显式覆盖 next-proto(制造断链),优先级高于 `tpid` 与自动推导 |
 
@@ -31,6 +31,8 @@ packets:
 
 - 无必填字段:`- vlan: {}` 合法(VID=0,priority tag)。
 - 层数不设上限,多层按声明顺序由外到内。
+- `vid` 是 12 位字段,合法值 `0..4095`;4095 按字段表达能力放行(保留值,可用于畸形用例)。
+- `tpid` / `type` 超 16 位(如 `0x12345`)报错,不静默截断。
 - 外层 S-TAG 的 TPID **写在 `eth.ethertype` 上**(`0x88a8`),不是写在第一层 vlan 的 `tpid` 上。
 
 QinQ 完整写法:
@@ -62,13 +64,14 @@ packets:
 | 解析断链(标签后声明的下一层与实际不符) | `type: 0xffff` |
 | 非标 S-TAG TPID(设备认不认 `0x8100` 做双层) | `eth.ethertype: 0x8100` + 两层 vlan |
 | 超深标签栈 | 连写多层 `- vlan: {...}` |
-| 非法 VID(>4094)/ 带 PCP 的标签 | 整段走 `payload_hex` |
+| 非法 VID(>4095) | 整段走 `payload_hex`(校验阶段报 `超出 12 位`) |
 
 ## 报错 → 改法
 
 | 报错含 | 改法 |
 |--------|------|
 | `层 "vlan" 不支持字段` | vlan 只有 `vid` / `tpid` / `type` 三个字段;`priority`、`dei`、`pcp` 均未实现,走 `payload_hex` |
+| `vlan.vid 超出 12 位` | VID 上限 4095;需要"非法 VID"用例时写 `vid: 4095`(保留值)或整段走 `payload_hex` |
 
 ```yaml-bad
 link_type: ethernet
@@ -76,6 +79,28 @@ packets:
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
       - vlan: { vid: 100, priority: 5 }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+```
+
+vid 超 12 位被校验拦截:
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - vlan: { vid: 4096 }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+```
+
+tpid 超 16 位被校验拦截(不静默截断):
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - vlan: { vid: 100, tpid: 0x12345 }
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
 ```
 

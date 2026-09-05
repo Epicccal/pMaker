@@ -31,6 +31,7 @@ EtherType 自动推导:后接 `vlan` → `0x8100`、`ipv4` → `0x0800`、`ipv6`
 - `src` / `dst` 缺一不可。
 - `flow.stack` **必须**含 `eth`;standalone `packets` 无此要求(见「静默陷阱」)。
 - MAC 字符串的**格式**在出包阶段才解析:`generate_yaml` 会放行 `src: "zz"`,`generate_pcap` 才报错。
+- `ethertype` 超 16 位(如 `0x12345`)报错,不静默截断。
 
 ## 静默陷阱
 
