@@ -11,6 +11,7 @@ import (
 //   - vid 超 12 位(4096..65535)在 Validate 阶段报错,不再拖到 gopacket 序列化
 //     (此前 vid: 5000 能通过 Parse+Validate,直到 build 阶段才被 gopacket 拒绝)
 //   - vid 边界值 0(priority tag)与 4095(保留值)按字段表达能力放行
+//   - pri(PCP)超 3 位(>7)在 Validate 阶段报错;边界 0/7 放行
 //   - type / ethertype 超 16 位报错(Hex 底层 uint32,不拦截会被 builder 的
 //     uint16 转换静默截断,与 checksum/length 同一失败模式)
 
@@ -61,6 +62,37 @@ func TestValidateVLANVIDBoundaryAccepted(t *testing.T) {
 				t.Fatalf("vid=%d 应通过值域校验,实际失败: %v", tc.vid, err)
 			}
 		})
+	}
+}
+
+// TestValidateVLANPriOver3BitsRejected:pri(PCP)超 3 位须在 Validate 阶段报错。
+// PCP 占 TCI 高 3 位,uint8 放得下 8-255,但落 wire 会与 DEI/VID 位混淆,故 scenario 层拦截。
+func TestValidateVLANPriOver3BitsRejected(t *testing.T) {
+	eight := uint8(8)
+	s := &scenario.Scenario{Packets: []scenario.Packet{{
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+			{Type: "vlan", Fields: &scenario.VLANFields{VID: 100, Pri: &eight}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+		},
+	}}}
+	err := scenario.Validate(s)
+	if err == nil || !strings.Contains(err.Error(), "vlan.pri 超出 3 位") {
+		t.Fatalf("Validate() error=%v,期望 vlan.pri 超出 3 位", err)
+	}
+}
+
+func TestValidateVLANPriBoundaryAccepted(t *testing.T) {
+	seven := uint8(7)
+	s := &scenario.Scenario{Packets: []scenario.Packet{{
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+			{Type: "vlan", Fields: &scenario.VLANFields{VID: 100, Pri: &seven}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+		},
+	}}}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("pri=7 应通过值域校验,实际失败: %v", err)
 	}
 }
 

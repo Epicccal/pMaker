@@ -6,6 +6,7 @@
 #   - vlan.type 显式覆盖(双层标签间非标 TPID 0x88a8)
 #   - vlan.type 断链覆盖(0xffff,解析端在标签处断链)
 #   - vid 边界:0(priority tag)与 4095(12 位最大值,保留值)
+#   - pri(PCP)与 dei:TCI 高 4 位落值(非零 PCP、DEI 置位)
 #   - vid: 4096 会在 scenario.Validate 阶段报 vlan.vid 超出 12 位,须走 payload_hex
 link_type: ethernet
 seed: 42
@@ -44,3 +45,10 @@ packets:
       - vlan: { vid: 4095 }
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
       - udp:  { sport: 50002, dport: 53 }
+
+  # ⑤ pri(PCP)=5 + dei 置位:TCI = 5<<13 | 1<<12 | 100(QoS 优先级队列/丢弃策略验证)
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - vlan: { vid: 100, pri: 5, dei: true }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - udp:  { sport: 50003, dport: 53 }

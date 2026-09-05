@@ -58,7 +58,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 
 **已实现层(stack 模型)**:
 
-- L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层)
+- L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层;`pri`(PCP)/`dei` 可写 TCI 高 4 位)
 - L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)
 - L4:`tcp`、`udp`
 - 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data`

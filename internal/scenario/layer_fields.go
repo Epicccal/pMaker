@@ -11,6 +11,8 @@ type (
 	}
 	VLANFields struct {
 		VID  uint16 `yaml:"vid"`
+		Pri  *uint8 `yaml:"pri"`  // PCP 优先级(3 位,0-7;缺省 0)
+		DEI  *bool  `yaml:"dei"`  // Drop Eligible Indicator(1 位;缺省 false)
 		Type *Hex   `yaml:"type"` // 显式覆盖本层标签后的 TPID/EtherType(制造断链;缺省自动推导)
 	}
 	IPv4Fields struct {
