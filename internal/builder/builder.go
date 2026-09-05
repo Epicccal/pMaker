@@ -91,7 +91,11 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			}
 			add(eth, nil, lengthOverrideInfo{})
 		case *scenario.VLANFields:
-			add(buildVLAN(f, next), nil, lengthOverrideInfo{})
+			vlan, err := buildVLAN(f, next)
+			if err != nil {
+				return nil, fmt.Errorf("vlan: %w", err)
+			}
+			add(vlan, nil, lengthOverrideInfo{})
 		case *scenario.IPv4Fields:
 			ip, err := buildIPv4(f, next)
 			if err != nil {
@@ -107,7 +111,11 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 			netLayer = ip
 			add(ip, nil, lengthOverrideInfo{ipv6PayloadLength: f.PayloadLength})
 		case *scenario.GREFields:
-			add(buildGRE(next), nil, lengthOverrideInfo{})
+			gre, err := buildGRE(next)
+			if err != nil {
+				return nil, fmt.Errorf("gre: %w", err)
+			}
+			add(gre, nil, lengthOverrideInfo{})
 		case *scenario.TCPFields:
 			t, err := buildTCP(f)
 			if err != nil {
