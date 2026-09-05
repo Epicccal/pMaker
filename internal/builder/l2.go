@@ -9,17 +9,20 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-// ethTypeFor 按下一层类型推导 EtherType。
-func ethTypeFor(next string) layers.EthernetType {
+// ethTypeFor 自动推导路径。查不到时不再沿用历史静默落 0x0800(悄悄断链),报错;
+// 故意断链仍走 ethertype/type 显式覆盖,不受影响。
+func ethTypeFor(next string) (layers.EthernetType, error) {
 	switch next {
 	case "vlan":
-		return layers.EthernetTypeDot1Q
+		return layers.EthernetTypeDot1Q, nil
 	case "ipv4":
-		return layers.EthernetTypeIPv4
+		return layers.EthernetTypeIPv4, nil
 	case "ipv6":
-		return layers.EthernetTypeIPv6
+		return layers.EthernetTypeIPv6, nil
+	case "", "payload", "payload_hex":
+		return layers.EthernetTypeIPv4, nil
 	default:
-		return layers.EthernetTypeIPv4
+		return 0, fmt.Errorf("无法从下一层 %q 推导 EtherType:只可推导 vlan/ipv4/ipv6(兜底层 payload/payload_hex 与末层缺省 0x0800);非标 TPID/EtherType 请显式写 ethertype/type,不支持的后接内容走 payload_hex 整段手拼", next)
 	}
 }
 
@@ -32,14 +35,19 @@ func buildEth(f *scenario.EthFields, next string) (*layers.Ethernet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dst mac %q: %w", f.Dst, err)
 	}
-	et := ethTypeFor(next)
-	if f.EtherType != nil {
+	var et layers.EthernetType
+	if f.EtherType == nil {
+		var err error
+		if et, err = ethTypeFor(next); err != nil {
+			return nil, err
+		}
+	} else {
 		et = layers.EthernetType(uint16(*f.EtherType))
 	}
 	return &layers.Ethernet{SrcMAC: src, DstMAC: dst, EthernetType: et}, nil
 }
 
-func buildVLAN(f *scenario.VLANFields, next string) *layers.Dot1Q {
+func buildVLAN(f *scenario.VLANFields, next string) (*layers.Dot1Q, error) {
 	d := &layers.Dot1Q{VLANIdentifier: f.VID}
 	switch {
 	case f.Type != nil: // 显式覆盖(断链)
@@ -47,7 +55,11 @@ func buildVLAN(f *scenario.VLANFields, next string) *layers.Dot1Q {
 	case next == "vlan" && f.TPID != nil: // 后一层标签的 TPID
 		d.Type = layers.EthernetType(uint16(*f.TPID))
 	default:
-		d.Type = ethTypeFor(next)
+		et, err := ethTypeFor(next)
+		if err != nil {
+			return nil, err
+		}
+		d.Type = et
 	}
-	return d
+	return d, nil
 }

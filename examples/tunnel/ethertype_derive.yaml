@@ -1,0 +1,45 @@
+# 示例场景:next-proto 自动推导对照(可执行版)。
+#
+# 展示 eth/vlan/gre/ipv4 各层「下一层标识」的自动推导结果:
+#   - eth → vlan 得 0x8100;eth → ipv4 得 0x0800;eth → ipv6 得 0x86dd
+#   - vlan → vlan 得 0x8100(QinQ);vlan → ipv4 得 0x0800
+#   - ipv4 → gre 得 47;gre.Protocol = 内层第一层 EtherType(0x0800)
+#   - 后接 payload(或无下一层)无目标层可推,惯例缺省 0x0800
+# 推导表之外的结构化层(如 eth → gre)构建时报错;故意断链走显式覆盖
+# (ethertype / type / protocol / next_header),见 qinq_gre.yaml 用例 ③。
+link_type: ethernet
+seed: 42
+packets:
+  # ① eth → vlan → ipv4:0x8100 → 0x0800 全自动
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - vlan: { vid: 100 }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - tcp:  { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }
+
+  # ② eth → vlan → vlan → ipv4:QinQ,内层标签 0x8100 → 0x0800
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - vlan: { vid: 10 }
+      - vlan: { vid: 20 }
+      - ipv4: { src: "10.0.1.1", dst: "10.0.1.2", ttl: 64 }
+      - tcp:  { sport: 40002, dport: 443, flags: [SYN], seq: 2000 }
+
+  # ③ eth → ipv6:0x86dd
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::1", dst: "2001:db8::2" }
+      - udp:  { sport: 5353, dport: 5353 }
+
+  # ④ ip → gre → 内层完整报文:外层 protocol=47 自动,GRE.Protocol=内层 0x0800 自动
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "1.1.1.1", dst: "2.2.2.2" }
+      - gre:  {}
+      - ipv4: { src: "192.168.1.1", dst: "192.168.1.2" }
+      - tcp:  { sport: 1234, dport: 443, flags: [SYN], seq: 3000 }
+
+  # ⑤ eth → payload(raw 尾巴):无目标层可推,惯例缺省 0x0800
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - payload: { payload: "raw tail" }

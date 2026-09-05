@@ -26,8 +26,8 @@ packets:
 | `next_header` | **枚举名** | 否 | 覆盖下一层协议号,**只认名字**:`tcp` `udp` `icmp` `icmpv6`/`icmp6` `gre` `ipv4` `ipv6` |
 | `payload_length` | `Hex` | 否 | 两态覆盖(16 位):不写=自动计算(**不含** 40 字节固定头);写值=原样上 wire |
 
-next-header 自动推导:后接 `tcp` → 6、`udp` → 17、`icmpv6` → 58、`gre` → 47、`ipv6` → 41、
-**其余一切情况一律落 6(TCP)**,见「静默陷阱」。
+next-header 自动推导:后接 `tcp` → 6、`udp` → 17、`icmpv6` → 58、`gre` → 47、`ipv6` → 41;
+其余情况(`payload`/`payload_hex`/无下一层)落 6(TCP) 惯例缺省,**其它值一律报错**,见「静默陷阱」。
 
 ## 组合规则(硬错)
 
@@ -40,8 +40,8 @@ next-header 自动推导:后接 `tcp` → 6、`udp` → 17、`icmpv6` → 58、`
 
 ## 静默陷阱
 
-- **`next_header` 只认上表那几个名字,其它一律静默变成 TCP(6)**。写 `next_header: 43`
-  (Routing 扩展头)或 `next_header: hopopt` 都出 6,不报错、不告警。
+- **`next_header` 只认上表那几个名字**。写 `next_header: 43`(Routing 扩展头)或
+  `next_header: hopopt` 在 `generate_pcap` 阶段报错(不再静默变 TCP)。
 - 扩展头(Hop-by-Hop、Routing、Fragment、Destination Options)**完全未实现**。IPv6 分片、
   扩展头链规避等场景只能整段 `payload_hex` 手拼。
 - 覆盖 `payload_length` 会给整包关掉 `FixLengths`,同包其它层的自动长度也随之失效。

@@ -53,6 +53,8 @@
 
 按层栈自动推导下一层标识(`eth.ethertype` → `vlan.tpid`/`type` → `ipv4.protocol` → …),
 TCP/UDP 的 checksum 伪首部自动绑定**就近**的 IP 层(多层 IP 时绑内层)。
+推导表外且非兜底层(payload/payload_hex/末层)的后接内容**报错**,
+不存在"猜一个默认值"的静默断链 —— 见各层 schema 的推导表与「静默陷阱」。
 
 逐层显式写 `type` / `tpid` / `ethertype` 即覆盖推导值,用来制造**解析断链**。
 断链是合法构造,不产生任何告警。

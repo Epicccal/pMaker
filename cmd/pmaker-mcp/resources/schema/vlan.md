@@ -24,7 +24,8 @@ packets:
 | `type` | `Hex` | 否 | 显式覆盖 next-proto(制造断链),优先级高于 `tpid` 与自动推导 |
 
 `Dot1Q.Type` 的取值按优先级:显式 `type` > `tpid`(仅 next 为 `vlan`)> 自动推导
-(后接 `vlan` → `0x8100`、`ipv4` → `0x0800`、`ipv6` → `0x86dd`、**其余一律 `0x0800`**)。
+(后接 `vlan` → `0x8100`、`ipv4` → `0x0800`、`ipv6` → `0x86dd`;其余非 IP 结构化层
+(如 `gre`)报错。兜底例外:后接 `payload` / `payload_hex` 或无下一层时落 `0x0800`)。
 
 ## 组合规则
 
