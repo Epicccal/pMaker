@@ -106,12 +106,14 @@ type session struct {
 // conn 维护会话状态:src 是 TCP SYN 发起方,dst 是 SYN 接收方。
 type conn struct {
 	src, dst       endpoint
-	ttl            *uint8 // IPv4 TTL
-	hopLimit       *uint8 // IPv6 HopLimit
-	ipv6           bool   // 网络层为 IPv6(缺省 false = IPv4)
+	ethertype      *scenario.Hex // eth 层 EtherType 覆盖(非标 QinQ S-TAG TPID 等;无方向性)
+	ttl            *uint8        // IPv4 TTL
+	hopLimit       *uint8        // IPv6 HopLimit
+	ipv6           bool          // 网络层为 IPv6(缺省 false = IPv4)
 	srcSeq, dstSeq uint32
 	mss            *uint16
 	session        session
+	vlans          []*scenario.VLANFields // eth 与网络层之间的 802.1Q/QinQ 标签链(声明序,外→内)
 }
 
 // MessageSchedule 是单条消息的起始时刻(由 plan 阶段一算好后传入)。
@@ -145,7 +147,8 @@ type ResolveRef func(refFlow, refMsg string) (time.Time, bool)
 //   - 段间按 segment.interval 间隔(缺省 DefaultStep);对端 ACK 是伴生控制包,用 DefaultStep,
 //     不被数据段节奏传染(保持"只让数据慢"的语义纯净)。
 //
-// 当前 flow.stack 支持 eth/ipv4|ipv6/tcp/tcp_session;VLAN/GRE 等会话封装后续扩展。
+// 当前 flow.stack 支持 eth / 任意多层 vlan / ipv4|ipv6 / tcp / tcp_session;vlan 标签链
+// 在 eth 与网络层之间按声明序重建到每个展开包(GRE 等隧道内嵌会话封装后续扩展)。
 //
 // schedule 是该 flow 各消息的起始时刻表(按 message 声明序,一一对应)。由 plan 算时阶段
 // 预先算好(跨流 start_after 已解析为绝对时刻);Expand 只照表把每条消息铺到时间轴,不再运行期
@@ -276,6 +279,11 @@ func parseFlowStack(stack []scenario.Layer) (*conn, error) {
 		switch f := l.Fields.(type) {
 		case *scenario.EthFields:
 			c.src.mac, c.dst.mac = f.Src, f.Dst
+			c.ethertype = f.EtherType
+		case *scenario.VLANFields:
+			// 标签是"eth 与网络层之间"的静态封装:vid/type 无方向、不携带会话状态,
+			// 按声明序记录,emit 时原样重建到每个展开包(QinQ 多层 = 多条记录)。
+			c.vlans = append(c.vlans, f)
 		case *scenario.IPv4Fields:
 			c.src.ip, c.dst.ip = f.Src, f.Dst
 			c.ttl = f.TTL
@@ -343,10 +351,13 @@ func (c *conn) emit(from side, flags []string, chunk []byte, summaryLayers []str
 	}
 
 	stack := []scenario.Layer{
-		{Type: "eth", Fields: &scenario.EthFields{Src: src.mac, Dst: dst.mac}},
-		c.netLayer(src.ip, dst.ip),
-		{Type: "tcp", Fields: tcp},
+		{Type: "eth", Fields: &scenario.EthFields{Src: src.mac, Dst: dst.mac, EtherType: c.ethertype}},
 	}
+	for _, v := range c.vlans {
+		stack = append(stack, scenario.Layer{Type: "vlan", Fields: v})
+	}
+	stack = append(stack, c.netLayer(src.ip, dst.ip))
+	stack = append(stack, scenario.Layer{Type: "tcp", Fields: tcp})
 	if len(chunk) > 0 {
 		stack = append(stack, scenario.Layer{
 			Type:   "payload_hex",

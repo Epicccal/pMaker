@@ -176,6 +176,35 @@ func validateFlow(f FlowSpec) error {
 	case !seen["ipv4"] && !seen["ipv6"]:
 		return fmt.Errorf("stack 需要网络层(ipv4 或 ipv6)")
 	}
+	// vlan 是 eth 与网络层之间的静态标签:展开器按声明序重建到每个展开包(eth 之后、
+	// 网络层之前),写在网络层之后(interior)无法成帧 —— wire 上标签必须紧贴以太头。
+	// 允许同类型重复(QinQ 多层),此处只校验相对位置:每条 vlan 须落在 ethIdx 之后、
+	// netIdx 之前(eth 缺失已由上方 seen 检查报错;只判 i==0 会放过 [tcp, vlan, eth, …]
+	// 这类栈中段乱序 —— 声明序非 eth 开头时 emit 重建会无声重排)。
+	netIdx := -1
+	ethIdx := -1
+	for i, l := range f.Stack {
+		switch l.Type {
+		case "eth":
+			if ethIdx == -1 {
+				ethIdx = i
+			}
+		case "ipv4", "ipv6":
+			if netIdx == -1 {
+				netIdx = i
+			}
+		}
+	}
+	for i, l := range f.Stack {
+		if l.Type == "vlan" {
+			if ethIdx == -1 || i < ethIdx {
+				return fmt.Errorf("stack.vlan: 必须在 eth 之后(flow.stack 须以 eth 开头,vlan 夹在 eth 与网络层之间)")
+			}
+			if netIdx != -1 && i > netIdx {
+				return fmt.Errorf("stack.vlan: 必须在 eth 与网络层(%s)之间,不能出现在网络层之后", f.Stack[netIdx].Type)
+			}
+		}
+	}
 	seenMsgID := map[string]bool{}
 	for j, m := range f.Messages {
 		if m.From != "src" && m.From != "dst" {
