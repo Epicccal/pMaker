@@ -11,7 +11,6 @@ import (
 )
 
 // L2(eth/vlan)构造:EtherType/TPID 推导与两态覆盖、next-proto 推导报错语义。
-
 // derivationStack 构造 eth|vlan → <mid> → <tail> 的单包场景。
 //
 // 注意:tail 层只贡献 Type 字符串给推导(next = stack[j+1].Type),Fields 恒为
@@ -102,7 +101,7 @@ func TestEthEtherTypeOverride(t *testing.T) {
 }
 
 // QinQ 自动串接:外层 vlan→内层 vlan 得 0x8100,内层→ipv4 得 0x0800。
-func TestVLANTPIDQinQ(t *testing.T) {
+func TestVLANQinQAutoDerive(t *testing.T) {
 	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{Stack: []scenario.Layer{
 		{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
 		{Type: "vlan", Fields: &scenario.VLANFields{VID: 100}}, // S-TAG
@@ -126,13 +125,13 @@ func TestVLANTPIDQinQ(t *testing.T) {
 	}
 }
 
-// vlan.tpid 显式写死(非标 0x9100)→ 原样上 wire;gopacket 只认 0x8100/0x88a8,
-// 内层不再解出。注意 tpid 语义是「后一层标签的 TPID」,外层标签 TPID 落 eth.ethertype。
-func TestVLANTPIDOverride(t *testing.T) {
+// vlan.type 显式写死(非标 0x9100)→ 原样上 wire;gopacket 只认 0x8100/0x88a8,
+// 内层不再解出。type 语义是「本层标签后的 TPID/EtherType」,非标值是合法构造意图。
+func TestVLANTypeNonStandardTPID(t *testing.T) {
 	tpid := scenario.Hex(0x9100)
 	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{Stack: []scenario.Layer{
 		{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
-		{Type: "vlan", Fields: &scenario.VLANFields{VID: 100, TPID: &tpid}}, // 外层,后接内层 vlan
+		{Type: "vlan", Fields: &scenario.VLANFields{VID: 100, Type: &tpid}}, // 外层,后接内层 vlan
 		{Type: "vlan", Fields: &scenario.VLANFields{VID: 200}},
 		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
 		{Type: "payload", Fields: &scenario.PayloadFields{Payload: "x"}},
@@ -143,7 +142,7 @@ func TestVLANTPIDOverride(t *testing.T) {
 		t.Fatalf("期望 1 层 Dot1Q 可解(非标 TPID 内层 gopacket 不再解出),得到 %d", len(dot1qs))
 	}
 	if dot1qs[0].Type != 0x9100 {
-		t.Fatalf("外层 vlan Type(TPID) = %#x,期望 0x9100(tpid 显式覆盖应原样落值)", dot1qs[0].Type)
+		t.Fatalf("外层 vlan Type = %#x,期望 0x9100(type 显式覆盖应原样落值)", dot1qs[0].Type)
 	}
 	if dot1qs[0].VLANIdentifier != 100 {
 		t.Fatalf("VID = %d,期望 100", dot1qs[0].VLANIdentifier)

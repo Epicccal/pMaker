@@ -11,7 +11,7 @@ import (
 //   - vid 超 12 位(4096..65535)在 Validate 阶段报错,不再拖到 gopacket 序列化
 //     (此前 vid: 5000 能通过 Parse+Validate,直到 build 阶段才被 gopacket 拒绝)
 //   - vid 边界值 0(priority tag)与 4095(保留值)按字段表达能力放行
-//   - tpid / type / ethertype 超 16 位报错(Hex 底层 uint32,不拦截会被 builder 的
+//   - type / ethertype 超 16 位报错(Hex 底层 uint32,不拦截会被 builder 的
 //     uint16 转换静默截断,与 checksum/length 同一失败模式)
 
 func TestValidateVLANVIDOver12BitsRejected(t *testing.T) {
@@ -64,7 +64,7 @@ func TestValidateVLANVIDBoundaryAccepted(t *testing.T) {
 	}
 }
 
-// TestValidateVLANHexOver16BitsRejected:tpid/type 超 16 位须在 Validate 阶段报错。
+// TestValidateVLANHexOver16BitsRejected:type 超 16 位须在 Validate 阶段报错。
 // 不拦截时 builder 的 uint16 转换会把 0x12345 静默截断成 0x2345,wire 值与配置不符。
 func TestValidateVLANHexOver16BitsRejected(t *testing.T) {
 	over := scenario.Hex(0x12345)
@@ -72,7 +72,6 @@ func TestValidateVLANHexOver16BitsRejected(t *testing.T) {
 		name   string
 		fields *scenario.VLANFields
 	}{
-		{"tpid", &scenario.VLANFields{VID: 100, TPID: &over}},
 		{"type", &scenario.VLANFields{VID: 100, Type: &over}},
 	}
 	for _, tc := range cases {

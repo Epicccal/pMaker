@@ -49,16 +49,11 @@ func buildEth(f *scenario.EthFields, next string) (*layers.Ethernet, error) {
 
 func buildVLAN(f *scenario.VLANFields, next string) (*layers.Dot1Q, error) {
 	d := &layers.Dot1Q{VLANIdentifier: f.VID}
-	switch {
-	case f.Type != nil: // 显式覆盖(断链)
+	if f.Type != nil { // 显式覆盖(断链)
 		d.Type = layers.EthernetType(uint16(*f.Type))
-	case next == "vlan" && f.TPID != nil: // 后一层标签的 TPID
-		d.Type = layers.EthernetType(uint16(*f.TPID))
-	default:
-		et, err := ethTypeFor(next)
-		if err != nil {
-			return nil, err
-		}
+	} else if et, err := ethTypeFor(next); err != nil {
+		return nil, err
+	} else {
 		d.Type = et
 	}
 	return d, nil

@@ -419,9 +419,6 @@ func validateLayer(l Layer) error {
 		if err := validateVLANVID(f.VID); err != nil {
 			return err
 		}
-		if err := validateLengthRange(f.TPID, 16, "vlan.tpid"); err != nil {
-			return err
-		}
 		if err := validateLengthRange(f.Type, 16, "vlan.type"); err != nil {
 			return err
 		}

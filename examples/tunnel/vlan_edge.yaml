@@ -3,7 +3,7 @@
 # 与 ethertype_derive.yaml 互补:那边锁定自动推导值,这边锁定**显式覆盖**与
 # **12 位 VID 边界**在 wire 上的落值:
 #   - eth.ethertype 显式覆盖(0x9100 非标 TPID,gopacket 默认不解,设备兼容性用例)
-#   - vlan.tpid 显式覆盖(下一层标签的 TPID,双层间非标)
+#   - vlan.type 显式覆盖(双层标签间非标 TPID 0x88a8)
 #   - vlan.type 断链覆盖(0xffff,解析端在标签处断链)
 #   - vid 边界:0(priority tag)与 4095(12 位最大值,保留值)
 #   - vid: 4096 会在 scenario.Validate 阶段报 vlan.vid 超出 12 位,须走 payload_hex
@@ -18,10 +18,10 @@ packets:
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
       - udp:  { sport: 50000, dport: 53 }
 
-  # ② 中间层 vlan.tpid 生效:外层 C-TAG → 内层标签间 TPID 0x88a8
+  # ② 中间层 vlan.type 显式覆盖:外层 C-TAG → 内层标签间 TPID 0x88a8(非标)
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
-      - vlan: { vid: 100, tpid: 0x88a8 }
+      - vlan: { vid: 100, type: 0x88a8 }
       - vlan: { vid: 200 }
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
       - udp:  { sport: 50001, dport: 53 }

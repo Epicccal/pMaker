@@ -88,7 +88,7 @@ type Layer struct {
 // Hex 接受十进制整数或 "0x88a8" 形式的十六进制字符串。
 type Hex uint32
 
-// UnmarshalYAML 允许 ethertype/tpid/type/checksum 等字段用 0x.. 或十进制书写。
+// UnmarshalYAML 允许 ethertype/type/checksum 等字段用 0x.. 或十进制书写。
 func (h *Hex) UnmarshalYAML(node *yaml.Node) error {
 	var i int64
 	if err := node.Decode(&i); err == nil {
