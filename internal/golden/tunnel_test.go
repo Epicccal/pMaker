@@ -165,3 +165,64 @@ func TestParseBackIPv6InGRE(t *testing.T) {
 		t.Errorf("缺少内层 TCP(就近 IPv6 checksum 绑定)")
 	}
 }
+
+// TestParseBackVLANEdge 回读 vlan_edge,锁定 VLAN 显式覆盖与 VID 边界的 wire 落值:
+// 非标外层 TPID(0x9100)、中间层 tpid(0x88a8)、type 断链(0xffff)、
+// VID 0(priority tag)与 4095(12 位最大值)。
+func TestParseBackVLANEdge(t *testing.T) {
+	data := generatePcap(t, "../../examples/tunnel/vlan_edge.yaml")
+	pkts := readPackets(t, data)
+	if len(pkts) != 5 {
+		t.Fatalf("期望 5 个包,得到 %d", len(pkts))
+	}
+
+	// 包①:eth.ethertype=0x9100 非标 TPID。gopacket 默认不把 0x9100 解为 Dot1Q,
+	// 回读在此断链(DecodeFailure),断言的是 eth 层写出的 EtherType 原值。
+	ethL := pkts[0].LinkLayer().(*layers.Ethernet)
+	if ethL.EthernetType != 0x9100 {
+		t.Errorf("包① eth.EthernetType = %#x,期望 0x9100(非标外层 TPID 原样落 wire)", ethL.EthernetType)
+	}
+
+	// 包②:中间层 tpid=0x88a8 落在外层标签的 Type 上;内层标签可继续解到 IPv4。
+	vlans := vlanLayers(pkts[1].Layers())
+	if len(vlans) < 2 {
+		t.Fatalf("包②期望 2 层 Dot1Q,得到 %d", len(vlans))
+	}
+	if vlans[0].Type != 0x88a8 {
+		t.Errorf("包②外层 Dot1Q.Type = %#x,期望 0x88a8(tpid 覆盖)", vlans[0].Type)
+	}
+	if vlans[1].Type != layers.EthernetTypeIPv4 {
+		t.Errorf("包②内层 Dot1Q.Type = %#x,期望 0x0800(自动推导)", vlans[1].Type)
+	}
+	if vlans[0].VLANIdentifier != 100 || vlans[1].VLANIdentifier != 200 {
+		t.Errorf("包② VID = %d/%d,期望 100/200", vlans[0].VLANIdentifier, vlans[1].VLANIdentifier)
+	}
+
+	// 包③:type=0xffff 断链。断链是刻意构造,回读解析在标签处停止,
+	// 断言 Dot1Q.Type 原样保留 0xffff。
+	vlans = vlanLayers(pkts[2].Layers())
+	if len(vlans) != 1 || vlans[0].Type != 0xffff {
+		t.Errorf("包③期望 1 层 Dot1Q 且 Type=0xffff,得到 %d 层", len(vlans))
+	}
+
+	// 包④⑤:VID 边界值原样落 wire(0 = priority tag,4095 = 12 位最大值)。
+	vlans = vlanLayers(pkts[3].Layers())
+	if len(vlans) != 1 || vlans[0].VLANIdentifier != 0 {
+		t.Errorf("包④期望 VID=0(priority tag),得到 %v", vlans)
+	}
+	vlans = vlanLayers(pkts[4].Layers())
+	if len(vlans) != 1 || vlans[0].VLANIdentifier != 4095 {
+		t.Errorf("包⑤期望 VID=4095,得到 %v", vlans)
+	}
+}
+
+// vlanLayers 收集 gopacket 回读后的 Dot1Q 层。
+func vlanLayers(ls []gopacket.Layer) []*layers.Dot1Q {
+	var out []*layers.Dot1Q
+	for _, l := range ls {
+		if d, ok := l.(*layers.Dot1Q); ok {
+			out = append(out, d)
+		}
+	}
+	return out
+}
