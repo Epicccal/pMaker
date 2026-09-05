@@ -376,7 +376,7 @@ out.pcap
    —— 覆盖能力正是测试"设备对畸形/非标封装如何处理"的关键。
 
 4. **QinQ 的 TPID 必须可配置。** 标准 S-TAG 是 `0x88a8`,但很多设备实现用 `0x8100` 做双层。
-   验证点往往就是"设备认不认非标 TPID",所以 `tpid`/`ethertype` 要能逐层显式指定,**不能写死**。
+   验证点往往就是"设备认不认非标 TPID",所以 `type`/`ethertype` 要能逐层显式指定,**不能写死**。
 
 5. **多层 IP 时,每个传输层的 checksum 绑定到"就近那层 IP"。** 内层 TCP 的
    `SetNetworkLayerForChecksum` 要指向**内层 IP**,不是外层。builder 按嵌套关系正确配对,
@@ -593,7 +593,7 @@ golangci-lint run # 若已安装
 - 顶层是**有序的 packet 列表**或 **flow 场景**;字段名 `snake_case`。
 - **每个 packet 是一个 `stack`:从外到内的有序 layer 列表**,每个元素是单键 map(`- vlan: {…}`),
   **允许同类型重复**(QinQ 两层 VLAN)和递归嵌套(GRE 内层再放报文)。
-- 封装层的 next-protocol / ethertype **默认自动推导**,可逐层用 `type` / `tpid` / `ethertype` 显式覆盖(制造断链等畸形)。
+- 封装层的 next-protocol / ethertype **默认自动推导**,可逐层用 `type` / `ethertype` 显式覆盖(制造断链等畸形)。
 - 缺省字段走合理默认(自动 seq、自动 checksum、自动串接)。
 - **文件占位符 `@file(<path>)`**:任意 string 字段里可写 `@file(path)`,`Load` 时替换为文件原始字节
   (支持二进制,可只占字段值一部分,可多个拼接;`@@`→`@`;绝对路径原样用,相对路径相对 scenario 目录)。
@@ -615,7 +615,7 @@ packets:
   # ① QinQ:双层 VLAN 承载普通 TCP
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb", ethertype: 0x88a8 }  # S-TAG TPID
-      - vlan: { vid: 100, tpid: 0x8100 }   # 外层 S-TAG,下一层仍是 VLAN
+      - vlan: { vid: 100, type: 0x8100 }   # 外层 S-TAG,下一层仍是 VLAN(type 显式)
       - vlan: { vid: 200 }                 # 内层 C-TAG,next 自动推导为 IPv4
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
       - tcp:  { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }

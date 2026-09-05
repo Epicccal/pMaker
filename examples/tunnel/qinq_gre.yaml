@@ -8,7 +8,7 @@ packets:
   # ① QinQ:双层 VLAN 承载普通 TCP
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb", ethertype: 0x88a8 }  # S-TAG TPID
-      - vlan: { vid: 100, tpid: 0x8100 }   # 外层 S-TAG,下一层仍是 VLAN
+      - vlan: { vid: 100, type: 0x8100 }   # 外层 S-TAG,下一层仍是 VLAN(type 显式)
       - vlan: { vid: 200 }                 # 内层 C-TAG,next 自动推导为 IPv4
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
       - tcp:  { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }

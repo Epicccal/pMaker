@@ -51,12 +51,12 @@
 
 ## next-proto / EtherType 自动串接
 
-按层栈自动推导下一层标识(`eth.ethertype` → `vlan.tpid`/`type` → `ipv4.protocol` → …),
+按层栈自动推导下一层标识(`eth.ethertype` → `vlan.type` → `ipv4.protocol` → …),
 TCP/UDP 的 checksum 伪首部自动绑定**就近**的 IP 层(多层 IP 时绑内层)。
 推导表外且非兜底层(payload/payload_hex/末层)的后接内容**报错**,
 不存在"猜一个默认值"的静默断链 —— 见各层 schema 的推导表与「静默陷阱」。
 
-逐层显式写 `type` / `tpid` / `ethertype` 即覆盖推导值,用来制造**解析断链**。
+逐层显式写 `type` / `ethertype` 即覆盖推导值,用来制造**解析断链**。
 断链是合法构造,不产生任何告警。
 
 ## 原始字节兜底
@@ -80,7 +80,7 @@ TCP/UDP 的 checksum 伪首部自动绑定**就近**的 IP 层(多层 IP 时绑�
 
 ## Hex 字段
 
-`ethertype` / `tpid` / `type` / `checksum` / 各长度字段接受十进制或 `0x88a8` 形式。
+`ethertype` / `type` / `checksum` / 各长度字段接受十进制或 `0x88a8` 形式。
 `payload_hex` 一类**必须**带 `0x` 前缀。
 
 ## 换行:哪里归一化,哪里不
