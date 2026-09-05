@@ -21,6 +21,8 @@ packets:
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `vid` | uint16 | 否(缺省 0) | VLAN ID(12 位,`0..4095`;>4095 校验报错) |
+| `pri` | uint8 | 否(缺省 0) | PCP 优先级(802.1p,TCI 高 3 位,`0..7`;>7 校验报错) |
+| `dei` | bool | 否(缺省 false) | Drop Eligible Indicator(TCI 第 4 位) |
 | `type` | `Hex` | 否 | 显式覆盖本层标签后的 TPID/EtherType(制造断链),缺省自动推导 |
 
 `Dot1Q.Type` 的取值:显式 `type` 优先;缺省自动推导(后接 `vlan` → `0x8100`、
@@ -32,6 +34,9 @@ packets:
 - 无必填字段:`- vlan: {}` 合法(VID=0,priority tag)。
 - 层数不设上限,多层按声明顺序由外到内。
 - `vid` 是 12 位字段,合法值 `0..4095`;4095 按字段表达能力放行(保留值,可用于畸形用例)。
+- `pri`(PCP)合法值 `0..7`;`dei` 写入 TCI 对应位。`pri`/`dei` 与 `vid` 共同组成 TCI,
+  需要构造"TCI 整体畸形"(如非标位组合)时,`pri`+`dei`+`vid` 已覆盖 16 位 TCI 的全部语义位,
+  仍不够走 `payload_hex`。
 - `type` 超 16 位(如 `0x12345`)报错,不静默截断。
 - 外层 S-TAG 的 TPID **写在 `eth.ethertype` 上**(`0x88a8`),vlan 层管不到。
 - 双层标签间非标 TPID:上一层 vlan 写 `type: 0x88a8`(见下方 QinQ 写法)。
@@ -54,7 +59,7 @@ packets:
 ## 静默陷阱
 
 - **`vid` 不写就是 0,不会提示。** VID 0 是合法的 priority tag,但多半不是你想要的。
-- 802.1p 优先级(PCP)与 DEI 位当前**不开放**,恒为 0;需要非零 PCP 只能整段走 `payload_hex`。
+- `pri` 不写就是 0。写 `pri: 0` + `vid: 0` 虽是字段语义上的 priority tag,与不写无 wire 差异。
 
 ## 畸形构造
 
@@ -64,14 +69,17 @@ packets:
 | 非标 S-TAG TPID(设备认不认 `0x8100` 做双层) | `eth.ethertype: 0x8100` + 两层 vlan |
 | 非标标签间 TPID(如 `0x88a8`/`0x9100`) | 上一层 vlan 的 `type: 0x88a8` |
 | 超深标签栈 | 连写多层 `- vlan: {...}` |
+| 非零 PCP(QoS/优先级队列验证) | `pri: 5` 等,`0..7` |
+| DEI 置位(丢弃策略验证) | `dei: true` |
 | 非法 VID(>4095) | 整段走 `payload_hex`(校验阶段报 `超出 12 位`) |
 
 ## 报错 → 改法
 
 | 报错含 | 改法 |
 |--------|------|
-| `层 "vlan" 不支持字段` | vlan 只有 `vid` / `type` 两个字段;`tpid`、`priority`、`dei`、`pcp` 均不存在(非标 TPID 走 `type`/`ethertype`),其余走 `payload_hex` |
+| `层 "vlan" 不支持字段` | vlan 只有 `vid` / `pri` / `dei` / `type` 四个字段;`tpid`、`priority`、`pcp` 均不存在(优先级用 `pri`,非标 TPID 走 `type`/`ethertype`),其余走 `payload_hex` |
 | `vlan.vid 超出 12 位` | VID 上限 4095;需要"非法 VID"用例时写 `vid: 4095`(保留值)或整段走 `payload_hex` |
+| `vlan.pri 超出 3 位` | PCP 上限 7;整段走 `payload_hex` 无法表达"PCP>7"(TCI 位放不下),该畸形本身不存在 |
 | `必须在 eth 之后` | 仅 `flow.stack`:`flow.stack` 须以 `eth` 开头,vlan 移到 `eth` 之后(standalone `packets` 无此约束) |
 | `必须在 eth 与网络层` | 仅 `flow.stack`:vlan 移到 `eth` 与网络层之间(wire 上标签必须紧贴以太头;standalone `packets` 无此约束) |
 
@@ -92,6 +100,17 @@ packets:
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
       - vlan: { vid: 4096 }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+```
+
+pri 超 3 位(PCP 值域 0-7)被校验拦截:
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - vlan: { vid: 100, pri: 8 }
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
 ```
 

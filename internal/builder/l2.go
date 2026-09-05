@@ -49,6 +49,12 @@ func buildEth(f *scenario.EthFields, next string) (*layers.Ethernet, error) {
 
 func buildVLAN(f *scenario.VLANFields, next string) (*layers.Dot1Q, error) {
 	d := &layers.Dot1Q{VLANIdentifier: f.VID}
+	if f.Pri != nil {
+		d.Priority = *f.Pri
+	}
+	if f.DEI != nil {
+		d.DropEligible = *f.DEI
+	}
 	if f.Type != nil { // 显式覆盖(断链)
 		d.Type = layers.EthernetType(uint16(*f.Type))
 	} else if et, err := ethTypeFor(next); err != nil {

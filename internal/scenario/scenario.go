@@ -448,6 +448,11 @@ func validateLayer(l Layer) error {
 		if err := validateVLANVID(f.VID); err != nil {
 			return err
 		}
+		if f.Pri != nil {
+			if err := validateVLANPri(*f.Pri); err != nil {
+				return err
+			}
+		}
 		if err := validateLengthRange(f.Type, 16, "vlan.type"); err != nil {
 			return err
 		}

@@ -197,3 +197,42 @@ func layersOfType[T gopacket.Layer](p gopacket.Packet) []T {
 	}
 	return out
 }
+
+// vlan.pri / vlan.dei 落 TCI 高 4 位:gopacket 序列化 TCI = pri<<13 | dei<<12 | vid,
+// 回读断言 Priority/DropEligible 原样还原。
+func TestVLANPriAndDEI(t *testing.T) {
+	pri := uint8(5)
+	deiTrue := true
+	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{Stack: []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+		{Type: "vlan", Fields: &scenario.VLANFields{VID: 100, Pri: &pri, DEI: &deiTrue}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+		{Type: "payload", Fields: &scenario.PayloadFields{Payload: "x"}},
+	}}}}
+	pkts := readPackets(t, buildScenarioPcap(t, s))
+	vlan := pkts[0].Layer(layers.LayerTypeDot1Q).(*layers.Dot1Q)
+	if vlan.Priority != 5 {
+		t.Fatalf("PCP = %d,期望 5", vlan.Priority)
+	}
+	if !vlan.DropEligible {
+		t.Fatal("DEI 应为 true")
+	}
+	if vlan.VLANIdentifier != 100 {
+		t.Fatalf("VID = %d,期望 100(pri/dei 不得侵占 vid 位)", vlan.VLANIdentifier)
+	}
+}
+
+// 缺省(不写 pri/dei)时 TCI 高 4 位为 0,与既有行为一致。
+func TestVLANPriDEIDefaultZero(t *testing.T) {
+	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{Stack: []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
+		{Type: "vlan", Fields: &scenario.VLANFields{VID: 100}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+		{Type: "payload", Fields: &scenario.PayloadFields{Payload: "x"}},
+	}}}}
+	pkts := readPackets(t, buildScenarioPcap(t, s))
+	vlan := pkts[0].Layer(layers.LayerTypeDot1Q).(*layers.Dot1Q)
+	if vlan.Priority != 0 || vlan.DropEligible {
+		t.Fatalf("缺省应 PCP=0/DEI=false,得到 pri=%d dei=%v", vlan.Priority, vlan.DropEligible)
+	}
+}

@@ -172,8 +172,8 @@ func TestParseBackIPv6InGRE(t *testing.T) {
 func TestParseBackVLANEdge(t *testing.T) {
 	data := generatePcap(t, "../../examples/tunnel/vlan_edge.yaml")
 	pkts := readPackets(t, data)
-	if len(pkts) != 5 {
-		t.Fatalf("期望 5 个包,得到 %d", len(pkts))
+	if len(pkts) != 6 {
+		t.Fatalf("期望 6 个包,得到 %d", len(pkts))
 	}
 
 	// 包①:eth.ethertype=0x9100 非标 TPID。gopacket 默认不把 0x9100 解为 Dot1Q,
@@ -213,6 +213,16 @@ func TestParseBackVLANEdge(t *testing.T) {
 	vlans = vlanLayers(pkts[4].Layers())
 	if len(vlans) != 1 || vlans[0].VLANIdentifier != 4095 {
 		t.Errorf("包⑤期望 VID=4095,得到 %v", vlans)
+	}
+
+	// 包⑥:pri=5 + dei=true 落 TCI 高 4 位(5<<13 | 1<<12),vid 不受侵占。
+	vlans = vlanLayers(pkts[5].Layers())
+	if len(vlans) != 1 {
+		t.Fatalf("包⑥期望 1 层 Dot1Q,得到 %d", len(vlans))
+	}
+	if vlans[0].Priority != 5 || !vlans[0].DropEligible || vlans[0].VLANIdentifier != 100 {
+		t.Errorf("包⑥期望 PCP=5/DEI=true/VID=100,得到 PCP=%d DEI=%v VID=%d",
+			vlans[0].Priority, vlans[0].DropEligible, vlans[0].VLANIdentifier)
 	}
 }
 
