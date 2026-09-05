@@ -35,7 +35,7 @@ func buildEth(f *scenario.EthFields, next string) (*layers.Ethernet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dst mac %q: %w", f.Dst, err)
 	}
-	et := layers.EthernetTypeIPv4
+	var et layers.EthernetType
 	if f.EtherType == nil {
 		var err error
 		if et, err = ethTypeFor(next); err != nil {
