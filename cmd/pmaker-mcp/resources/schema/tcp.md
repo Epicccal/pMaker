@@ -45,7 +45,7 @@ packets:
 
 - `sport` / `dport` 必须显式非 0。
 - `flow.stack` 里不能写 `checksum` / `header_length`(flow 展开器重建各层字段);这类畸形走 `packets`。
-- `flow.stack` 必须同时含 `eth` + 恰好一个网络层 + `tcp` + `tcp_session`。
+- `flow.stack` 必须同时含 `eth` + 恰好一个网络层 + `tcp` + `tcp_session`;可选夹多层 `vlan`(802.1Q/QinQ,见 `pmaker://schema/vlan`)。
 
 ## 静默陷阱
 

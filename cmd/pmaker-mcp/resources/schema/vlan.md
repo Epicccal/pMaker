@@ -1,6 +1,7 @@
 # vlan —— 802.1Q / QinQ 标签(L2)
 
 夹在 `eth` 与网络层之间,**可重复**(QinQ 双层甚至多层)。后接 `vlan`(继续套标签)或网络层。
+`flow.stack` 同样支持(夹在 `eth` 与网络层之间,标签链重建到每个展开包;QinQ 多层照写)。
 通则(两态覆盖 / 兜底 / `@file`)见 `pmaker://schema/_conventions`。
 
 ## 骨架
@@ -34,6 +35,8 @@ packets:
 - `type` 超 16 位(如 `0x12345`)报错,不静默截断。
 - 外层 S-TAG 的 TPID **写在 `eth.ethertype` 上**(`0x88a8`),vlan 层管不到。
 - 双层标签间非标 TPID:上一层 vlan 写 `type: 0x88a8`(见下方 QinQ 写法)。
+- **flow 封装**:`flow.stack` 里 vlan 夹在 `eth` 与网络层之间(不可在最外层、不可在网络层之后),
+  标签链会重建到该 flow 的每个展开包(握手/数据/挥手),vid/type 全部保留。
 
 QinQ 完整写法:
 
@@ -69,6 +72,8 @@ packets:
 |--------|------|
 | `层 "vlan" 不支持字段` | vlan 只有 `vid` / `type` 两个字段;`tpid`、`priority`、`dei`、`pcp` 均不存在(非标 TPID 走 `type`/`ethertype`),其余走 `payload_hex` |
 | `vlan.vid 超出 12 位` | VID 上限 4095;需要"非法 VID"用例时写 `vid: 4095`(保留值)或整段走 `payload_hex` |
+| `必须在 eth 之后` | 仅 `flow.stack`:`flow.stack` 须以 `eth` 开头,vlan 移到 `eth` 之后(standalone `packets` 无此约束) |
+| `必须在 eth 与网络层` | 仅 `flow.stack`:vlan 移到 `eth` 与网络层之间(wire 上标签必须紧贴以太头;standalone `packets` 无此约束) |
 
 ```yaml-bad
 link_type: ethernet
@@ -99,6 +104,43 @@ packets:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
       - vlan: { vid: 100, type: 0x12345 }
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+```
+
+flow.stack 的 vlan 写在 eth 之前被校验拦截(vlan 须夹在 eth 与网络层之间,写成最外层也报同一错):
+
+```yaml-bad
+link_type: ethernet
+flows:
+  - name: vlan-misplaced
+    stack:
+      - tcp:  { sport: 49152, dport: 80 }
+      - vlan: { vid: 100 }
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - payload: { payload: "x" }
+```
+
+flow.stack 的 vlan 写在网络层之后被校验拦截(标签须紧贴以太头,内层无法成帧):
+
+```yaml-bad
+link_type: ethernet
+flows:
+  - name: vlan-too-deep
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
+      - vlan: { vid: 100 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - payload: { payload: "x" }
 ```
 
 ## 相关
