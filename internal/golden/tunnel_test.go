@@ -226,3 +226,37 @@ func vlanLayers(ls []gopacket.Layer) []*layers.Dot1Q {
 	}
 	return out
 }
+
+// TestParseBackVLANFlow 回读 vlan_flow(flow 场景,QinQ 双标签承载完整 TCP 会话),
+// 验证 flow 展开器把标签链重建到每个展开包:握手 SYN / 反向 SYN,ACK / 数据段均能
+// 逐层解到 Dot1Q×2 + IPv4 + TCP,标签 vid 与声明一致。
+func TestParseBackVLANFlow(t *testing.T) {
+	data := generatePcap(t, "../../examples/tunnel/vlan_flow.yaml")
+	pkts := readPackets(t, data)
+	if len(pkts) != 11 {
+		t.Fatalf("期望 11 个包(握手3+数据4+挥手4),得到 %d", len(pkts))
+	}
+	// 每个展开包(双向都过一遍):标签链两层,VID 与声明一致;外层 S-TAG TPID
+	// 0x88a8 写在 eth.ethertype,方向反转(src/dst 互换)后原样保留。
+	for i := range pkts {
+		vlans := vlanLayers(pkts[i].Layers())
+		if len(vlans) != 2 {
+			t.Fatalf("包%d 期望 2 层 Dot1Q,得到 %d", i, len(vlans))
+		}
+		if vlans[0].VLANIdentifier != 100 || vlans[1].VLANIdentifier != 200 {
+			t.Errorf("包%d VID = %d/%d,期望 100/200", i, vlans[0].VLANIdentifier, vlans[1].VLANIdentifier)
+		}
+		eth, ok := pkts[i].LinkLayer().(*layers.Ethernet)
+		if !ok {
+			t.Fatalf("包%d 链路层不是 Ethernet", i)
+		}
+		if eth.EthernetType != 0x88a8 {
+			t.Errorf("包%d eth.EthernetType = %#x,期望 0x88a8(外层 S-TAG TPID)", i, eth.EthernetType)
+		}
+	}
+	// 方向反转后标签链不变:正向 SYN(包0)与反向 SYN,ACK(包1)均在上循环覆盖;
+	// 请求段(包3)确认标签链未破坏内层串接(仍能解到 TCP)。
+	if pkts[3].Layer(layers.LayerTypeTCP) == nil {
+		t.Errorf("包③缺少 TCP 层(标签链未破坏内层串接)")
+	}
+}

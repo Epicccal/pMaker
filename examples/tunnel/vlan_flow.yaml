@@ -1,0 +1,43 @@
+# examples/tunnel/vlan_flow.yaml
+#
+# QinQ 双层标签承载完整 TCP 会话(flow 场景):握手 / HTTP 请求响应 / 挥手,
+# 每个展开包(包括 SYN 与挥手)都重建同一条标签链。
+#
+# flow.stack 支持多层 vlan(夹在 eth 与网络层之间,vid/type 无方向性,
+# 反向消息自动反转 MAC/IP/端口时标签链原样保留):
+#   - 外层 S-TAG TPID 写在 eth.ethertype(0x88a8,非标双层写法)
+#   - 标签间 TPID 写在上一层 vlan.type
+#   - 内层 C-TAG 的 type 缺省自动推导(后接 ipv4 → 0x0800)
+link_type: ethernet
+seed: 42
+
+flows:
+  - name: qinq-http-get
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb", ethertype: 0x88a8 }
+      - vlan: { vid: 100 }                 # 外层 S-TAG,下一层是 vlan → type 自动 0x8100
+      - vlan: { vid: 200 }                 # 内层 C-TAG,type 自动推导为 ipv4 的 0x0800
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /index.html
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              auto_content_length: true
+              headers:
+                Server: nginx/1.24.0
+                Content-Type: text/html; charset=utf-8
+                Content-Length: 0        # 占位值,auto_content_length: true 会覆盖为 body 实际长度
+              body: "hello from qinq"

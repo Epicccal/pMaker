@@ -82,7 +82,8 @@ flows:
 ```
 
 **硬约束**:`flow.stack` 须含 `eth` + `tcp` + 恰好一个网络层(`ipv4` 或 `ipv6`)+ `tcp_session`;
-每条 message 须 ≥1 个 payload 生产层,同段多层按声明顺序拼接(standalone packet 同此规则)。
+可选夹多层 `vlan`(802.1Q/QinQ,标签链重建到每个展开包);每条 message 须 ≥1 个 payload 生产层,
+同段多层按声明顺序拼接(standalone packet 同此规则)。
 
 ## 时间
 

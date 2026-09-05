@@ -524,7 +524,7 @@ segment: { mss: 8, interval: "+10ms" }
 ### 约束
 
 - **确定性**:时间戳由 `base_time` + 显式偏移(或默认 `base + 全局序号*1ms`)派生,seed 控制乱序/抖动,不用 `time.Now()`(保持 golden 可比对)。
-- **封装组合**:当前 flow.stack 先支持 eth/ipv4/tcp/tcp_session;若要把整条会话套进 QinQ/GRE,后续再升级为更通用的 stack 反转。
+- **封装组合**:flow.stack 支持 eth + 任意多层 vlan(802.1Q/QinQ,标签链重建到每个展开包)+ ipv4/ipv6 + tcp + tcp_session;GRE 等隧道内嵌会话暂不支持(会话仍只能用 `packets` 逐包写),后续再升级为更通用的 stack 反转。
 - **UDP**:退化情形——无握手/挥手、无 seq/ack 的一串数据报(DNS、QUIC 探测)走同一抽象。
 - **测试**:每个 flow 出 golden pcap;回读用 gopacket `reassembly` 重组 TCP 流,断言应用层字节与脚本一致、无空洞、握手/挥手标志序列正确。
 

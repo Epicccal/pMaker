@@ -34,7 +34,8 @@ flows:
 
 ## 组合规则(硬错)
 
-- `flow.stack` **必须**同时含 `eth`、恰好一个网络层(`ipv4` 或 `ipv6`)、`tcp`、`tcp_session`。
+- `flow.stack` **必须**同时含 `eth`、恰好一个网络层(`ipv4` 或 `ipv6`)、`tcp`、`tcp_session`;
+  可选夹多层 `vlan`(802.1Q/QinQ,须在 eth 与网络层之间)。
 - `open` / `close` 只认上表的字符串;拼错会被拒(不会静默降级)。
 - 每条 message 的 `from` 只能是 `src` / `dst`,`stack` 须至少一个 payload 生产层。
 
@@ -65,7 +66,7 @@ flows:
 |--------|------|
 | `tcp_session.open 只能是 handshake/none` | 只有这两个值。"已建连"写 `none`,不是 `established`/`skip` |
 | `tcp_session.close 只能是 fin/rst/none` | 只有这三个值。半关闭、乱序挥手请用 `packets` 逐包写 |
-| `stack 需要 tcp 层` | `flow.stack` 四件套缺一不可:`eth` + 一个网络层 + `tcp` + `tcp_session`。UDP 会话当前不支持 flow,用 `packets` |
+| `stack 需要 tcp 层` | `flow.stack` 四件套缺一不可:`eth` + 一个网络层 + `tcp` + `tcp_session`(可选夹多层 `vlan`,见 `pmaker://schema/vlan`)。UDP 会话当前不支持 flow,用 `packets` |
 
 ```yaml-bad
 link_type: ethernet

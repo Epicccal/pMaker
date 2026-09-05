@@ -459,3 +459,130 @@ func tcpOf(p scenario.Packet) *scenario.TCPFields {
 func contains(ss []string, s string) bool {
 	return slices.Contains(ss, s)
 }
+
+// TestFlowVLANEncapsulation 回读 vlan 封装 flow:每个展开包(握手/数据/挥手)都重建
+// vlan 标签链(eth 之后、ipv4 之前),反向消息方向反转后标签链保持不变
+// (vid/type 无方向性),QinQ 多层按声明序。钉住 parseFlowStack 记录 + emit 重建。
+func TestFlowVLANEncapsulation(t *testing.T) {
+	mss := uint16(1460)
+	innerTPID := scenario.Hex(0x8100)
+	f := scenario.FlowSpec{
+		Name: "vlan-qinq",
+		Stack: []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+			{Type: "vlan", Fields: &scenario.VLANFields{VID: 100}},
+			{Type: "vlan", Fields: &scenario.VLANFields{VID: 200, Type: &innerTPID}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 1000, ServerISN: 5000, MSS: &mss}},
+			{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "handshake", Close: "none"}},
+		},
+		Messages: []scenario.Message{{
+			From:  "src",
+			Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "hello"}}},
+		}},
+	}
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+
+	// 每个展开包:eth 打头、两条 vlan(vid 100/200)、随后 ipv4/tcp;
+	// vlan.type 非空时原样落值(非标标签间 TPID),方向反转不改标签链。
+	for i, p := range pkts {
+		var vlans []*scenario.VLANFields
+		for _, l := range p.Stack {
+			if v, ok := l.Fields.(*scenario.VLANFields); ok {
+				vlans = append(vlans, v)
+			}
+		}
+		if len(vlans) != 2 {
+			t.Fatalf("包%d 应有 2 层 vlan,得到 %d", i, len(vlans))
+		}
+		if vlans[0].VID != 100 {
+			t.Errorf("包%d 外层 vid=%d,期望 100", i, vlans[0].VID)
+		}
+		if vlans[1].VID != 200 {
+			t.Errorf("包%d 内层 vid=%d,期望 200", i, vlans[1].VID)
+		}
+		if vlans[1].Type == nil || *vlans[1].Type != innerTPID {
+			t.Errorf("包%d 内层 type 应为显式 0x8100,得到 %v", i, vlans[1].Type)
+		}
+		// 栈相对位置:eth(0) → vlan… → ipv4(网络层在 vlan 之后)
+		if p.Stack[0].Type != "eth" || p.Stack[1].Type != "vlan" || p.Stack[3].Type != "ipv4" {
+			t.Errorf("包%d 栈顺序不是 eth → vlan… → ipv4", i)
+		}
+	}
+}
+
+// TestFlowVLANBeforeEthRejected: vlan 写在 eth 之前 → validateFlow 拦截。
+// 含最外层(i==0)与栈中段在 eth 前(如 [tcp, vlan, eth, …])两种:后者旧检查只判
+// i==0 会放过,声明序非 eth 开头时 emit 重建会无声重排,故须以 ethIdx 相对位置拦截。
+func TestFlowVLANBeforeEthRejected(t *testing.T) {
+	cases := []struct {
+		name  string
+		stack []scenario.Layer
+	}{
+		{
+			name: "vlan 最外层",
+			stack: []scenario.Layer{
+				{Type: "vlan", Fields: &scenario.VLANFields{VID: 100}},
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80}},
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{}},
+			},
+		},
+		{
+			name: "vlan 在栈中段但先于 eth",
+			stack: []scenario.Layer{
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80}},
+				{Type: "vlan", Fields: &scenario.VLANFields{VID: 100}},
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1112, DPort: 8080}},
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{}},
+			},
+		},
+	}
+	base := scenario.FlowSpec{
+		Messages: []scenario.Message{{
+			From:  "src",
+			Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "x"}}},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := base
+			f.Stack = tc.stack
+			s := &scenario.Scenario{Flows: []scenario.FlowSpec{f}}
+			err := scenario.Validate(s)
+			if err == nil || !strings.Contains(err.Error(), "必须在 eth 之后") {
+				t.Fatalf("Validate() error=%v,期望拒绝 eth 之前的 vlan", err)
+			}
+		})
+	}
+}
+
+// TestFlowVLANAfterNetworkRejected: vlan 写在网络层之后 → validateFlow 拦截
+// (wire 上标签必须紧贴以太头,网络层之后无法成帧)。
+func TestFlowVLANAfterNetworkRejected(t *testing.T) {
+	s := &scenario.Scenario{
+		Flows: []scenario.FlowSpec{{
+			Stack: []scenario.Layer{
+				{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+				{Type: "vlan", Fields: &scenario.VLANFields{VID: 100}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80}},
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{}},
+			},
+			Messages: []scenario.Message{{
+				From:  "src",
+				Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "x"}}},
+			}},
+		}},
+	}
+	err := scenario.Validate(s)
+	if err == nil || !strings.Contains(err.Error(), "必须在 eth 与网络层") {
+		t.Fatalf("Validate() error=%v,期望拒绝网络层之后的 vlan", err)
+	}
+}
