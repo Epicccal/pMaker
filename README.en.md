@@ -48,7 +48,7 @@ and regression-friendly.
 | Layer | Protocols | Notes |
 |-------|-----------|-------|
 | L2 | `eth`, `vlan` | TPID/EtherType per-layer override |
-| L3 | `ipv4`, `ipv6`, `gre` | next-proto auto-derivation + override |
+| L3 | `ipv4`, `ipv6`, `gre`, `vxlan` | next-proto auto-derivation + override; `vxlan` is a UDP-encapsulated L2 tunnel (`udp(4789) → vxlan → eth`), per-packet only |
 | L4 | `tcp`, `udp` | checksum binds to nearest IP |
 | Control | `icmp`, `icmpv6` | echo + error messages |
 | Application | `dns`, `http`, `ftp`, `smtp`, `pop3`, `telnet` | structured fields |
@@ -93,6 +93,7 @@ packets:
 eth / ipv4 / tcp
 eth / vlan / vlan / ipv4 / tcp      # QinQ
 eth / ipv4 / gre / ipv4 / tcp       # GRE tunnel
+eth / ipv4 / udp(4789) / vxlan / eth / ipv4 / tcp   # VXLAN tunnel
 eth / ipv4 / udp / dns
 eth / ipv4 / icmp
 ```

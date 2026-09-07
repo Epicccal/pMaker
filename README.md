@@ -47,7 +47,7 @@
 | 层 | 协议 | 说明 |
 |----|------|------|
 | L2 | `eth`、`vlan` | 逐层覆盖 TPID/EtherType |
-| L3 | `ipv4`、`ipv6`、`gre` | next-proto 自动推导 + 覆盖 |
+| L3 | `ipv4`、`ipv6`、`gre`、`vxlan` | next-proto 自动推导 + 覆盖;`vxlan` 为 UDP 承载二层隧道(`udp(4789) → vxlan → eth`),仅逐包构造 |
 | L4 | `tcp`、`udp` | checksum 绑定最近一层 IP |
 | 控制层 | `icmp`、`icmpv6` | echo + 错误报文 |
 | 应用层 | `dns`、`http`、`ftp`、`smtp`、`pop3`、`imap`、`telnet`、`eml_data` | 结构化字段 + 原始回退；`eml_data` 为协议无关 RFC 5322 内容层，SMTP DATA / POP3 RETR / IMAP FETCH literal 共用 |
@@ -91,6 +91,7 @@ packets:
 eth / ipv4 / tcp
 eth / vlan / vlan / ipv4 / tcp      # QinQ
 eth / ipv4 / gre / ipv4 / tcp       # GRE 隧道
+eth / ipv4 / udp(4789) / vxlan / eth / ipv4 / tcp   # VXLAN 隧道
 eth / ipv4 / udp / dns
 eth / ipv4 / icmp
 ```
