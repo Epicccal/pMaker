@@ -64,6 +64,11 @@ func Validate(s *Scenario) error {
 		if len(p.Stack) == 0 {
 			return fmt.Errorf("packet[%d] 的 stack 为空", i)
 		}
+		// 跨层位置规则(vxlan 前 udp / 后 inner eth)须在 stack 级校验,
+		// validateLayer 只见单层;与下方逐层校验并列。
+		if err := validateVXLANPosition(p.Stack); err != nil {
+			return fmt.Errorf("packet[%d].vxlan: %w", i, err)
+		}
 		for _, l := range p.Stack {
 			if err := validateLayer(l); err != nil {
 				return fmt.Errorf("packet[%d].%s: %w", i, l.Type, err)
@@ -140,6 +145,12 @@ func validateFlow(f FlowSpec) error {
 	seen := map[string]bool{}
 	for _, l := range f.Stack {
 		seen[l.Type] = true
+		// vxlan 不支持在 flow.stack(展开器无隧道方向反转与内层会话处理);
+		// 先于 validateLayer 拦截:避免 VNI 值域错误抢在「flow 不支持」之前报出,
+		// 后者才是对用户更有用的引导(与下方 checksum/length 覆盖拦截顺序同理)。
+		if l.Type == "vxlan" {
+			return fmt.Errorf("stack.vxlan: vxlan 不支持在 flow.stack 中使用,请改用 standalone packets")
+		}
 		// flow 展开器(parseFlowStack)按连接状态重建各层字段结构体,只搬 port/seq/ack/
 		// ip/ttl/mss,Checksum 直接丢弃。故 flow.stack 上写 checksum 会静默无效 —— 这正是
 		// 本轮要消灭的失败模式。先于 validateLayer 拦截,避免值域错误(如 0x1FFFF)抢在
@@ -454,6 +465,10 @@ func validateLayer(l Layer) error {
 			}
 		}
 		if err := validateLengthRange(f.Type, 16, "vlan.type"); err != nil {
+			return err
+		}
+	case *VXLANFields:
+		if err := validateVXLANFields(f); err != nil {
 			return err
 		}
 	case *IPv4Fields:
