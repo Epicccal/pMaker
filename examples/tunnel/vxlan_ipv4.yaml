@@ -1,0 +1,14 @@
+# examples/tunnel/vxlan_ipv4.yaml
+#
+# 示例场景:VXLAN 标准封装(外层 IPv4 + UDP 4789 + VNI 100,内层 IPv4 + TCP SYN)。
+link_type: ethernet
+seed: 42
+packets:
+  - stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:  { src: "10.0.0.10", dst: "10.0.0.20", ttl: 64 }   # 外层,protocol 自动 = UDP(17)
+      - udp:   { sport: 49152, dport: 4789 }                      # VXLAN 标准端口
+      - vxlan: { vni: 100 }
+      - eth:   { src: "00:22:33:44:55:66", dst: "00:33:44:55:66:77" }  # inner Ethernet(必需)
+      - ipv4:  { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 }
+      - tcp:   { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }

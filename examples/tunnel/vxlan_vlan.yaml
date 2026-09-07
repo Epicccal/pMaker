@@ -1,0 +1,16 @@
+# examples/tunnel/vxlan_vlan.yaml
+#
+# 示例场景:VXLAN 内层带 VLAN 标签(inner Ethernet + Dot1Q + IPv4 + UDP),
+# 验证 inner EtherType / VLAN 串接与内层 UDP checksum 绑定。
+link_type: ethernet
+seed: 42
+packets:
+  - stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:  { src: "10.0.0.10", dst: "10.0.0.20", ttl: 64 }
+      - udp:   { sport: 49154, dport: 4789 }
+      - vxlan: { vni: 300 }
+      - eth:   { src: "00:22:33:44:55:66", dst: "00:33:44:55:66:77" }
+      - vlan:  { vid: 500 }
+      - ipv4:  { src: "192.168.2.10", dst: "192.168.2.20", ttl: 64 }
+      - udp:   { sport: 5353, dport: 53 }

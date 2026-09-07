@@ -1,0 +1,40 @@
+# examples/tunnel/vxlan_edge.yaml
+#
+# 示例场景:VXLAN 边界/畸形构造:
+#   ① valid_id_flag: false('I' 位落 0,非法 VXLAN 头畸形)
+#   ② VNI 0(边界值,合法)
+#   ③ VNI 0xFFFFFF(24 位最大值)
+#   ④ vni: 0x1000000 会在 scenario.Validate 阶段报 vxlan.vni 超出 24 位,须走 payload_hex
+link_type: ethernet
+seed: 42
+packets:
+  # ① valid_id_flag: false —— 'I' 位落 0(非规范头;设备对非法 VXLAN 头的处理验证)。
+  #    gopacket 回读仍解出 VXLAN 层,断言 ValidIDFlag=false。
+  - stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:  { src: "10.0.0.10", dst: "10.0.0.20", ttl: 64 }
+      - udp:   { sport: 49155, dport: 4789 }
+      - vxlan: { vni: 100, valid_id_flag: false }
+      - eth:   { src: "00:22:33:44:55:66", dst: "00:33:44:55:66:77" }
+      - ipv4:  { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 }
+      - payload_hex: 0xdeadbeef
+
+  # ② VNI 0(边界值)
+  - stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:  { src: "10.0.0.10", dst: "10.0.0.20", ttl: 64 }
+      - udp:   { sport: 49156, dport: 4789 }
+      - vxlan: { vni: 0 }
+      - eth:   { src: "00:22:33:44:55:66", dst: "00:33:44:55:66:77" }
+      - ipv4:  { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 }
+      - payload_hex: 0xcafebabe
+
+  # ③ VNI 0xFFFFFF(24 位最大值)
+  - stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:  { src: "10.0.0.10", dst: "10.0.0.20", ttl: 64 }
+      - udp:   { sport: 49157, dport: 4789 }
+      - vxlan: { vni: 0xFFFFFF }
+      - eth:   { src: "00:22:33:44:55:66", dst: "00:33:44:55:66:77" }
+      - ipv4:  { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 }
+      - payload_hex: 0x00c0ffee
