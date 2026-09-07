@@ -34,7 +34,11 @@ type (
 		NextHeader    *string `yaml:"next_header"`    // 覆盖:tcp/udp/icmpv6/ipv4/ipv6(制造断链)
 		PayloadLength *Hex    `yaml:"payload_length"` // 载荷长度(16 位,上限 0xFFFF,不含 40B 头);写即覆盖,不写=自动计算
 	}
-	GREFields struct{}
+	GREFields   struct{}
+	VXLANFields struct {
+		VNI         uint32 `yaml:"vni"`           // 24 位 VNI(0 合法,边界用;上限 0xFFFFFF 校验拦截)
+		ValidIDFlag *bool  `yaml:"valid_id_flag"` // 'I' 位(RFC 7348);nil=缺省 true(规范头),false=非法头畸形
+	}
 	TCPFields struct {
 		SPort      uint16   `yaml:"sport"`
 		DPort      uint16   `yaml:"dport"`

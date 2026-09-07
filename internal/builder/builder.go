@@ -116,6 +116,14 @@ func serializeStack(ctx buildContext, stack []scenario.Layer) ([]byte, error) {
 				return nil, fmt.Errorf("gre: %w", err)
 			}
 			add(gre, nil, lengthOverrideInfo{})
+		case *scenario.VXLANFields:
+			// VXLAN 不是 IP 网络层,不更新 netLayer:外层 UDP 已绑定外层 IP,
+			// 内层 TCP/UDP 绑定之后遇到的最近内层 IP(与 GRE 内层同机制)。
+			vxlan, err := buildVXLAN(f)
+			if err != nil {
+				return nil, fmt.Errorf("vxlan: %w", err)
+			}
+			add(vxlan, nil, lengthOverrideInfo{})
 		case *scenario.TCPFields:
 			t, err := buildTCP(f)
 			if err != nil {

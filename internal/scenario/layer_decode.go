@@ -102,9 +102,10 @@ var layerDecoders = map[string]layerDecoder{
 	"eth":  fieldsDecoder[EthFields](),
 	"vlan": fieldsDecoder[VLANFields](),
 	// L3
-	"ipv4": fieldsDecoder[IPv4Fields](),
-	"ipv6": fieldsDecoder[IPv6Fields](),
-	"gre":  fieldsDecoder[GREFields](),
+	"ipv4":  fieldsDecoder[IPv4Fields](),
+	"ipv6":  fieldsDecoder[IPv6Fields](),
+	"gre":   fieldsDecoder[GREFields](),
+	"vxlan": fieldsDecoder[VXLANFields](),
 	// L4
 	"tcp":         fieldsDecoder[TCPFields](),
 	"tcp_session": fieldsDecoder[TCPSessionFields](),

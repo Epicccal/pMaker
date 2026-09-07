@@ -59,7 +59,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 **已实现层(stack 模型)**:
 
 - L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层;`pri`(PCP)/`dei` 可写 TCI 高 4 位)
-- L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)
+- L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)、`vxlan`(UDP 承载二层隧道,`udp(4789) → vxlan → eth`,仅 standalone `packets`,flow 不支持)
 - L4:`tcp`、`udp`
 - 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data`
 - 兜底:`payload`、`payload_hex`(原始字节)
@@ -524,7 +524,7 @@ segment: { mss: 8, interval: "+10ms" }
 ### 约束
 
 - **确定性**:时间戳由 `base_time` + 显式偏移(或默认 `base + 全局序号*1ms`)派生,seed 控制乱序/抖动,不用 `time.Now()`(保持 golden 可比对)。
-- **封装组合**:flow.stack 支持 eth + 任意多层 vlan(802.1Q/QinQ,标签链重建到每个展开包)+ ipv4/ipv6 + tcp + tcp_session;GRE 等隧道内嵌会话暂不支持(会话仍只能用 `packets` 逐包写),后续再升级为更通用的 stack 反转。
+- **封装组合**:flow.stack 支持 eth + 任意多层 vlan(802.1Q/QinQ,标签链重建到每个展开包)+ ipv4/ipv6 + tcp + tcp_session;GRE/VXLAN 等隧道内嵌会话暂不支持(会话仍只能用 `packets` 逐包写;vxlan 还须 udp 承载 + inner eth,见「已实现层」),后续再升级为更通用的 stack 反转。
 - **UDP**:退化情形——无握手/挥手、无 seq/ack 的一串数据报(DNS、QUIC 探测)走同一抽象。
 - **测试**:每个 flow 出 golden pcap;回读用 gopacket `reassembly` 重组 TCP 流,断言应用层字节与脚本一致、无空洞、握手/挥手标志序列正确。
 
