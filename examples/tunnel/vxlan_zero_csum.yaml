@@ -1,0 +1,17 @@
+# examples/tunnel/vxlan_zero_csum.yaml
+#
+# 示例场景:VXLAN outer UDP checksum 传 0(RFC 7348 §5 常见形态)。
+# RFC 7348 §5:outer UDP checksum SHOULD 传 0(outer IPv4)。本工具缺省计算真实校验和;
+# 要常见形态须显式 `checksum: 0x0000`。注意:outer IPv6 传 0 属 RFC 6935/6936 隧道例外
+# (IPv6 基线禁 0),与本例(outer IPv4)不通用。
+link_type: ethernet
+seed: 42
+packets:
+  - stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:  { src: "10.0.0.10", dst: "10.0.0.20", ttl: 64 }
+      - udp:   { sport: 49152, dport: 4789, checksum: 0x0000 }   # RFC 7348 §5:outer checksum 传 0
+      - vxlan: { vni: 100 }
+      - eth:   { src: "00:22:33:44:55:66", dst: "00:33:44:55:66:77" }
+      - ipv4:  { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 }
+      - tcp:   { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }

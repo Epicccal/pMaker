@@ -1,0 +1,23 @@
+# examples/tunnel/vxlan_flow_http.yaml
+#
+# 示例场景:VXLAN 隧道内 TCP 会话(flow 支持 vxlan)。
+# outer(VTEP 对)eth → ipv4 → udp(4789) → vxlan(VNI 100) → inner(VM 对)eth → ipv4 → tcp,
+# 完整握手 + GET/200 + 四次挥手;反向包 outer/inner 端点一并交换,VNI 与 UDP 端口两向不变。
+link_type: ethernet
+seed: 42
+flows:
+  - name: vx-http
+    stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }   # outer(VTEP 对)
+      - ipv4:  { src: "10.0.0.10", dst: "10.0.0.20", ttl: 64 }           # outer underlay
+      - udp:   { sport: 51000, dport: 4789 }
+      - vxlan: { vni: 100 }
+      - eth:   { src: "00:22:33:44:55:66", dst: "00:33:44:55:66:77" }    # inner(VM 对)
+      - ipv4:  { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 }     # inner overlay
+      - tcp:   { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack: [ { http_request: { method: GET, url: /a } } ]
+      - from: dst
+        stack: [ { http_response: { status: 200, body: "ok" } } ]
