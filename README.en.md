@@ -48,7 +48,7 @@ and regression-friendly.
 | Layer | Protocols | Notes |
 |-------|-----------|-------|
 | L2 | `eth`, `vlan` | TPID/EtherType per-layer override |
-| L3 | `ipv4`, `ipv6`, `gre`, `vxlan` | next-proto auto-derivation + override; `vxlan` is a UDP-encapsulated L2 tunnel (`udp(4789) → vxlan → eth`), per-packet only |
+| L3 | `ipv4`, `ipv6`, `gre`, `vxlan` | next-proto auto-derivation + override; `vxlan` is a UDP-encapsulated L2 tunnel (`udp(4789) → vxlan → eth`), supported per packet and in single-VXLAN TCP flows |
 | L4 | `tcp`, `udp` | checksum binds to nearest IP |
 | Control | `icmp`, `icmpv6` | echo + error messages |
 | Application | `dns`, `http`, `ftp`, `smtp`, `pop3`, `telnet` | structured fields |
@@ -105,7 +105,9 @@ test "parse-chain break" or "non-standard encapsulation", override per layer
 ### Stateful Flows
 
 Instead of writing each packet's stack by hand, describe a stateful TCP flow.
-The expander auto-maintains handshake, seq/ack, MSS segmentation, and teardown:
+The expander auto-maintains handshake, seq/ack, MSS segmentation, and teardown.
+A `flow.stack` may also contain one complete VXLAN tunnel; reverse packets swap both
+outer and inner endpoints while preserving VNI and outer UDP ports:
 
 ```yaml
 flows:
