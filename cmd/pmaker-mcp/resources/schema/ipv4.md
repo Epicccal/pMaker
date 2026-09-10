@@ -37,8 +37,9 @@ next-proto 自动推导:后接 `tcp` → 6、`udp` → 17、`icmp` → 1、`gre`
 - `total_length` / `header_length` 各自独立:只写其一时另一个仍自动计算。
 - `header_length` 上限 `0xF`。写 `0x10+` 会被拒 —— 它在 wire 上与 Version 共享一个字节
   (`(Version<<4)|IHL`),溢出会污染版本号。
-- **`flow.stack` 里不能写 `checksum` / `total_length` / `header_length`**:flow 展开器按连接状态
-  重建各层字段。这类畸形包用 standalone `packets` 构造。
+- **`flow.stack` 上的 `checksum` / `total_length` / `header_length` 覆盖原样透传到每个展开包**
+  (每包同值)。length 覆盖在 flow 中会因 inner 载荷逐包变而出软告警;恒定 checksum(如
+  VXLAN outer UDP 的 `0x0000`)天然合法。
 
 ## 静默陷阱
 
@@ -68,7 +69,6 @@ next-proto 自动推导:后接 `tcp` → 6、`udp` → 17、`icmp` → 1、`gre`
 |--------|------|
 | `ipv4.header_length 超出 4 位` | IHL 只有 4 位,合法覆盖值 `0x0`-`0xF`。想让"头长度"字段撒更大的谎,改用 `total_length`,或整段 `payload_hex` |
 | `ipv4.total_length 超出 16 位` | 上限 `0xFFFF`。要构造超长声明只能整段 `payload_hex` |
-| `暂不支持 checksum 覆盖` | flow 展开器按连接状态重建各层字段。把这个畸形包挪到 `packets` 里逐层手写(`length 覆盖` 同理) |
 
 ```yaml-bad
 link_type: ethernet
@@ -84,21 +84,6 @@ packets:
   - stack:
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", total_length: 0x10000 }
       - tcp:  { sport: 1, dport: 2 }
-```
-
-```yaml-bad
-link_type: ethernet
-flows:
-  - name: f
-    stack:
-      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
-      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.80", checksum: 0xdead }
-      - tcp:         { sport: 49152, dport: 80 }
-      - tcp_session: { open: handshake, close: fin }
-    messages:
-      - from: src
-        stack:
-          - payload: { payload: "hi" }
 ```
 
 ## 相关

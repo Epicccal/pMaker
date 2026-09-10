@@ -61,16 +61,13 @@ func TestValidateLengthBoundaryAccepted(t *testing.T) {
 	}
 }
 
-// TestValidateFlowRejectsLengthOverride: flow.stack 上写长度覆盖静默无效
-// (展开器 parseFlowStack 重建字段时丢弃这些长度指针),validateFlow 应显式拒绝并引导
-// standalone packet。覆盖 tcp 与 ipv4 两种代表情形。
-func TestValidateFlowRejectsLengthOverride(t *testing.T) {
+func TestValidateFlowAcceptsLengthOverride(t *testing.T) {
 	bad := scenario.Hex(0xFFFF)
 	cases := []struct {
 		name  string
 		layer scenario.Layer
 	}{
-		{"tcp", scenario.Layer{Type: "tcp", Fields: &scenario.TCPFields{SPort: 49152, DPort: 80, DataOffset: &bad}}},
+		{"tcp", scenario.Layer{Type: "tcp", Fields: &scenario.TCPFields{SPort: 49152, DPort: 80, DataOffset: hexPtr(5)}}},
 		{"ipv4", scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80", Length: &bad}}},
 	}
 	for _, tc := range cases {
@@ -96,20 +93,15 @@ func TestValidateFlowRejectsLengthOverride(t *testing.T) {
 					{Type: "payload", Fields: &scenario.PayloadFields{Payload: "x"}},
 				}}},
 			}
-			err := scenario.Validate(&scenario.Scenario{Flows: []scenario.FlowSpec{flow}})
-			if err == nil || !strings.Contains(err.Error(), "暂不支持 length 覆盖") {
-				t.Fatalf("%s: Validate() error=%v,期望拒绝 flow length 覆盖", tc.name, err)
-			}
-			if !strings.Contains(err.Error(), "standalone packet") {
-				t.Fatalf("%s: 错误应引导改用 standalone packet,得到 %v", tc.name, err)
+			if err := scenario.Validate(&scenario.Scenario{Flows: []scenario.FlowSpec{flow}}); err != nil {
+				t.Fatalf("%s: flow length 覆盖应通过(模板保留、原样落值),实际报错: %v", tc.name, err)
 			}
 		})
 	}
 }
 
-// TestValidateFlowLengthOverridePrioritizesUnsupported: flow.stack.ipv4.total_length: 0x1FFFF
-// 应报「不支持覆盖」而非「超出 16 位」—— 前者才是对用户更有用的引导。
-func TestValidateFlowLengthOverridePrioritizesUnsupported(t *testing.T) {
+// TestValidateFlowLengthOverrideStillRangeChecked: 拦截删除后值域校验仍在。
+func TestValidateFlowLengthOverrideStillRangeChecked(t *testing.T) {
 	over := scenario.Hex(0x1FFFF)
 	flow := scenario.FlowSpec{
 		Name: "f",
@@ -127,10 +119,7 @@ func TestValidateFlowLengthOverridePrioritizesUnsupported(t *testing.T) {
 	if err == nil {
 		t.Fatal("flow.stack.ipv4.total_length 越界应报错")
 	}
-	if strings.Contains(err.Error(), "超出 16 位") {
-		t.Fatalf("应优先报「不支持覆盖」而非值域错误,得到 %v", err)
-	}
-	if !strings.Contains(err.Error(), "暂不支持 length 覆盖") {
-		t.Fatalf("期望「暂不支持 length 覆盖」,得到 %v", err)
+	if !strings.Contains(err.Error(), "超出 16 位") {
+		t.Fatalf("期望「超出 16 位」值域报错,得到 %v", err)
 	}
 }

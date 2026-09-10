@@ -105,6 +105,7 @@ func Warnings(s *Scenario) []string {
 	ws = append(ws, CheckMultipartConsistency(s)...)
 	ws = append(ws, CheckHTTPConsistency(s)...)
 	ws = append(ws, CheckIMAPLiteralConsistency(s)...)
+	ws = append(ws, CheckFlowOverrideWarning(s)...)
 	return ws
 }
 
@@ -142,78 +143,31 @@ func validateQuoteFrom(l Layer, packetNames map[string]int) error {
 }
 
 func validateFlow(f FlowSpec) error {
-	seen := map[string]bool{}
+	// 分段校验:无 vxlan 单段(前缀 stack.*),带 vxlan 切 outer/inner 两段
+	// (白名单/层序/重复/必备层/派生量拒写由 flowLayerRank 一张表承载,见 flow_stack.go)。
+	segs, err := flowSegments(f.Stack)
+	if err != nil {
+		return err
+	}
+	if len(segs) == 1 {
+		if err := validateFlowSegment(segs[0], segSingle); err != nil {
+			return err
+		}
+	} else {
+		if err := validateFlowSegment(segs[0], segOuter); err != nil {
+			return err
+		}
+		if err := validateFlowSegment(segs[1], segInner); err != nil {
+			return err
+		}
+	}
+	// 逐层字段校验(tcp_session 无字段级 case,已由 validateFlowSegment 承载其值校验)。
 	for _, l := range f.Stack {
-		seen[l.Type] = true
-		// vxlan 不支持在 flow.stack(展开器无隧道方向反转与内层会话处理);
-		// 先于 validateLayer 拦截:避免 VNI 值域错误抢在「flow 不支持」之前报出,
-		// 后者才是对用户更有用的引导(与下方 checksum/length 覆盖拦截顺序同理)。
-		if l.Type == "vxlan" {
-			return fmt.Errorf("stack.vxlan: vxlan 不支持在 flow.stack 中使用,请改用 standalone packets")
+		if l.Type == "tcp_session" {
+			continue
 		}
-		// flow 展开器(parseFlowStack)按连接状态重建各层字段结构体,只搬 port/seq/ack/
-		// ip/ttl/mss,Checksum 直接丢弃。故 flow.stack 上写 checksum 会静默无效 —— 这正是
-		// 本轮要消灭的失败模式。先于 validateLayer 拦截,避免值域错误(如 0x1FFFF)抢在
-		// 「不支持覆盖」之前报出;后者才是对用户更有用的引导。请改用 standalone packet。
-		if hasChecksumOverride(l) {
-			return fmt.Errorf("stack.%s: 暂不支持 checksum 覆盖(flow 展开器按连接状态重建各层字段);请用 standalone packet 构造该畸形包", l.Type)
-		}
-		if hasLengthOverride(l) {
-			return fmt.Errorf("stack.%s: 暂不支持 length 覆盖(flow 展开器按连接状态重建各层字段);请用 standalone packet 构造该畸形包", l.Type)
-		}
-		if l.Type != "tcp_session" {
-			if err := validateLayer(l); err != nil {
-				return fmt.Errorf("stack.%s: %w", l.Type, err)
-			}
-		}
-		if s, ok := l.Fields.(*TCPSessionFields); ok {
-			if s.Open != "" && s.Open != "handshake" && s.Open != "none" {
-				return fmt.Errorf("tcp_session.open 只能是 handshake/none,得到 %q", s.Open)
-			}
-			if s.Close != "" && s.Close != "fin" && s.Close != "rst" && s.Close != "none" {
-				return fmt.Errorf("tcp_session.close 只能是 fin/rst/none,得到 %q", s.Close)
-			}
-		}
-	}
-	for _, required := range []string{"eth", "tcp"} {
-		if !seen[required] {
-			return fmt.Errorf("stack 需要 %s 层", required)
-		}
-	}
-	// 网络层:ipv4 与 ipv6 二选一(必须恰好一个),不可同时出现(避免歧义的双栈 flow)。
-	switch {
-	case seen["ipv4"] && seen["ipv6"]:
-		return fmt.Errorf("stack 的网络层 ipv4 与 ipv6 不可同时出现(请二选一)")
-	case !seen["ipv4"] && !seen["ipv6"]:
-		return fmt.Errorf("stack 需要网络层(ipv4 或 ipv6)")
-	}
-	// vlan 是 eth 与网络层之间的静态标签:展开器按声明序重建到每个展开包(eth 之后、
-	// 网络层之前),写在网络层之后(interior)无法成帧 —— wire 上标签必须紧贴以太头。
-	// 允许同类型重复(QinQ 多层),此处只校验相对位置:每条 vlan 须落在 ethIdx 之后、
-	// netIdx 之前(eth 缺失已由上方 seen 检查报错;只判 i==0 会放过 [tcp, vlan, eth, …]
-	// 这类栈中段乱序 —— 声明序非 eth 开头时 emit 重建会无声重排)。
-	netIdx := -1
-	ethIdx := -1
-	for i, l := range f.Stack {
-		switch l.Type {
-		case "eth":
-			if ethIdx == -1 {
-				ethIdx = i
-			}
-		case "ipv4", "ipv6":
-			if netIdx == -1 {
-				netIdx = i
-			}
-		}
-	}
-	for i, l := range f.Stack {
-		if l.Type == "vlan" {
-			if ethIdx == -1 || i < ethIdx {
-				return fmt.Errorf("stack.vlan: 必须在 eth 之后(flow.stack 须以 eth 开头,vlan 夹在 eth 与网络层之间)")
-			}
-			if netIdx != -1 && i > netIdx {
-				return fmt.Errorf("stack.vlan: 必须在 eth 与网络层(%s)之间,不能出现在网络层之后", f.Stack[netIdx].Type)
-			}
+		if err := validateLayer(l); err != nil {
+			return fmt.Errorf("stack.%s: %w", l.Type, err)
 		}
 	}
 	seenMsgID := map[string]bool{}
@@ -443,8 +397,7 @@ func indexOfInt(slice []int, v int) int {
 	return -1
 }
 
-// hasChecksumOverride 与 validateChecksumRange 见 checksum.go。
-// hasLengthOverride 与 validateLengthRange 见 length.go。
+// validateChecksumRange 见 checksum.go;validateLengthRange 见 length.go。
 
 func validateLayer(l Layer) error {
 	switch f := l.Fields.(type) {

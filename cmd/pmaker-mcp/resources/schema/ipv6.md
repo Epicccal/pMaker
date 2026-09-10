@@ -62,7 +62,7 @@ next-header 自动推导:后接 `tcp` → 6、`udp` → 17、`icmpv6` → 58、`
 | 报错含 | 改法 |
 |--------|------|
 | `ipv6.payload_length 超出 16 位` | 上限 `0xFFFF`(IPv6 载荷长度就是 16 位)。Jumbogram(RFC 2675,长度 0 + Hop-by-Hop 选项)当前不支持,走 `payload_hex` |
-| `stack 的网络层 ipv4 与 ipv6 不可同时出现` | 这是 `flow.stack` 的约束(一条 TCP 连接只有一个网络层)。要构造 IPv6-in-IPv4 之类的隧道会话,用 `packets` 逐包写 |
+| `网络层(ipv4 或 ipv6)不可同时出现` | flow.stack 同一段内 ipv4/ipv6 二选一。跨段的版本异构(IPv6 underlay + IPv4 overlay)用一层 `vxlan` 表达 |
 
 ```yaml-bad
 link_type: ethernet

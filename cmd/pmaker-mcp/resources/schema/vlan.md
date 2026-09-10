@@ -80,8 +80,7 @@ packets:
 | `层 "vlan" 不支持字段` | vlan 只有 `vid` / `pri` / `dei` / `type` 四个字段;`tpid`、`priority`、`pcp` 均不存在(优先级用 `pri`,非标 TPID 走 `type`/`ethertype`),其余走 `payload_hex` |
 | `vlan.vid 超出 12 位` | VID 上限 4095;需要"非法 VID"用例时写 `vid: 4095`(保留值)或整段走 `payload_hex` |
 | `vlan.pri 超出 3 位` | PCP 上限 7;整段走 `payload_hex` 无法表达"PCP>7"(TCI 位放不下),该畸形本身不存在 |
-| `必须在 eth 之后` | 仅 `flow.stack`:`flow.stack` 须以 `eth` 开头,vlan 移到 `eth` 之后(standalone `packets` 无此约束) |
-| `必须在 eth 与网络层` | 仅 `flow.stack`:vlan 移到 `eth` 与网络层之间(wire 上标签必须紧贴以太头;standalone `packets` 无此约束) |
+| `stack.vlan: 层序须为` | 仅 `flow.stack`:vlan 须在 `eth` 之后、网络层之前(展开器按声明序成帧;standalone `packets` 无此约束)。vlan 写在 eth 前 / 网络层后都报此错 |
 
 ```yaml-bad
 link_type: ethernet

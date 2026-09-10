@@ -55,7 +55,7 @@ EtherType 自动推导:后接 `vlan` → `0x8100`、`ipv4` → `0x0800`、`ipv6`
 
 | 报错含 | 改法 |
 |--------|------|
-| `stack 需要 eth 层` | 这是 `flow.stack` 的硬约束(还须含 `tcp`、恰好一个网络层、`tcp_session`;可选夹多层 `vlan`,见 `pmaker://schema/vlan`)。要构造无以太头的 L3 会话,改用 `packets` 逐包写并设 `link_type: raw` |
+| `stack 需要 eth 层` | `flow.stack` 的硬约束：单段栈须含 eth + 网络层 + tcp + tcp_session；VXLAN 两段栈的 outer 与 inner 段各自也须含 eth。要构造无以太头的 L3 会话，改用 `packets` 逐包写并设 `link_type: raw` |
 
 ```yaml-bad
 link_type: ethernet

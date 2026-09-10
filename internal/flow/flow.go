@@ -92,28 +92,21 @@ func (s side) peer() side {
 	return sideSrc
 }
 
-type endpoint struct {
-	mac  string
-	ip   string
-	port uint16
-}
-
 type session struct {
 	open  string
 	close string
 }
 
 // conn 维护会话状态:src 是 TCP SYN 发起方,dst 是 SYN 接收方。
+//
+// flow.stack 以「整栈模板」保留:字段原样带过(含 vxlan 隧道、多层 eth/ipv4/ipv6、
+// checksum/length 覆盖等),emit 只覆写派生量。覆写判据是「跟不跟连接状态走」:
+// seq/ack/方向/端口逐包变,是派生量;其余是写死的字面量,原样透传。
 type conn struct {
-	src, dst       endpoint
-	ethertype      *scenario.Hex // eth 层 EtherType 覆盖(非标 QinQ S-TAG TPID 等;无方向性)
-	ttl            *uint8        // IPv4 TTL
-	hopLimit       *uint8        // IPv6 HopLimit
-	ipv6           bool          // 网络层为 IPv6(缺省 false = IPv4)
+	template       []scenario.Layer // flow.stack 去掉 tcp_session,Fields 指针原样共享
+	tcpIdx         int              // template 里 tcp 层的下标
 	srcSeq, dstSeq uint32
-	mss            *uint16
 	session        session
-	vlans          []*scenario.VLANFields // eth 与网络层之间的 802.1Q/QinQ 标签链(声明序,外→内)
 }
 
 // MessageSchedule 是单条消息的起始时刻(由 plan 阶段一算好后传入)。
@@ -147,8 +140,10 @@ type ResolveRef func(refFlow, refMsg string) (time.Time, bool)
 //   - 段间按 segment.interval 间隔(缺省 DefaultStep);对端 ACK 是伴生控制包,用 DefaultStep,
 //     不被数据段节奏传染(保持"只让数据慢"的语义纯净)。
 //
-// 当前 flow.stack 支持 eth / 任意多层 vlan / ipv4|ipv6 / tcp / tcp_session;vlan 标签链
-// 在 eth 与网络层之间按声明序重建到每个展开包(GRE 等隧道内嵌会话封装后续扩展)。
+// flow.stack 支持 eth / vlan / ipv4|ipv6 / udp / vxlan / tcp / tcp_session 的有序层栈
+// (层白名单、层序、重复由 scenario.Validate 的分段校验承载):无 vxlan 时是普通
+// eth [vlan*] net tcp 会话;带一层 vxlan 时是隧道内 TCP 会话(反向包 outer eth/ip 与
+// inner eth/ip 一并交换 src/dst;VNI 与 outer UDP 端口两向不变)。
 //
 // schedule 是该 flow 各消息的起始时刻表(按 message 声明序,一一对应)。由 plan 算时阶段
 // 预先算好(跨流 start_after 已解析为绝对时刻);Expand 只照表把每条消息铺到时间轴,不再运行期
@@ -273,55 +268,99 @@ func appendAt(out []scenario.PlannedPacket, p scenario.Packet, t time.Time) []sc
 	return append(out, scenario.PlannedPacket{Packet: p, Time: t})
 }
 
+// parseFlowStack 保留整栈模板并提取会话状态。不做字段级解构:各层 Fields 指针原样进模板,
+// emit 时逐层浅拷贝并覆写派生量。层白名单/层序/必备层校验在 scenario.Validate(validateFlow);
+// 这里只留一条展开必需的不变式:必须有 tcp 层(要定位 tcpIdx)。
 func parseFlowStack(stack []scenario.Layer) (*conn, error) {
-	c := &conn{}
+	c := &conn{tcpIdx: -1}
 	for _, l := range stack {
-		switch f := l.Fields.(type) {
-		case *scenario.EthFields:
-			c.src.mac, c.dst.mac = f.Src, f.Dst
-			c.ethertype = f.EtherType
-		case *scenario.VLANFields:
-			// 标签是"eth 与网络层之间"的静态封装:vid/type 无方向、不携带会话状态,
-			// 按声明序记录,emit 时原样重建到每个展开包(QinQ 多层 = 多条记录)。
-			c.vlans = append(c.vlans, f)
-		case *scenario.IPv4Fields:
-			c.src.ip, c.dst.ip = f.Src, f.Dst
-			c.ttl = f.TTL
-		case *scenario.IPv6Fields:
-			c.src.ip, c.dst.ip = f.Src, f.Dst
-			c.hopLimit = f.HopLimit
-			c.ipv6 = true
-		case *scenario.TCPFields:
-			c.src.port, c.dst.port = f.SPort, f.DPort
-			c.srcSeq, c.dstSeq = f.ClientISN, f.ServerISN
-			c.mss = f.MSS
-		case *scenario.TCPSessionFields:
-			c.session = session{open: f.Open, close: f.Close}
-		default:
-			return nil, fmt.Errorf("flow.stack 暂不支持 %q", l.Type)
+		if l.Type == "tcp_session" {
+			if s, ok := l.Fields.(*scenario.TCPSessionFields); ok {
+				c.session = session{open: s.Open, close: s.Close}
+			}
+			continue
 		}
+		if l.Type == "tcp" {
+			c.tcpIdx = len(c.template)
+			if f, ok := l.Fields.(*scenario.TCPFields); ok {
+				c.srcSeq, c.dstSeq = f.ClientISN, f.ServerISN
+			}
+		}
+		c.template = append(c.template, l)
 	}
-	if c.src.mac == "" || c.dst.mac == "" || c.src.ip == "" || c.dst.ip == "" || c.src.port == 0 || c.dst.port == 0 {
-		netLayer := "ipv4"
-		if c.ipv6 {
-			netLayer = "ipv6"
-		}
-		return nil, fmt.Errorf("flow.stack 需要 eth/src-dst、%s/src-dst、tcp/sport-dport", netLayer)
+	if c.tcpIdx == -1 {
+		return nil, fmt.Errorf("flow.stack 需要 tcp 层")
 	}
 	return c, nil
 }
 
-// emit 发一个方向的段:填 seq/ack、推进状态,产出一个 stack 包。
+// emit 发一个方向的段:对模板逐层浅拷贝,覆写派生量(方向端点交换、TCP 状态字段),
+// 尾部追加 payload 字节。模板只被读取不回写;各层 Fields 指针跨包共享是安全的
+// (builder 各 build* 只读字段,不改 *Fields;vlan 现状路径即共享同一指针)。
 func (c *conn) emit(from side, flags []string, chunk []byte, summaryLayers []string) scenario.Packet {
-	var seq, ack uint32
-	if from == sideSrc {
-		seq, ack = c.srcSeq, c.dstSeq
+	reverse := from == sideDst
+
+	tcpF := c.template[c.tcpIdx].Fields.(*scenario.TCPFields)
+	tcp := *tcpF // 浅拷贝
+	tcp.Seq, tcp.Ack = c.seqAck(from, flags, len(chunk))
+	tcp.Flags = flags
+	if hasFlag(flags, "SYN") && tcpF.MSS != nil {
+		tcp.MSS = tcpF.MSS
 	} else {
-		seq, ack = c.dstSeq, c.srcSeq
+		tcp.MSS = nil // 非 SYN 包必须显式清掉(浅拷贝会把模板的 MSS 带过来)
+	}
+	if reverse {
+		tcp.SPort, tcp.DPort = tcp.DPort, tcp.SPort
 	}
 
-	// seq 前进量 = payload 字节 + SYN(1) + FIN(1);纯 ACK/RST 不前进。
-	adv := uint32(len(chunk))
+	stack := make([]scenario.Layer, 0, len(c.template)+1)
+	for i, l := range c.template {
+		cp := l // 浅拷贝:Type 不变,Fields 指针默认共享
+		switch f := l.Fields.(type) {
+		case *scenario.EthFields:
+			eth := *f
+			if reverse {
+				eth.Src, eth.Dst = eth.Dst, eth.Src
+			}
+			cp.Fields = &eth
+		case *scenario.IPv4Fields:
+			ip := *f
+			if reverse {
+				ip.Src, ip.Dst = ip.Dst, ip.Src
+			}
+			cp.Fields = &ip
+		case *scenario.IPv6Fields:
+			ip := *f
+			if reverse {
+				ip.Src, ip.Dst = ip.Dst, ip.Src
+			}
+			cp.Fields = &ip
+		case *scenario.TCPFields:
+			if i == c.tcpIdx {
+				cp.Fields = &tcp
+			}
+		}
+		stack = append(stack, cp)
+	}
+	if len(chunk) > 0 {
+		stack = append(stack, scenario.Layer{
+			Type:   "payload_hex",
+			Fields: scenario.PayloadHex("0x" + hex.EncodeToString(chunk)),
+		})
+	}
+	return scenario.Packet{Stack: stack, SummaryLayers: summaryLayers}
+}
+
+// seqAck 取当前方向的 seq/ack 并推进状态:seq 前进量 = payload 字节 + SYN(1) + FIN(1);
+// 纯 ACK/RST 不前进。ack = 对端当前 seq。
+func (c *conn) seqAck(from side, flags []string, payloadLen int) (seq, ack *uint32) {
+	var s, a uint32
+	if from == sideSrc {
+		s, a = c.srcSeq, c.dstSeq
+	} else {
+		s, a = c.dstSeq, c.srcSeq
+	}
+	adv := uint32(payloadLen)
 	if hasFlag(flags, "SYN") {
 		adv++
 	}
@@ -333,47 +372,7 @@ func (c *conn) emit(from side, flags []string, chunk []byte, summaryLayers []str
 	} else {
 		c.dstSeq += adv
 	}
-
-	src, dst := c.src, c.dst
-	if from == sideDst {
-		src, dst = c.dst, c.src
-	}
-
-	tcp := &scenario.TCPFields{
-		SPort: src.port,
-		DPort: dst.port,
-		Flags: flags,
-		Seq:   &seq,
-		Ack:   &ack,
-	}
-	if hasFlag(flags, "SYN") && c.mss != nil {
-		tcp.MSS = c.mss
-	}
-
-	stack := []scenario.Layer{
-		{Type: "eth", Fields: &scenario.EthFields{Src: src.mac, Dst: dst.mac, EtherType: c.ethertype}},
-	}
-	for _, v := range c.vlans {
-		stack = append(stack, scenario.Layer{Type: "vlan", Fields: v})
-	}
-	stack = append(stack, c.netLayer(src.ip, dst.ip))
-	stack = append(stack, scenario.Layer{Type: "tcp", Fields: tcp})
-	if len(chunk) > 0 {
-		stack = append(stack, scenario.Layer{
-			Type:   "payload_hex",
-			Fields: scenario.PayloadHex("0x" + hex.EncodeToString(chunk)),
-		})
-	}
-	return scenario.Packet{Stack: stack, SummaryLayers: summaryLayers}
-}
-
-// netLayer 按解析出的 IP 版本产出对应的网络层(IPv4 或 IPv6)。
-// TTL(IPv4)与 HopLimit(IPv6)语义不同、字段名各异,故按版本分流。
-func (c *conn) netLayer(src, dst string) scenario.Layer {
-	if c.ipv6 {
-		return scenario.Layer{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: src, Dst: dst, HopLimit: c.hopLimit}}
-	}
-	return scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: src, Dst: dst, TTL: c.ttl}}
+	return &s, &a
 }
 
 func messagePayload(m scenario.Message) ([]byte, error) {

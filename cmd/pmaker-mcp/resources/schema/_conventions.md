@@ -46,10 +46,9 @@
 `icmp`/`icmpv6`/`vlan`/`gre`/`eth` **不开放**长度字段(gopacket 这几层不读 `FixLengths`,
 开了也是空接线)。同族语义还有 `imap_*.literal.octets`(见 `pmaker://schema/imap_request`)。
 
-**checksum / length 覆盖只在 `packets` 里可用**,flow 展开出的包不支持(写了直接报错,
-见 `validateFlow`);要构造带错误 checksum/长度的会话包,把该包单独写成 standalone packet。
-此限定**不含** `vlan.type` / `eth.ethertype` —— 这两个 next-proto 覆盖在 `flow.stack` 里
-照常生效(标签链/TPID 原样保留,见 `pmaker://schema/vlan`)。
+checksum / length 覆盖在 `packets` 与 `flows` 中均可用。flow 展开器把显式值原样写入每个包;
+消息长度不同时,length 仍保持字面值,因此产软告警。checksum 不告警:显式 0 等恒定值可天然正确。
+`vlan.type` / `eth.ethertype` 等 next-proto 覆盖在 `flow.stack` 中也照常生效。
 
 ## next-proto / EtherType 自动串接
 
