@@ -89,6 +89,10 @@ flows:
 `eth + vlan* + IP + tcp + tcp_session` 两段,只支持一层 `vxlan`,outer UDP `dport` 须非零。
 每条 message 须 ≥1 个 payload 生产层,同段多层按声明顺序拼接(standalone packet 同此规则)。
 
+**方向化 VLAN VID(仅 `flow.stack`)**:`vlan` 可写 `src_vid`/`dst_vid` 取代 `vid`,让上行
+(src→dst)与下行(dst→src)带不同标签;单边缺省 = 该方向整层摘除(上行带下行不带 /
+上行双层下行单层)。详见 `pmaker://schema/vlan`。
+
 ## 时间
 
 - `base_time`:唯一绝对锚。其余全是**非负**时长偏移(`+1.5s` / `500ms` / `0s`),负值解析即失败。

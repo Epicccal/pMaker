@@ -129,6 +129,15 @@ client                                              server
   │ ───────────── FIN/ACK ... ────────────────────▶ │
 ```
 
+flow 内的 `vlan` 还可按方向取值：`src_vid` 用于上行（src→dst），`dst_vid` 用于下行；
+单边缺省表示该方向整层摘除，由此表达「上行带标签下行不带」「上行双层 QinQ 下行单层」
+（见 [`examples/tunnel/vlan_directional.yaml`](examples/tunnel/vlan_directional.yaml)）：
+
+```yaml
+      - vlan: { src_vid: 100, dst_vid: 500 }   # 外层：上行 100 / 下行 500
+      - vlan: { src_vid: 200 }                 # 内层：仅上行有，下行摘除
+```
+
 ### 确定性时序
 
 - 时序可选：`base_time`（ISO8601 / UTC 绝对锚）+ 各级非负 `offset_time`。
