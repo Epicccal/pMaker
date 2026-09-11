@@ -174,7 +174,7 @@ func validateFlow(f FlowSpec) error {
 		if l.Type == "tcp_session" {
 			continue
 		}
-		if err := validateLayer(l); err != nil {
+		if err := validateFlowLayer(l); err != nil {
 			return fmt.Errorf("stack.%s: %w", l.Type, err)
 		}
 	}
@@ -407,7 +407,16 @@ func indexOfInt(slice []int, v int) int {
 
 // validateChecksumRange 见 checksum.go;validateLengthRange 见 length.go。
 
-func validateLayer(l Layer) error {
+// validateLayer 校验 standalone packets / message.stack / quote.stack 里的单层
+// (无方向语义);flow.stack 的层走 validateFlowLayer。
+func validateLayer(l Layer) error { return validateLayerIn(l, false) }
+
+// validateFlowLayer 校验 flow.stack 里的单层:与 validateLayer 同一套规则,
+// 额外放行只在 flow 里有意义的方向化字段(当前:vlan.src_vid/dst_vid)。
+func validateFlowLayer(l Layer) error { return validateLayerIn(l, true) }
+
+// validateLayerIn 是两者的共同实现,inFlow 表示该层来自 flow.stack。
+func validateLayerIn(l Layer, inFlow bool) error {
 	switch f := l.Fields.(type) {
 	case *EthFields:
 		if f.Src == "" || f.Dst == "" {
@@ -417,15 +426,7 @@ func validateLayer(l Layer) error {
 			return err
 		}
 	case *VLANFields:
-		if err := validateVLANVID(f.VID); err != nil {
-			return err
-		}
-		if f.Pri != nil {
-			if err := validateVLANPri(*f.Pri); err != nil {
-				return err
-			}
-		}
-		if err := validateLengthRange(f.Type, 16, "vlan.type"); err != nil {
+		if err := validateVLANFields(f, inFlow); err != nil {
 			return err
 		}
 	case *VXLANFields:

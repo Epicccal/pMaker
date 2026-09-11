@@ -27,3 +27,49 @@ func validateVLANPri(v uint8) error {
 	}
 	return nil
 }
+
+// validateVLANFields 校验一个 vlan 层的全部字段。inFlow 表示该层来自 flow.stack
+// ——只有 flow.stack 有方向语义(展开器按 message.from 的 src/dst 决定方向),
+// standalone packets / message.stack 逐包自带完整 stack,方向差异直接写两个包即可。
+func validateVLANFields(f *VLANFields, inFlow bool) error {
+	if f.SrcVID == nil && f.DstVID == nil {
+		if err := validateVLANVID(f.VID); err != nil {
+			return err
+		}
+	} else {
+		if err := validateVLANDirectionalVID(f, inFlow); err != nil {
+			return err
+		}
+	}
+	if f.Pri != nil {
+		if err := validateVLANPri(*f.Pri); err != nil {
+			return err
+		}
+	}
+	return validateLengthRange(f.Type, 16, "vlan.type")
+}
+
+// validateVLANDirectionalVID 校验方向化 VID(src_vid/dst_vid)的适用范围、与 vid 的互斥
+// 及各自值域。只在至少一个方向字段非 nil 时调用。
+//
+// 与 vid 互斥:两种写法并存时,哪个方向落哪个值无唯一解释,静默取其一会生成与配置不符的包
+// (与全项目「拒绝静默坏包」一致)。`vid: 0` 的零值与"未写"不可区分,故只以 vid != 0 判冲突。
+func validateVLANDirectionalVID(f *VLANFields, inFlow bool) error {
+	if !inFlow {
+		return fmt.Errorf("vlan.src_vid/dst_vid 只在 flow.stack 内有效(standalone packets 与 message.stack 无方向语义,改用 vlan.vid;需要方向差异就逐包写 stack)")
+	}
+	if f.VID != 0 {
+		return fmt.Errorf("vlan.vid 与 vlan.src_vid/dst_vid 互斥(两向同 VID 只写 vid;两向不同就只写 src_vid/dst_vid)")
+	}
+	if f.SrcVID != nil {
+		if err := validateVLANVID(*f.SrcVID); err != nil {
+			return fmt.Errorf("vlan.src_vid: %w", err)
+		}
+	}
+	if f.DstVID != nil {
+		if err := validateVLANVID(*f.DstVID); err != nil {
+			return fmt.Errorf("vlan.dst_vid: %w", err)
+		}
+	}
+	return nil
+}
