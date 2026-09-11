@@ -1,0 +1,47 @@
+name: PR Agent
+
+# PR-Agent 自动审查(qodo-ai/pr-agent,LiteLLM 驱动,支持多模型提供商)。
+# 触发策略:
+#   - PR 打开/重开/转为 ready 时:自动跑 describe(生成 PR 描述)+ review(代码审查)。
+#   - PR 评论:手动触发任意命令,如 /improve、/ask "..."、/update_changelog。
+# improve 默认不自动跑 —— 逐行建议消耗 token 大,按需用评论触发。
+# 配置可加仓库根 .pr_agent.toml,或直接在下方 env 用 config.* / github_action_config.* 覆盖。
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+
+# issue_comment 也会在普通 issue 评论时触发,故在 job 上限定只处理 PR 评论。
+concurrency:
+  group: pr-agent-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  pr_agent_job:
+    # 跳过 bot 触发(防自己回自己评论死循环);非 PR 的 issue 评论也跳过。
+    if: ${{ github.event.sender.type != 'Bot' && (github.event_name == 'pull_request' || github.event.issue.pull_request) }}
+    runs-on: ubuntu-latest
+    name: Run pr agent on every pull request, respond to user comments
+    permissions:
+      issues: write        # 回复评论需要
+      pull-requests: write # 发 review 评论、修改 PR 描述需要
+      contents: read
+    steps:
+      - name: PR Agent action step
+        id: pragent
+        uses: qodo-ai/pr-agent@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEEPSEEK.KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+          # ---- 模型(LiteLLM 路由前缀 deepseek/)----
+          config.model: "deepseek/deepseek-chat"
+          config.fallback_models: '["deepseek/deepseek-chat"]'
+          config.response_language: "zh-CN" # 审查输出用中文
+
+          # ---- 自动触发开关 ----
+          github_action_config.auto_review: "true"   # PR 打开时自动 review
+          github_action_config.auto_describe: "true" # PR 打开时自动生成描述
+          github_action_config.auto_improve: "false" # improve 用评论 /improve 手动触发
+          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review"]'
