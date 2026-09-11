@@ -1,0 +1,29 @@
+# PR-Agent 仓库级配置(.pr_agent.toml)
+#
+# 只写需要覆盖默认值的项;完整可配置项见:
+# https://github.com/qodo-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml
+# Keys 不区分大小写、`.` 与 TOML 分节等价(env 里写作 config.model)。
+
+[config]
+# DeepSeek(LiteLLM 路由前缀 deepseek/,key 走 GitHub Secret DEEPSEEK_API_KEY)
+model = "deepseek/deepseek-chat"
+fallback_models = ["deepseek/deepseek-chat"]
+response_language = "zh-CN" # 审查/描述输出中文
+# 输出 run 明细(模型、token、耗时),便于观察成本;不要可注释掉
+output_run_details = true
+
+[pr_reviewer]
+# 面向本仓库(pMaker,Go + gopacket 流量构造工具)的审查侧重
+extra_instructions = """\
+聚焦:Go 惯用法与错误处理(%w 包装、不 panic)、确定性约束(禁止 time.Now()/全局 rand,\
+输出必须逐字节可复现)、畸形包能力是否被自动修正破坏、YAML schema 校验报错是否带字段路径、\
+测试是否表驱动且含 golden pcap。忽略 examples/ 下生成产物的格式问题。\
+"""
+require_score_review = false      # 不需要打分
+require_tests_review = true       # 检查测试覆盖
+require_security_review = true    # 安全视角(本工具涉及畸形包构造)
+# num_code_suggestions = 4        # /improve 建议条数(默认 3-5)
+
+[pr_description]
+# 自动生成的 PR 描述
+generate_ai_title = true # 让 AI 顺带生成 PR 标题
