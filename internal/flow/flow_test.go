@@ -586,3 +586,149 @@ func TestFlowVLANAfterNetworkRejected(t *testing.T) {
 		t.Fatalf("Validate() error=%v,期望拒绝网络层之后的 vlan", err)
 	}
 }
+
+// ---------- 方向化 VLAN VID(src_vid / dst_vid)----------
+
+// vlanVIDs 收集一个展开包里 vlan 层的 VID 序列(外→内)。
+func vlanVIDs(p scenario.Packet) []uint16 {
+	var out []uint16
+	for _, l := range p.Stack {
+		if v, ok := l.Fields.(*scenario.VLANFields); ok {
+			out = append(out, v.VID)
+		}
+	}
+	return out
+}
+
+// dirFlow 造一条带方向化 VID 的 flow:一层或多层 vlan + 上下行各一条消息。
+// close: none 让包序列只含握手(3)+ 上行消息(数据 + 对端 ACK)+ 下行消息(数据 + 对端 ACK)。
+func dirVLANFlow(vlans ...*scenario.VLANFields) scenario.FlowSpec {
+	stack := []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+	}
+	for _, v := range vlans {
+		stack = append(stack, scenario.Layer{Type: "vlan", Fields: v})
+	}
+	stack = append(stack,
+		scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+		scenario.Layer{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1111, DPort: 80, ClientISN: 1000, ServerISN: 5000}},
+		scenario.Layer{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "handshake", Close: "none"}},
+	)
+	return scenario.FlowSpec{
+		Name:  "dir-vlan",
+		Stack: stack,
+		Messages: []scenario.Message{
+			{From: "src", Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "up"}}}},
+			{From: "dst", Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "down"}}}},
+		},
+	}
+}
+
+// isUplink 判定一个展开包是 src→dst(上行)方向:以太源 MAC 等于模板 src 即上行。
+func isUplink(p scenario.Packet) bool {
+	for _, l := range p.Stack {
+		if e, ok := l.Fields.(*scenario.EthFields); ok {
+			return e.Src == "00:00:00:00:00:01"
+		}
+	}
+	return false
+}
+
+// TestFlowVLANDirectionalVID 钉住 emit 的方向化 VID 分支:每个展开包(握手/数据/ACK)
+// 按自身方向取 src_vid 或 dst_vid,该向缺省则整层摘除。三类需求各一个子用例。
+func TestFlowVLANDirectionalVID(t *testing.T) {
+	u := func(v uint16) *uint16 { return &v }
+	cases := []struct {
+		name    string
+		vlans   []*scenario.VLANFields
+		wantUp  []uint16 // 上行包的 VID 序列(外→内);nil = 该向无 vlan 层
+		wantDwn []uint16
+	}{
+		{
+			name:    "上下行不同 VID",
+			vlans:   []*scenario.VLANFields{{SrcVID: u(300), DstVID: u(400)}},
+			wantUp:  []uint16{300},
+			wantDwn: []uint16{400},
+		},
+		{
+			name:    "上行带、下行不带",
+			vlans:   []*scenario.VLANFields{{SrcVID: u(100)}},
+			wantUp:  []uint16{100},
+			wantDwn: nil,
+		},
+		{
+			name:    "下行带、上行不带",
+			vlans:   []*scenario.VLANFields{{DstVID: u(100)}},
+			wantUp:  nil,
+			wantDwn: []uint16{100},
+		},
+		{
+			name:    "上行双层 QinQ、下行单层",
+			vlans:   []*scenario.VLANFields{{SrcVID: u(100), DstVID: u(500)}, {SrcVID: u(200)}},
+			wantUp:  []uint16{100, 200},
+			wantDwn: []uint16{500},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := dirVLANFlow(tc.vlans...)
+			if err := scenario.Validate(&scenario.Scenario{Flows: []scenario.FlowSpec{f}}); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+			if err != nil {
+				t.Fatalf("expand: %v", err)
+			}
+			var ups, downs int
+			for i, p := range pkts {
+				want := tc.wantDwn
+				dir := "下行"
+				if isUplink(p.Packet) {
+					want, dir = tc.wantUp, "上行"
+					ups++
+				} else {
+					downs++
+				}
+				if got := vlanVIDs(p.Packet); !slices.Equal(got, want) {
+					t.Errorf("包%d(%s)VID 序列=%v,期望 %v", i, dir, got, want)
+				}
+			}
+			// 两向都要有包,否则上面的断言可能因方向缺席而空转。
+			if ups == 0 || downs == 0 {
+				t.Fatalf("展开包方向覆盖不全:上行 %d / 下行 %d", ups, downs)
+			}
+		})
+	}
+}
+
+// TestFlowVLANDirectionalKeepsSharedFields:pri/dei/type 与方向 VID 共存时两向共用
+// (v1 不做方向化 PCP/DEI/TPID),且模板 Fields 不被回写(展开两向后模板仍是原值)。
+func TestFlowVLANDirectionalKeepsSharedFields(t *testing.T) {
+	u := func(v uint16) *uint16 { return &v }
+	pri, dei := uint8(5), true
+	tpid := scenario.Hex(0x88a8)
+	tmpl := &scenario.VLANFields{SrcVID: u(300), DstVID: u(400), Pri: &pri, DEI: &dei, Type: &tpid}
+	f := dirVLANFlow(tmpl)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	for i, p := range pkts {
+		for _, l := range p.Stack {
+			v, ok := l.Fields.(*scenario.VLANFields)
+			if !ok {
+				continue
+			}
+			if v.Pri == nil || *v.Pri != 5 || v.DEI == nil || !*v.DEI || v.Type == nil || *v.Type != tpid {
+				t.Errorf("包%d vlan 共用字段丢失: pri=%v dei=%v type=%v", i, v.Pri, v.DEI, v.Type)
+			}
+			if v.SrcVID != nil || v.DstVID != nil {
+				t.Errorf("包%d 展开后仍带方向字段(builder 只认 vid): src=%v dst=%v", i, v.SrcVID, v.DstVID)
+			}
+		}
+	}
+	// 模板未被回写:方向字段与 VID 零值原样保留,重复展开结果一致。
+	if tmpl.VID != 0 || tmpl.SrcVID == nil || *tmpl.SrcVID != 300 || tmpl.DstVID == nil || *tmpl.DstVID != 400 {
+		t.Errorf("模板被回写: vid=%d src=%v dst=%v", tmpl.VID, tmpl.SrcVID, tmpl.DstVID)
+	}
+}

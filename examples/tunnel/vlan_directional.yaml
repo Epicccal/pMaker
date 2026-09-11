@@ -1,0 +1,82 @@
+# examples/tunnel/vlan_directional.yaml
+#
+# flow 的方向化 VLAN VID(src_vid / dst_vid):上行(src→dst,即 TCP SYN 发起方发出的包)
+# 与下行(dst→src)带不同形态的标签。三条 flow 分别覆盖三类需求:
+#
+#   1. dir-diff-vid   上下行都带单层标签,VID 不同(上行 300 / 下行 400)
+#   2. dir-up-only    上行带标签、下行不带(dst_vid 缺省 = 该向整层摘除)
+#   3. dir-qinq-mix   上行双层 QinQ(100→200)、下行单层(500)
+#
+# 规则:src_vid/dst_vid 与 vid 互斥,只在 flow.stack 内有效;pri/dei/type 两向共用。
+# 单边缺省 = 该方向摘除该层标签(不是"VID 取 0")。
+#
+# 注意 eth.ethertype:摘标签的方向若把 ethertype 写死成 0x8100/0x88a8,下行包会声明
+# "后接 VLAN"却没有标签(解析断链)。故这里不写 eth.ethertype,交由 builder 逐包按
+# 实际标签链自动推导(上行 0x8100、下行摘光后 0x0800)。
+link_type: ethernet
+seed: 42
+
+flows:
+  # ① 上下行不同 VID:同一条 TCP 会话,上行打 300、下行打 400。
+  - name: dir-diff-vid
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - vlan: { src_vid: 300, dst_vid: 400 }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - tcp:  { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - http_request:
+              method: GET
+              url: /a
+              version: HTTP/1.1
+              headers:
+                Host: example.com
+      - from: dst
+        stack:
+          - http_response:
+              version: HTTP/1.1
+              status: 200
+              reason: OK
+              auto_content_length: true
+              headers:
+                Content-Type: text/plain
+                Content-Length: 0        # 占位值,auto_content_length: true 会覆盖
+              body: "vid 300 up / 400 down"
+
+  # ② 上行带标签、下行不带:dst_vid 缺省,下行包整层摘除该 vlan。
+  - name: dir-up-only
+    offset_time: "+1s"
+    stack:
+      - eth:  { src: "00:11:22:33:44:56", dst: "66:77:88:99:aa:bc" }
+      - vlan: { src_vid: 100, pri: 3 }     # pri 只在带标签的方向(上行)落 wire
+      - ipv4: { src: "10.0.1.10", dst: "10.0.1.80", ttl: 64 }
+      - tcp:  { sport: 49153, dport: 80, client_isn: 2000, server_isn: 6000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - payload: { payload: "tagged uplink\n" }
+      - from: dst
+        stack:
+          - payload: { payload: "untagged downlink\n" }
+
+  # ③ 上行双层 QinQ、下行单层:外层两向都有(100 / 500),内层只有上行(200)。
+  - name: dir-qinq-mix
+    offset_time: "+2s"
+    stack:
+      - eth:  { src: "00:11:22:33:44:57", dst: "66:77:88:99:aa:bd" }
+      - vlan: { src_vid: 100, dst_vid: 500 }   # 外层 S-TAG:上行 100 / 下行 500
+      - vlan: { src_vid: 200 }                 # 内层 C-TAG:仅上行有,下行摘除
+      - ipv4: { src: "10.0.2.10", dst: "10.0.2.80", ttl: 64 }
+      - tcp:  { sport: 49154, dport: 80, client_isn: 3000, server_isn: 7000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - payload: { payload: "qinq uplink\n" }
+      - from: dst
+        stack:
+          - payload: { payload: "single-tag downlink\n" }

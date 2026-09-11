@@ -58,7 +58,8 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 
 **已实现层(stack 模型)**:
 
-- L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层;`pri`(PCP)/`dei` 可写 TCI 高 4 位)
+- L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层;`pri`(PCP)/`dei` 可写 TCI 高 4 位;
+  flow 内可用方向化 VID `src_vid`/`dst_vid` 取代 `vid`,单边缺省 = 该方向整层摘除)
 - L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)、`vxlan`(UDP 承载二层隧道,`udp(4789) → vxlan → eth`;standalone `packets` 与单层 VXLAN TCP flow)
 - L4:`tcp`、`udp`
 - 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data`
@@ -300,7 +301,10 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 
 **已实现 flow**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
 HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断、单层 VXLAN
-整栈模板(内外层端点按方向反转,VNI/outer UDP 端口保持声明值)。
+整栈模板(内外层端点按方向反转,VNI/outer UDP 端口保持声明值)、方向化 VLAN VID
+(`vlan.src_vid`/`dst_vid`,与 `vid` 互斥、仅 flow.stack 有效;上行取 src_vid、下行取 dst_vid,
+该向缺省则 emit 时整层摘除,表达「上下行不同 VID」「上行带下行不带」「上行双层下行单层」;
+`pri`/`dei`/`type` 两向共用)。
 
 **已实现时间编排**:逐消息定时(`message.offset_time` / `segment.interval`)、
 跨流 `start_after`(flow 级与 message 级)、两段式事件粒度算时。详见下文「时间编排与汇流」。

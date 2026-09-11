@@ -296,7 +296,9 @@ func parseFlowStack(stack []scenario.Layer) (*conn, error) {
 
 // emit 发一个方向的段:对模板逐层浅拷贝,覆写派生量(方向端点交换、TCP 状态字段),
 // 尾部追加 payload 字节。模板只被读取不回写;各层 Fields 指针跨包共享是安全的
-// (builder 各 build* 只读字段,不改 *Fields;vlan 现状路径即共享同一指针)。
+// (builder 各 build* 只读字段,不改 *Fields;未写方向 VID 的 vlan 即共享同一指针)。
+// 层数也可能随方向变化:写了方向化 VID 的 vlan 层在缺该向 VID 时整层摘除
+// (上行带标签下行不带 / 上行双层下行单层),摘除只影响本次重建的 stack。
 func (c *conn) emit(from side, flags []string, chunk []byte, summaryLayers []string) scenario.Packet {
 	reverse := from == sideDst
 
@@ -335,6 +337,21 @@ func (c *conn) emit(from side, flags []string, chunk []byte, summaryLayers []str
 				ip.Src, ip.Dst = ip.Dst, ip.Src
 			}
 			cp.Fields = &ip
+		case *scenario.VLANFields:
+			// 方向化 VID:上行取 src_vid、下行取 dst_vid;该向缺省(nil)= 整层摘除。
+			// 经典 vid 写法(两向字段皆 nil)保持原路径:Fields 指针原样共享。
+			if f.SrcVID != nil || f.DstVID != nil {
+				vid := f.SrcVID
+				if reverse {
+					vid = f.DstVID
+				}
+				if vid == nil {
+					continue // 该方向不带这层标签
+				}
+				v := *f
+				v.VID, v.SrcVID, v.DstVID = *vid, nil, nil
+				cp.Fields = &v
+			}
 		case *scenario.TCPFields:
 			if i == c.tcpIdx {
 				cp.Fields = &tcp
