@@ -28,8 +28,8 @@ packets:
 - `sport` / `dport` 必须显式非 0。
 - UDP 的下一层是任意 payload 生产层(`dns` / `payload` / `payload_hex` …),
   IP 层 protocol 会自动推导为 17。
-- **flow 目前不支持 UDP**:`flow.stack` 硬性要求 `tcp` + `tcp_session`。多个 UDP 数据报之间的
-  时序用 `packets` + `offset_time` 表达。
+- **UDP 在 flow 里作 VXLAN outer 传输层**:VXLAN 两段栈里 outer 段须含 `udp`(dport 须非零,标准 4789)。
+  普通 UDP 数据报会话(无握手/挥手)不支持 flow;多个 UDP 数据报之间的时序用 `packets` + `offset_time` 表达。
 
 ## 静默陷阱
 
@@ -54,6 +54,7 @@ packets:
 |--------|------|
 | `需要 sport 与 dport` | 两个端口都要显式写且非 0。要构造 0 端口的畸形包,整段走 `payload_hex` |
 | `udp.total_length 超出 16 位` | 上限 `0xFFFF`(UDP 长度字段就是 16 位) |
+| `dport 须非零` | VXLAN `flow.stack` outer 段的 outer udp `dport` 必须非零(VXLAN 标准端口 4789);畸形隧道请用 standalone packets |
 
 ```yaml-bad
 link_type: ethernet
@@ -69,6 +70,25 @@ packets:
   - stack:
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
       - udp:  { sport: 1, dport: 2, total_length: 0x10000 }
+```
+
+```yaml-bad
+link_type: ethernet
+flows:
+  - name: vxlan-no-dport
+    stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:  { src: "10.0.0.1", dst: "10.0.0.2" }
+      - udp:   { sport: 51000 }
+      - vxlan: { vni: 100 }
+      - eth:   { src: "aa:bb:cc:dd:ee:01", dst: "aa:bb:cc:dd:ee:02" }
+      - ipv4:  { src: "192.168.1.1", dst: "192.168.1.2" }
+      - tcp:   { sport: 1234, dport: 80 }
+      - tcp_session: {}
+    messages:
+      - from: src
+        stack:
+          - payload: {}
 ```
 
 ## 相关

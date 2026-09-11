@@ -52,12 +52,15 @@ packets:
       - tcp:  { sport: 40000, dport: 80, flags: [SYN], seq: 1000 }
 ```
 
-**两态覆盖(错误 checksum / 撒谎长度)只在 `packets` 里可用**,flow 展开的包不支持。
+两态 `checksum` / `length` 覆盖在 `packets` 与 `flows` 中均可用。flow 整栈模板把显式值原样
+写入每个展开包;`length` 覆盖会产「每包同值」软告警,`checksum` 覆盖同样告警(真值逐包变;
+唯一豁免:VXLAN 外层 UDP 在 IPv4 underlay 下写 0,RFC 7348 免校验)。
 
 ## flows:有状态会话
 
 展开成握手 + 消息 + 挥手的完整包序列,自动维护 seq/ack 与分段。
-`stack` 里的 `src` = TCP SYN 发起方,`dst` = 接收方;反向消息自动反转 MAC/IP/端口。
+`stack` 里的 `src` = TCP SYN 发起方,`dst` = 接收方;反向消息自动反转所有 eth/IP 端点和
+inner TCP 端口。单层 VXLAN flow 中,VNI 与 outer UDP 端口两向保持声明值。
 
 ```yaml
 link_type: ethernet
@@ -81,9 +84,10 @@ flows:
           - http_response: { status: 200, body: "hi" }
 ```
 
-**硬约束**:`flow.stack` 须含 `eth` + `tcp` + 恰好一个网络层(`ipv4` 或 `ipv6`)+ `tcp_session`;
-可选夹多层 `vlan`(802.1Q/QinQ,标签链重建到每个展开包);每条 message 须 ≥1 个 payload 生产层,
-同段多层按声明顺序拼接(standalone packet 同此规则)。
+**硬约束**:普通 `flow.stack` 须含 `eth` + `tcp` + 恰好一个网络层(`ipv4` 或 `ipv6`)+
+`tcp_session`,可选多层 `vlan`。VXLAN flow 须为 outer `eth + vlan* + IP + udp + vxlan` 与 inner
+`eth + vlan* + IP + tcp + tcp_session` 两段,只支持一层 `vxlan`,outer UDP `dport` 须非零。
+每条 message 须 ≥1 个 payload 生产层,同段多层按声明顺序拼接(standalone packet 同此规则)。
 
 ## 时间
 
@@ -100,7 +104,7 @@ flows:
 | 类别 | 层名 |
 |------|------|
 | L2 | `eth`、`vlan` |
-| L3 | `ipv4`、`ipv6`、`gre`、`vxlan`(UDP 承载二层隧道:`udp(4789) → vxlan → eth`;仅 `packets`) |
+| L3 | `ipv4`、`ipv6`、`gre`、`vxlan`(UDP 承载二层隧道:`udp(4789) → vxlan → eth`;支持 `packets` 与单层 VXLAN TCP flow) |
 | L4 | `tcp`、`udp`、`tcp_session`(仅 `flow.stack`) |
 | 控制/应用 | `icmp`、`icmpv6`(别名 `icmp6`)、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data` |
 | 兜底 | `payload`、`payload_hex` |

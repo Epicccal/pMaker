@@ -1,0 +1,22 @@
+# examples/tunnel/vxlan_flow_ipv6_underlay.yaml
+#
+# 示例场景:IPv6 underlay 承载 IPv4 overlay(内外层 IP 版本异构)。
+# flow 两段各自二选一网络层:outer 段 ipv6,inner 段 ipv4。
+link_type: ethernet
+seed: 42
+flows:
+  - name: vx-v6-underlay
+    stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }      # outer(VTEP 对)
+      - ipv6:  { src: "2001:db8::10", dst: "2001:db8::20", hop_limit: 64 }  # outer underlay(IPv6)
+      - udp:   { sport: 51000, dport: 4789 }
+      - vxlan: { vni: 200 }
+      - eth:   { src: "00:22:33:44:55:66", dst: "00:33:44:55:66:77" }       # inner(VM 对)
+      - ipv4:  { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 }        # inner overlay(IPv4)
+      - tcp:   { sport: 49152, dport: 443, client_isn: 3000, server_isn: 7000 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack: [ { payload: { payload: "GET / HTTP/1.1\r\nHost: inner\r\n\r\n" } } ]
+      - from: dst
+        stack: [ { payload: { payload: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" } } ]

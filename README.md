@@ -47,7 +47,7 @@
 | 层 | 协议 | 说明 |
 |----|------|------|
 | L2 | `eth`、`vlan` | 逐层覆盖 TPID/EtherType |
-| L3 | `ipv4`、`ipv6`、`gre`、`vxlan` | next-proto 自动推导 + 覆盖;`vxlan` 为 UDP 承载二层隧道(`udp(4789) → vxlan → eth`),仅逐包构造 |
+| L3 | `ipv4`、`ipv6`、`gre`、`vxlan` | next-proto 自动推导 + 覆盖;`vxlan` 为 UDP 承载二层隧道(`udp(4789) → vxlan → eth`),支持逐包构造与单层 VXLAN TCP flow |
 | L4 | `tcp`、`udp` | checksum 绑定最近一层 IP |
 | 控制层 | `icmp`、`icmpv6` | echo + 错误报文 |
 | 应用层 | `dns`、`http`、`ftp`、`smtp`、`pop3`、`imap`、`telnet`、`eml_data` | 结构化字段 + 原始回退；`eml_data` 为协议无关 RFC 5322 内容层，SMTP DATA / POP3 RETR / IMAP FETCH literal 共用 |
@@ -100,7 +100,7 @@ next-proto / EtherType / checksum 伪首部默认自动推导。测试"解析断
 
 ### 有状态流
 
-不必逐包手写 stack，而是描述一条有状态 TCP 流。展开器自动维护握手、seq/ack、MSS 分段与挥手：
+不必逐包手写 stack，而是描述一条有状态 TCP 流。展开器自动维护握手、seq/ack、MSS 分段与挥手。`flow.stack` 也可写一层 VXLAN 完整隧道栈；反向包同时交换内外层端点，VNI 与 outer UDP 端口保持声明值：
 
 ```yaml
 flows:

@@ -556,7 +556,7 @@ func TestFlowVLANBeforeEthRejected(t *testing.T) {
 			f.Stack = tc.stack
 			s := &scenario.Scenario{Flows: []scenario.FlowSpec{f}}
 			err := scenario.Validate(s)
-			if err == nil || !strings.Contains(err.Error(), "必须在 eth 之后") {
+			if err == nil || !strings.Contains(err.Error(), "层序须为") {
 				t.Fatalf("Validate() error=%v,期望拒绝 eth 之前的 vlan", err)
 			}
 		})
@@ -582,7 +582,7 @@ func TestFlowVLANAfterNetworkRejected(t *testing.T) {
 		}},
 	}
 	err := scenario.Validate(s)
-	if err == nil || !strings.Contains(err.Error(), "必须在 eth 与网络层") {
+	if err == nil || !strings.Contains(err.Error(), "层序须为") {
 		t.Fatalf("Validate() error=%v,期望拒绝网络层之后的 vlan", err)
 	}
 }

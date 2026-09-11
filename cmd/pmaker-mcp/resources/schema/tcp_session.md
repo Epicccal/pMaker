@@ -66,7 +66,7 @@ flows:
 |--------|------|
 | `tcp_session.open 只能是 handshake/none` | 只有这两个值。"已建连"写 `none`,不是 `established`/`skip` |
 | `tcp_session.close 只能是 fin/rst/none` | 只有这三个值。半关闭、乱序挥手请用 `packets` 逐包写 |
-| `stack 需要 tcp 层` | `flow.stack` 四件套缺一不可:`eth` + 一个网络层 + `tcp` + `tcp_session`(可选夹多层 `vlan`,见 `pmaker://schema/vlan`)。UDP 会话当前不支持 flow,用 `packets` |
+| `stack 需要 tcp 层` | `flow.stack` 必须在单段栈或 VXLAN inner 段包含 `tcp` + `tcp_session`。UDP 会话当前不支持 flow,用 `packets` |
 
 ```yaml-bad
 link_type: ethernet

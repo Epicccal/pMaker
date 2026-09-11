@@ -59,7 +59,7 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
 **已实现层(stack 模型)**:
 
 - L2:`eth`、`vlan`(Dot1Q,支持 QinQ 多层;`pri`(PCP)/`dei` 可写 TCI 高 4 位)
-- L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)、`vxlan`(UDP 承载二层隧道,`udp(4789) → vxlan → eth`,仅 standalone `packets`,flow 不支持)
+- L3:`ipv4`、`ipv6`、`gre`(隧道套报文,可递归)、`vxlan`(UDP 承载二层隧道,`udp(4789) → vxlan → eth`;standalone `packets` 与单层 VXLAN TCP flow)
 - L4:`tcp`、`udp`
 - 控制/应用:`icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data`
 - 兜底:`payload`、`payload_hex`(原始字节)
@@ -299,7 +299,8 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   校验 `scenario.validateHTTPCodings`(`http_validate.go`);管线入口 `serializeHTTPReq`/`Resp` 的 `httpPayload`(`builder/http.go`)。compress LZW 编解码原语 `compress.EncodeLZW` / `compress.DecodeLZW`(`internal/util/compress/lzw.go`,`EncodeLZW` 被 `compressCoding` 接线至 CE/TE fold;`DecodeLZW` 供 builder/golden 测试做 round-trip 验证)。
 
 **已实现 flow**:TCP 三次握手、seq/ack 自动推导、`segment.mss` 分段、SYN MSS option、
-HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断。
+HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对端单包中断、单层 VXLAN
+整栈模板(内外层端点按方向反转,VNI/outer UDP 端口保持声明值)。
 
 **已实现时间编排**:逐消息定时(`message.offset_time` / `segment.interval`)、
 跨流 `start_after`(flow 级与 message 级)、两段式事件粒度算时。详见下文「时间编排与汇流」。
@@ -307,7 +308,10 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 **未实现 / 简化**:
 
 - flow 的 overlap / 重传 / IP 分片未做(乱序与段间 RTT 已由 `message.offset_time` / `segment.interval` 覆盖)。
-- `checksum` 与 `length` 均为两态覆盖(nil=自动计算/修正,非 nil=原样落值,关闭自动计算/修正)。
+- `checksum` 与 `length` 均为两态覆盖(nil=自动计算/修正,非 nil=原样落值,关闭自动计算/修正),
+  在 standalone packet 与 flow 整栈模板中均可用。flow 展开时覆盖值逐包保持相同;length 因消息长度
+  可能变化、checksum 因伪首部/seq/ack/方向/payload 逐包变,两者均产软告警;唯一豁免是 VXLAN 外层
+  UDP 在 IPv4 underlay 下写 0(RFC 7348 §5 免校验)。
   checksum 覆盖 ipv4/tcp/udp/icmp/icmpv6;length 覆盖 ipv4(`total_length`/`header_length`)、
   ipv6(`payload_length`)、tcp(`header_length`)、udp(`total_length`)。icmp/icmpv6/vlan/gre/eth
   不开放长度字段 —— gopacket 这几层的 `SerializeTo` 不读 `FixLengths`,加了也是空接线。
@@ -524,7 +528,10 @@ segment: { mss: 8, interval: "+10ms" }
 ### 约束
 
 - **确定性**:时间戳由 `base_time` + 显式偏移(或默认 `base + 全局序号*1ms`)派生,seed 控制乱序/抖动,不用 `time.Now()`(保持 golden 可比对)。
-- **封装组合**:flow.stack 支持 eth + 任意多层 vlan(802.1Q/QinQ,标签链重建到每个展开包)+ ipv4/ipv6 + tcp + tcp_session;GRE/VXLAN 等隧道内嵌会话暂不支持(会话仍只能用 `packets` 逐包写;vxlan 还须 udp 承载 + inner eth,见「已实现层」),后续再升级为更通用的 stack 反转。
+- **封装组合**:flow.stack 支持单段 `eth + vlan* + ipv4/ipv6 + tcp + tcp_session`,也支持一层
+  `outer eth + vlan* + ipv4/ipv6 + udp + vxlan + inner eth + vlan* + ipv4/ipv6 + tcp + tcp_session`。
+  反向包同时反转内外层 eth/IP 端点;VNI 与 outer UDP 端口保持声明值。多层 VXLAN 与 GRE 内嵌
+  会话暂不支持;需逐包精确控制时用 `packets`。
 - **UDP**:退化情形——无握手/挥手、无 seq/ack 的一串数据报(DNS、QUIC 探测)走同一抽象。
 - **测试**:每个 flow 出 golden pcap;回读用 gopacket `reassembly` 重组 TCP 流,断言应用层字节与脚本一致、无空洞、握手/挥手标志序列正确。
 

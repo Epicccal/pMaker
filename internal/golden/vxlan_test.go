@@ -169,3 +169,24 @@ func TestParseBackVXLANEdge(t *testing.T) {
 		t.Errorf("包① payload 字节 = %x,期望 deadbeef", raw[payloadOff:payloadOff+4])
 	}
 }
+
+// TestParseBackVXLANZeroCsum 回读 vxlan_zero_csum:outer IPv4 + UDP checksum 显式 0
+// (RFC 7348 §5),断言 wire 上 outer UDP checksum 字段落 0(覆盖值原样落值,未被自动计算覆盖)。
+func TestParseBackVXLANZeroCsum(t *testing.T) {
+	data := generatePcap(t, "../../examples/tunnel/vxlan_zero_csum.yaml")
+	pkts := readPackets(t, data)
+	if len(pkts) != 1 {
+		t.Fatalf("期望 1 个包,得到 %d", len(pkts))
+	}
+	udpL := pkts[0].Layer(layers.LayerTypeUDP)
+	if udpL == nil {
+		t.Fatalf("缺少 outer UDP 层(回读断链)")
+	}
+	udp := udpL.(*layers.UDP)
+	if udp.DstPort != 4789 {
+		t.Errorf("outer UDP dport = %d,期望 4789", udp.DstPort)
+	}
+	if udp.Checksum != 0 {
+		t.Errorf("outer UDP checksum = 0x%04x,期望 0x0000(RFC 7348 §5 显式传 0)", udp.Checksum)
+	}
+}

@@ -28,8 +28,8 @@ packets:
 
 - 内层可以是任意完整栈,包括再来一层 `gre`(多重隧道)。
 - 内层 TCP/UDP 的校验和伪首部绑定**内层 IP**(builder 记录最近一个网络层),不是外层。
-- `flow.stack` 不支持 GRE:flow 展开器只认 `eth` + 任意多层 `vlan` + 单个网络层 + `tcp` + `tcp_session`
-  (GRE 隧道内嵌会话不支持)。隧道会话当前只能用 `packets` 逐包写。
+- `flow.stack` 不支持 GRE。flow 目前支持普通单段栈与一层 VXLAN 两段栈;GRE 隧道内嵌
+  会话只能用 `packets` 逐包写。
 
 ## 静默陷阱
 

@@ -1,0 +1,20 @@
+# examples/tunnel/vxlan_flow_zero_csum.yaml
+#
+# 示例场景:flow 版 VXLAN,outer UDP checksum 传 0(RFC 7348 §5 常见形态,outer IPv4)。
+# 模板保留后 flow.stack 上的 checksum 覆盖原样透传到每个展开包(0x0000 恒定值天然正确)。
+link_type: ethernet
+seed: 42
+flows:
+  - name: vx-zero-csum
+    stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:  { src: "10.0.0.10", dst: "10.0.0.20", ttl: 64 }
+      - udp:   { sport: 51000, dport: 4789, checksum: 0x0000 }   # RFC 7348 §5:outer checksum 传 0
+      - vxlan: { vni: 100 }
+      - eth:   { src: "00:22:33:44:55:66", dst: "00:33:44:55:66:77" }
+      - ipv4:  { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 }
+      - tcp:   { sport: 49152, dport: 8080, client_isn: 100, server_isn: 200 }
+      - tcp_session: { open: handshake, close: rst }
+    messages:
+      - from: src
+        stack: [ { payload: { payload: "hello inner" } } ]

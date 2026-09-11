@@ -44,8 +44,10 @@ packets:
 ## 组合规则(硬错)
 
 - `sport` / `dport` 必须显式非 0。
-- `flow.stack` 里不能写 `checksum` / `header_length`(flow 展开器重建各层字段);这类畸形走 `packets`。
-- `flow.stack` 必须同时含 `eth` + 恰好一个网络层 + `tcp` + `tcp_session`;可选夹多层 `vlan`(802.1Q/QinQ,见 `pmaker://schema/vlan`)。
+- `flow.stack` 里不能写 `seq` / `ack` / `flags`(由展开器按连接状态推导);这类畸形走 `packets`。
+  `checksum` 与 `header_length` 可写,原样透传到每个展开包(两态覆盖)。
+- 单段 `flow.stack` 必须含 `eth` + 恰好一个网络层 + `tcp` + `tcp_session`;可选夹多层 `vlan`。
+  VXLAN 两段栈下 inner 段须含 `eth` + 网络层 + `tcp` + `tcp_session`(见 `pmaker://schema/vxlan`)。
 
 ## 静默陷阱
 
@@ -75,6 +77,7 @@ packets:
 |--------|------|
 | `需要 sport 与 dport` | 两个端口都要显式写且非 0。要构造 0 端口的畸形包,整段走 `payload_hex` |
 | `tcp.header_length 超出 4 位` | DataOffset 只有 4 位,合法覆盖值 `0x0`-`0xF`(单位 4 字节) |
+| `由展开器按连接状态推导,不支持在 flow.stack 覆盖` | `seq`/`ack`/`flags` 由展开器管理,不能在 `flow.stack` 的 `tcp` 里写。要构造非标 seq/flag 包,改用 `packets` |
 
 ```yaml-bad
 link_type: ethernet
@@ -90,6 +93,21 @@ packets:
   - stack:
       - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
       - tcp:  { sport: 1, dport: 2, header_length: 0x10 }
+```
+
+```yaml-bad
+link_type: ethernet
+flows:
+  - name: bad-derived
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1234, dport: 80, seq: 0 }
+      - tcp_session: {}
+    messages:
+      - from: src
+        stack:
+          - payload: {}
 ```
 
 ## 相关

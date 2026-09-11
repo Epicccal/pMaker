@@ -137,24 +137,49 @@ func TestVXLANNonStdPortNoWarning(t *testing.T) {
 	}
 }
 
-// TestVXLANRejectedInFlow:flow.stack 出现 vxlan 即报错,且先于值域校验(早拦截)。
-func TestVXLANRejectedInFlow(t *testing.T) {
+// TestVXLANInFlowMultiLayerRejected:flow.stack 多层 vxlan 报错(单层 vxlan 已支持,
+// 见 TestVXLANFlowAccepted);段校验(flowSegments)先于逐层值域校验,多层 vxlan 先报
+// 「暂只支持一层 vxlan 隧道」,第二个 vxlan 的 VNI 值域走不到。
+func TestVXLANInFlowMultiLayerRejected(t *testing.T) {
+	vx := &scenario.VXLANFields{VNI: 100}
 	flowStack := []scenario.Layer{
 		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
 		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
-		{Type: "tcp", Fields: &scenario.TCPFields{SPort: 49152, DPort: 80}},
-		{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "handshake", Close: "fin"}},
-		{Type: "vxlan", Fields: &scenario.VXLANFields{VNI: 0xFFFFFFFF}}, // 值域也非法,但 flow 禁用先报
+		{Type: "udp", Fields: &scenario.UDPFields{SPort: 49152, DPort: 4789}},
+		{Type: "vxlan", Fields: vx},
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:03", Dst: "00:00:00:00:00:04"}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "192.168.1.10", Dst: "192.168.1.20"}},
+		{Type: "vxlan", Fields: &scenario.VXLANFields{VNI: 0xFFFFFFFF}}, // 值域也非法,但段错误先拦
 	}
 	s := &scenario.Scenario{Flows: []scenario.FlowSpec{{
 		Name: "f", Stack: flowStack,
 		Messages: []scenario.Message{{From: "src", Stack: []scenario.Layer{{Type: "payload_hex", Fields: scenario.PayloadHex("0xab")}}}},
 	}}}
 	err := scenario.Validate(s)
-	if err == nil || !strings.Contains(err.Error(), "vxlan 不支持在 flow.stack 中使用") {
-		t.Fatalf("Validate() error=%v,期望 flow 禁用报错", err)
+	if err == nil || !strings.Contains(err.Error(), "暂只支持一层 vxlan 隧道") {
+		t.Fatalf("Validate() error=%v,期望多层 vxlan 报错", err)
 	}
-	if !strings.Contains(err.Error(), "standalone packets") {
-		t.Fatalf("错误应引导改用 standalone packets,error=%v", err)
+}
+
+// TestVXLANFlowAccepted:flow.stack 单层 vxlan 通过校验(整栈模板支持隧道会话);
+// checksum 覆盖在 flow 上不再报错(原样透传)。
+func TestVXLANFlowAccepted(t *testing.T) {
+	cksum := scenario.Hex(0)
+	vxlanStack := []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.20"}},
+		{Type: "udp", Fields: &scenario.UDPFields{SPort: 51000, DPort: 4789, Checksum: &cksum}},
+		{Type: "vxlan", Fields: &scenario.VXLANFields{VNI: 100}},
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:03", Dst: "00:00:00:00:00:04"}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "192.168.1.10", Dst: "192.168.1.20"}},
+		{Type: "tcp", Fields: &scenario.TCPFields{SPort: 49152, DPort: 80}},
+		{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "handshake", Close: "fin"}},
+	}
+	s := &scenario.Scenario{Flows: []scenario.FlowSpec{{
+		Name: "f", Stack: vxlanStack,
+		Messages: []scenario.Message{{From: "src", Stack: []scenario.Layer{{Type: "payload_hex", Fields: scenario.PayloadHex("0xab")}}}},
+	}}}
+	if err := scenario.Validate(s); err != nil {
+		t.Fatalf("flow vxlan + checksum 覆盖应通过,实际报错: %v", err)
 	}
 }

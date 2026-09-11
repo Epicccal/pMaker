@@ -1,0 +1,18 @@
+# examples/http/get_ipv6_fields.yaml
+#
+# 回归用例:flow.stack 的 ipv6 显式写 traffic_class / flow_label / next_header,
+# 锁「整栈模板保留、字段不再被展开器静默丢弃」。与隧道无关,故放 http 目录。
+# 修复前:展开器按层类型枚举搬运只取 src/dst/hop_limit,TC/flow_label/next_header
+# 全部静默丢失(wire 上 TC=0、flow_label=0、next_header=0x06)。
+link_type: ethernet
+seed: 42
+flows:
+  - name: get-ipv6-fields
+    stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6:  { src: "2001:db8::1", dst: "2001:db8::2", traffic_class: 5, flow_label: 12345, next_header: udp }
+      - tcp:   { sport: 1234, dport: 80, client_isn: 1, server_isn: 2 }
+      - tcp_session: { open: handshake, close: none }
+    messages:
+      - from: src
+        stack: [ { payload: { payload: "hi" } } ]
