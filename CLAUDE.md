@@ -310,7 +310,8 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 - flow 的 overlap / 重传 / IP 分片未做(乱序与段间 RTT 已由 `message.offset_time` / `segment.interval` 覆盖)。
 - `checksum` 与 `length` 均为两态覆盖(nil=自动计算/修正,非 nil=原样落值,关闭自动计算/修正),
   在 standalone packet 与 flow 整栈模板中均可用。flow 展开时覆盖值逐包保持相同;length 因消息长度
-  可能变化而产软告警,checksum 不告警(显式 0 等恒定值可天然正确)。
+  可能变化、checksum 因伪首部/seq/ack/方向/payload 逐包变,两者均产软告警;唯一豁免是 VXLAN 外层
+  UDP 在 IPv4 underlay 下写 0(RFC 7348 §5 免校验)。
   checksum 覆盖 ipv4/tcp/udp/icmp/icmpv6;length 覆盖 ipv4(`total_length`/`header_length`)、
   ipv6(`payload_length`)、tcp(`header_length`)、udp(`total_length`)。icmp/icmpv6/vlan/gre/eth
   不开放长度字段 —— gopacket 这几层的 `SerializeTo` 不读 `FixLengths`,加了也是空接线。

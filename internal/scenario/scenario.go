@@ -94,11 +94,19 @@ func Validate(s *Scenario) error {
 	return nil
 }
 
-// Warnings 返回场景的软告警(非硬错):不影响生成,但提示配置可能不自洽,
-// 供 CLI 在生成后输出供用户复核。当前覆盖 FTP 控制通道 227/PORT 协商端口与
-// 数据连接 dst IP:port 的一致性、MIME multipart boundary/CTE 一致性、
-// HTTP 编码(CLA+TE 冲突、TE/CE 头与列表不符等)一致性、IMAP literal 计数覆盖值
-// 一致性检查(畸形用例可能故意不一致,故只告警不阻断)。
+// Warnings 返回场景的软告警(非硬错):不影响生成,只提示配置可能不自洽,
+// 供 CLI 在生成后输出供用户复核。畸形用例可能故意不一致,故只告警不阻断。当前覆盖:
+//
+//  1. FTP 端口协商一致性(CheckFTPDataPortConsistency):PASV/PORT/EPSV/EPRT 协商出的
+//     端点与数据连接 dst IP:port 不一致、协商地址与控制连接角色不匹配时告警。
+//  2. MIME multipart 一致性(CheckMultipartConsistency):boundary 与父层 Content-Type
+//     头不符 / 缺 Content-Type / part encoding 与 Content-Transfer-Encoding 头不符或缺失。
+//  3. HTTP 编码一致性(CheckHTTPConsistency):CL+TE 冲突、TE/CE 头与编码列表不符或缺失、
+//     多个 chunked 或 chunked 不在末位、1xx/204 带 body、304 在 auto_content_length 时等。
+//  4. IMAP literal 计数一致性(CheckIMAPLiteralConsistency):literal.octets 显式值与
+//     实际字节数不符(计数撒谎)。
+//  5. flow 覆盖告警(CheckFlowOverrideWarning):flow.stack 的 length/checksum 覆盖值每包
+//     同值而真值逐包变(几乎全不符);唯一豁免 VXLAN 外层 UDP 在 IPv4 underlay 下写 0。
 func Warnings(s *Scenario) []string {
 	var ws []string
 	ws = append(ws, CheckFTPDataPortConsistency(s)...)

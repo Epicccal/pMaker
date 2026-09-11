@@ -95,8 +95,11 @@ func validateFlowSegment(seg []Layer, k segKind) error {
 	return nil
 }
 
-// rejectDerivedTCP 拒绝由展开器按连接状态推导的字段。清单只增不减:
-// 新增的方向/状态相关字段要同步加进来,否则会静默丢弃。
+// rejectDerivedTCP 拒绝在 flow.stack 的 tcp 层手写 seq/ack/flags。
+// 这三个字段由展开器按连接状态逐包推导(握手、收发方向、挥手都靠它),
+// 手写的值会被覆盖,写了也白写。想构造畸形值请用 standalone packets 逐包手拼。
+// 注意:清单只增不减 —— 以后往 TCPFields 加新的状态相关字段时要同步加进来,
+// 否则该字段会被静默忽略。
 func rejectDerivedTCP(t *TCPFields) error {
 	for _, x := range []struct {
 		name string
