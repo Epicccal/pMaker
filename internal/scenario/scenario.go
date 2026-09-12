@@ -25,8 +25,9 @@ func Load(path string) (*Scenario, error) {
 }
 
 // Parse 从 YAML 字节解析 Scenario,并为缺省 link_type 设置 ethernet。
-// baseDir 用于 @file 占位符的相对路径解析(CLI 传 scenario 文件所在目录,
-// MCP server 传配置的工作目录)。Load 即「读文件 → 调 Parse」。
+// baseDir 用于 @file 占位符的相对路径解析,也是其唯一可读边界(CLI 传 scenario 文件所在目录,
+// MCP server 传配置的工作目录):@file 的路径(含绝对路径)一律须落在 baseDir 之内,越界硬错。
+// Load 即「读文件 → 调 Parse」。
 func Parse(data []byte, baseDir string) (*Scenario, error) {
 	var s Scenario
 	// 未知字段一律报错而非静默忽略(带行号+字段名)。两层保障:
@@ -44,8 +45,8 @@ func Parse(data []byte, baseDir string) (*Scenario, error) {
 		s.LinkType = "ethernet"
 	}
 	// @file(<path>) 占位符替换:YAML decode 之后扫描所有 string 字段,把文件内容拼进去。
-	// 路径相对 baseDir;占位符可在任意内容字段(body/payload/header 值/ftp args …)里出现,
-	// 文件可只占字段的一部分。详见 file_placeholder.go。
+	// 路径须落在 baseDir 内(相对路径以它为基准,绝对路径也不得越界);占位符可在任意内容
+	// 字段(body/payload/header 值/ftp args …)里出现,文件可只占字段的一部分。详见 file_placeholder.go。
 	if err := ExpandFilePlaceholders(&s, baseDir); err != nil {
 		return nil, err
 	}

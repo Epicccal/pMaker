@@ -3,6 +3,7 @@ package scenario
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -56,17 +57,125 @@ func TestExpandString(t *testing.T) {
 	}
 }
 
-// TestExpandStringAbsPath 绝对路径原样用,不依赖 baseDir。
-func TestExpandStringAbsPath(t *testing.T) {
+// TestExpandStringAbsPathInsideBaseDir baseDir 内的绝对路径可用(仍是常见写法:
+// 用户把绝对路径指向 workdir/scenario 目录内的文件)。
+func TestExpandStringAbsPathInsideBaseDir(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "abs.txt")
 	mustWrite(t, abs, []byte("ABS"))
-	got, err := expandString("@file("+abs+")", "/nonexistent/base")
+	got, err := expandString("@file("+abs+")", dir)
 	if err != nil {
-		t.Fatalf("绝对路径应直接用: %v", err)
+		t.Fatalf("baseDir 内绝对路径应可用: %v", err)
 	}
 	if got != "ABS" {
 		t.Fatalf("绝对路径结果=%q,期望 ABS", got)
+	}
+}
+
+// TestExpandStringAbsPathOutsideBaseDir baseDir 外的绝对路径硬错(安全限制:
+// MCP 部署下场景 YAML 来自远端模型,任意绝对路径读取是可被提示注入利用的读原语)。
+func TestExpandStringAbsPathOutsideBaseDir(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir() // 另一个无关目录
+	abs := filepath.Join(outside, "secret.txt")
+	mustWrite(t, abs, []byte("SECRET"))
+	_, err := expandString("@file("+abs+")", dir)
+	if err == nil {
+		t.Fatal("baseDir 外绝对路径应报错")
+	}
+	if !strings.Contains(err.Error(), "越出 baseDir") {
+		t.Fatalf("错误 %q 不含 \"越出 baseDir\"", err.Error())
+	}
+}
+
+// TestExpandStringRelativeEscape 相对路径用 ../ 逃出 baseDir 硬错。
+func TestExpandStringRelativeEscape(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "secret.txt"), []byte("SECRET"))
+	// baseDir = dir/sub,../secret.txt 逃到 dir 下
+	sub := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := expandString("@file(../secret.txt)", sub); err == nil {
+		t.Fatal("../ 逃出 baseDir 应报错")
+	} else if !strings.Contains(err.Error(), "越出 baseDir") {
+		t.Fatalf("错误 %q 不含 \"越出 baseDir\"", err.Error())
+	}
+}
+
+// TestExpandStringSymlinkEscape baseDir 内指向外部的符号链接不能绕过包含性检查
+// (检查基于 EvalSymlinks 后的真实路径)。
+func TestExpandStringSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("符号链接在 Windows 上需要特权,跳过")
+	}
+	dir := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	mustWrite(t, secret, []byte("SECRET"))
+	link := filepath.Join(dir, "link.txt")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+	_, err := expandString("@file(link.txt)", dir)
+	if err == nil {
+		t.Fatal("指向 baseDir 外的符号链接应报错")
+	}
+	if !strings.Contains(err.Error(), "越出 baseDir") {
+		t.Fatalf("错误 %q 不含 \"越出 baseDir\"", err.Error())
+	}
+}
+
+// TestExpandStringSymlinkInside baseDir 内指向 baseDir 内部目标的符号链接正常读。
+func TestExpandStringSymlinkInside(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("符号链接在 Windows 上需要特权,跳过")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.txt")
+	mustWrite(t, target, []byte("REAL"))
+	link := filepath.Join(dir, "link.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	got, err := expandString("@file(link.txt)", dir)
+	if err != nil {
+		t.Fatalf("baseDir 内符号链接应可用: %v", err)
+	}
+	if got != "REAL" {
+		t.Fatalf("符号链接结果=%q,期望 REAL", got)
+	}
+}
+
+// TestExpandStringBaseDirNotExist baseDir 不存在时,其符号链接解析失败,直接报错
+// (不落去尝试读文件,错误信息指明是 baseDir 解析失败)。
+func TestExpandStringBaseDirNotExist(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "no-such-dir")
+	_, err := expandString("@file(a.txt)", missing)
+	if err == nil {
+		t.Fatal("baseDir 不存在应报错")
+	}
+	if !strings.Contains(err.Error(), "解析 baseDir") {
+		t.Fatalf("错误 %q 不含 \"解析 baseDir\"", err.Error())
+	}
+}
+
+// TestExpandStringPathIsDir 路径是 baseDir 内的目录(通过包含性检查)但 ReadFile 失败,
+// 错误原样上抛。用目录而非 chmod 000 构造:读目录恒失败,不依赖运行用户是否为 root。
+func TestExpandStringPathIsDir(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "subdir")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := expandString("@file(subdir)", dir)
+	if err == nil {
+		t.Fatal("路径是目录应报错")
+	}
+	if !strings.Contains(err.Error(), "subdir") {
+		t.Fatalf("错误 %q 不含 \"subdir\"", err.Error())
 	}
 }
 
