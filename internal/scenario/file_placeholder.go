@@ -183,26 +183,23 @@ func expandString(s, baseDir string) (string, error) {
 }
 
 // readFilePlaceholder 按 baseDir 解析路径并读文件,最终路径必须落在 baseDir 之内:
-// 相对路径先 Join 再 Clean;绝对路径也须位于 baseDir 下(用 EvalSymlinks 解析符号链接,
+// 相对路径 Join 后 Clean;绝对路径也须位于 baseDir 下(用 EvalSymlinks 解析符号链接,
 // 防 workdir 内的软链指向外部 + /tmp 类共享目录符号链接绕过)。越界返回硬错(带改法)。
 func readFilePlaceholder(rel, baseDir string) ([]byte, error) {
-	p := rel
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(baseDir, p)
-	}
-	p = filepath.Clean(p)
 	// 符号链接解析:包含性检查基于真实路径,否则 workdir 内指向外部的软链可逃逸。
 	// EvalSymlinks 要求路径存在,顺带替代了 ReadFile 的存在性检查语义。
-	// baseDir 与 p 均先 Abs(CLI 可能传相对路径,如 "examples/http";两者相对同一进程 CWD,
-	// 混用相对与绝对路径时字符串前缀比较会失真),且本身也可能是软链(如 macOS /tmp → /private/tmp)。
-	p, err := filepath.Abs(p)
-	if err != nil {
-		return nil, fmt.Errorf("@file(%s): 解析路径 %s 失败: %w", rel, p, err)
-	}
+	// baseDir 先 Abs(CLI 可能传相对路径,如 "examples/http"),之后 Join 出的 p 必为
+	// 绝对路径;EvalSymlinks 解析 baseDir 与 p 本身的符号链接(如 macOS /tmp → /private/tmp),
+	// 包含性比较才不失真。real 只能通过 baseDir 之内的真实路径,越界硬错(带改法)。
 	baseAbs, err := filepath.Abs(baseDir)
 	if err != nil {
 		return nil, fmt.Errorf("@file(%s): 解析 baseDir %s 失败: %w", rel, baseDir, err)
 	}
+	p := rel
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(baseAbs, p)
+	}
+	p = filepath.Clean(p)
 	baseAbs, err = filepath.EvalSymlinks(baseAbs)
 	if err != nil {
 		return nil, fmt.Errorf("@file(%s): 解析 baseDir %s 失败: %w", rel, baseDir, err)

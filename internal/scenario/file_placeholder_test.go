@@ -148,6 +148,37 @@ func TestExpandStringSymlinkInside(t *testing.T) {
 	}
 }
 
+// TestExpandStringBaseDirNotExist baseDir 不存在时,其符号链接解析失败,直接报错
+// (不落去尝试读文件,错误信息指明是 baseDir 解析失败)。
+func TestExpandStringBaseDirNotExist(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "no-such-dir")
+	_, err := expandString("@file(a.txt)", missing)
+	if err == nil {
+		t.Fatal("baseDir 不存在应报错")
+	}
+	if !strings.Contains(err.Error(), "解析 baseDir") {
+		t.Fatalf("错误 %q 不含 \"解析 baseDir\"", err.Error())
+	}
+}
+
+// TestExpandStringPathIsDir 路径是 baseDir 内的目录(通过包含性检查)但 ReadFile 失败,
+// 错误原样上抛。用目录而非 chmod 000 构造:读目录恒失败,不依赖运行用户是否为 root。
+func TestExpandStringPathIsDir(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "subdir")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := expandString("@file(subdir)", dir)
+	if err == nil {
+		t.Fatal("路径是目录应报错")
+	}
+	if !strings.Contains(err.Error(), "subdir") {
+		t.Fatalf("错误 %q 不含 \"subdir\"", err.Error())
+	}
+}
+
 // TestExpandStringRelativeFromBaseDir 相对路径相对 baseDir 解析。
 func TestExpandStringRelativeFromBaseDir(t *testing.T) {
 	dir := t.TempDir()
