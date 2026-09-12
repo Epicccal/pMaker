@@ -95,8 +95,9 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   无论 server 以哪个 workdir 启动,模型都能读到与当前二进制同版本的内置示例;加协议只加文件、Go 代码零改动。
 - **文件占位符 `@file(<path>)`**:在 `scenario.Parse` 阶段扫描全部 string 字段,把 `@file(...)`
   替换为对应文件的原始字节(支持二进制;可只占字段值的一部分,可多个拼接;`@@` 转义为字面 `@`,
-  裸 `@` 原样保留)。绝对路径原样用;相对路径相对 `baseDir`(CLI 传 scenario 文件所在目录,
-  MCP server 传配置的 `workdir`)。详见下文「文件占位符 @file」。
+  裸 `@` 原样保留)。绝对路径与相对路径一律须落在 `baseDir`(CLI 传 scenario 文件所在目录,
+  MCP server 传配置的 `workdir`)之内,越界硬错——`baseDir` 是唯一信任边界(MCP 下场景由远端
+  模型生成,任意路径读取会构成可被提示注入利用的读原语)。详见下文「文件占位符 @file」。
 
 **FTP 专项**:
 
@@ -607,7 +608,7 @@ golangci-lint run # 若已安装
 - 封装层的 next-protocol / ethertype **默认自动推导**,可逐层用 `type` / `ethertype` 显式覆盖(制造断链等畸形)。
 - 缺省字段走合理默认(自动 seq、自动 checksum、自动串接)。
 - **文件占位符 `@file(<path>)`**:任意 string 字段里可写 `@file(path)`,`Load` 时替换为文件原始字节
-  (支持二进制,可只占字段值一部分,可多个拼接;`@@`→`@`;绝对路径原样用,相对路径相对 scenario 目录)。
+  (支持二进制,可只占字段值一部分,可多个拼接;`@@`→`@`;路径须落在 baseDir 内,相对路径相对 scenario 目录)。
   被引文件需随场景归档(同 golden pcap),否则换机器不可复现。详见下文「文件占位符 @file」。
 - **时间编排**:`base_time`(唯一绝对锚,`AbsTime`,仅 ISO8601 如 `2024-01-01T00:00:00Z`,缺省=确定性 2020 基准)、
   `packet.offset_time`、`flow.offset_time`、`message.offset_time`、`segment.interval`(均为 `Offset` 非负时长,
@@ -659,7 +660,10 @@ packets:
   裸 `@`(如 `user@host.com`)原样保留,不误伤。
 - **生效范围**:全部 string 字段(body、payload、header 值、ftp args、ICMP payload 等)。
   结构字段(layer.type、MAC/IP)写 `@file` 会被同样替换进而破坏生成,由用户自负。
-- **路径**:绝对路径原样用;相对路径相对 **`baseDir`**(CLI = scenario 文件所在目录,MCP = `workdir`)。
+- **路径**:绝对路径与相对路径一律须落在 **`baseDir`**(CLI = scenario 文件所在目录,MCP = `workdir`)之内,
+  越界(含 `../` 逃逸、baseDir 外绝对路径、baseDir 内指向外部的符号链接)一律硬错——`baseDir` 是唯一信任边界,
+  MCP 部署下场景 YAML 由远端模型生成,放任任意路径读取会构成可被提示注入利用的任意文件读取原语
+  (且告警文本会把内容回显)。需要引用 baseDir 外的文件时,把文件拷进 baseDir 或把 baseDir 指向上层目录。
 - **实现**:见 `internal/scenario/file_placeholder.go`。反射遍历 `Scenario`,跳过 `yaml.Node`
   (ICMP type/code 等结构化字段),对 `map[string]string`(HTTP headers)替换值不替换键。
 - **确定性**:文件内容固定 → 同 scenario 同输入 → 逐字节相同 pcap。被引文件需随场景一起归档

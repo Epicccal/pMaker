@@ -23,7 +23,7 @@ packets:
 | `payload` | string | 文本 / 字节内容;支持 `@file(path)` 注入文件原始字节(含二进制),可拼接 |
 | `payload_hex` | string | `0x…` 十六进制字节;与 `payload` **互斥** |
 
-`@file` 用法(路径相对 workdir / scenario 目录;可只占字段值的一部分,可多个拼接):
+`@file` 用法(路径必须落在 workdir / scenario 目录之内,越界报错;可只占字段值的一部分,可多个拼接):
 
 ```text
 - payload: { payload: "prefix|@file(assets/blob.bin)|suffix" }

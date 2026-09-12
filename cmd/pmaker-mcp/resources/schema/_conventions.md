@@ -74,7 +74,8 @@ TCP/UDP 的 checksum 伪首部自动绑定**就近**的 IP 层(多层 IP 时绑�
 
 任意 string 字段值里可写 `@file(path)`,解析阶段替换为该文件的**原始字节**(支持二进制)。
 可只占字段值的一部分,也可多个拼接;`@@` 转义为字面 `@`,裸 `@`(如 `user@host.com`)原样保留。
-相对路径相对 MCP server 的 workdir。
+**路径必须落在 workdir 之内**:相对路径相对 MCP server 的 workdir 解析,绝对路径也必须是 workdir
+内的路径;`../` 逃逸、workdir 外的绝对路径一律报错(安全限制,workdir 是唯一可读边界)。
 
 **不可用于 hex 字段**(`payload_hex` / `body_hex` / `data_hex`):注入原始字节会破坏 hex 语义,
 且必然报「需要 0x 前缀」。二进制内容请用对应的文本字段 + `@file`(如 `payload` / `body`)。
