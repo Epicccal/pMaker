@@ -8,80 +8,69 @@ import (
 	"github.com/Epicccal/pMaker/internal/summary"
 )
 
-func TestSummarizePackets(t *testing.T) {
-	pkts := []scenario.Packet{
-		{
-			Stack: []scenario.Layer{
-				{Type: "eth"},
-				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
-				{Type: "tcp"},
-				{Type: "http_request"},
-			},
-		},
-		{
-			Stack: []scenario.Layer{
-				{Type: "eth"},
-				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.2", Dst: "10.0.0.1"}},
-				{Type: "tcp"},
-			},
-		},
-		{
-			Stack: []scenario.Layer{
-				{Type: "eth"},
-				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "1.1.1.1", Dst: "2.2.2.2"}},
-				{Type: "gre"},
-				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "192.168.1.1", Dst: "192.168.1.2"}},
-				{Type: "tcp"},
-			},
-		},
-		{
-			Stack: []scenario.Layer{
-				{Type: "eth"},
-				{Type: "payload_hex", Fields: scenario.PayloadHex("0xdeadbeef")},
-			},
-		},
-		{
-			Stack: []scenario.Layer{
-				{Type: "eth"},
-				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
-				{Type: "tcp"},
-				{Type: "payload_hex", Fields: scenario.PayloadHex("0x474554")},
-			},
-			SummaryLayers: []string{"http"},
-		},
-		{
-			Stack: []scenario.Layer{
-				{Type: "payload"},
-				{Type: "tcp_session"},
-				{Type: "http_response"},
-			},
-		},
-		{
-			Stack: []scenario.Layer{
-				{Type: "eth"},
-				{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2"}},
-				{Type: "tcp"},
-			},
-		},
-		{
-			Stack: []scenario.Layer{
-				{Type: "eth"},
-				{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::2", Dst: "2001:db8::1"}},
-				{Type: "icmpv6"},
-			},
-		},
+func TestSummarizePlanned(t *testing.T) {
+	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	at := func(i int) time.Time { return base.Add(time.Duration(i) * time.Millisecond) }
+	pkt := func(layers ...scenario.Layer) scenario.PlannedPacket {
+		return scenario.PlannedPacket{Packet: scenario.Packet{Stack: layers}, Time: at(0)}
+	}
+	planned := []scenario.PlannedPacket{
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			scenario.Layer{Type: "tcp"},
+			scenario.Layer{Type: "http_request"},
+		),
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.2", Dst: "10.0.0.1"}},
+			scenario.Layer{Type: "tcp"},
+		),
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "1.1.1.1", Dst: "2.2.2.2"}},
+			scenario.Layer{Type: "gre"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "192.168.1.1", Dst: "192.168.1.2"}},
+			scenario.Layer{Type: "tcp"},
+		),
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "payload_hex", Fields: scenario.PayloadHex("0xdeadbeef")},
+		),
+		{Packet: scenario.Packet{Stack: []scenario.Layer{
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			scenario.Layer{Type: "tcp"},
+			scenario.Layer{Type: "payload_hex", Fields: scenario.PayloadHex("0x474554")},
+		}, SummaryLayers: []string{"http"}}, Time: at(0)},
+		pkt(
+			scenario.Layer{Type: "payload"},
+			scenario.Layer{Type: "tcp_session"},
+			scenario.Layer{Type: "http_response"},
+		),
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2"}},
+			scenario.Layer{Type: "tcp"},
+		),
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::2", Dst: "2001:db8::1"}},
+			scenario.Layer{Type: "icmpv6"},
+		),
 	}
 
-	got := summary.SummarizePackets(pkts)
+	got := summary.SummarizePlanned(planned)
+	ts := at(0).Format("2006-01-02T15:04:05.000000Z07:00")
 	want := []string{
-		"[1] 10.0.0.1 -> 10.0.0.2  eth/ipv4/tcp/http",
-		"[2] 10.0.0.1 <- 10.0.0.2  eth/ipv4/tcp",
-		"[3] 192.168.1.1 -> 192.168.1.2  eth/ipv4/gre/ipv4/tcp",
-		"[4] - -> -  eth",
-		"[5] 10.0.0.1 -> 10.0.0.2  eth/ipv4/tcp/http",
-		"[6] - -> -  http",
-		"[7] 2001:db8::1 -> 2001:db8::2  eth/ipv6/tcp",
-		"[8] 2001:db8::2 -> 2001:db8::1  eth/ipv6/icmpv6",
+		"[1] " + ts + " 10.0.0.1 -> 10.0.0.2  eth/ipv4/tcp/http",
+		"[2] " + ts + " 10.0.0.1 <- 10.0.0.2  eth/ipv4/tcp",
+		"[3] " + ts + " 192.168.1.1 -> 192.168.1.2  eth/ipv4/gre/ipv4/tcp",
+		"[4] " + ts + " - -> -  eth",
+		"[5] " + ts + " 10.0.0.1 -> 10.0.0.2  eth/ipv4/tcp/http",
+		"[6] " + ts + " - -> -  http",
+		"[7] " + ts + " 2001:db8::1 -> 2001:db8::2  eth/ipv6/tcp",
+		"[8] " + ts + " 2001:db8::2 -> 2001:db8::1  eth/ipv6/icmpv6",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("摘要数量=%d,期望 %d", len(got), len(want))
@@ -99,14 +88,14 @@ func TestSummarizePlannedWithTime(t *testing.T) {
 	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	planned := []scenario.PlannedPacket{
 		{Packet: scenario.Packet{Stack: []scenario.Layer{
-			{Type: "eth"},
-			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
-			{Type: "tcp"},
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
+			scenario.Layer{Type: "tcp"},
 		}}, Time: base},
 		{Packet: scenario.Packet{Stack: []scenario.Layer{
-			{Type: "eth"},
-			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.80", Dst: "10.0.0.10"}},
-			{Type: "tcp"},
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.80", Dst: "10.0.0.10"}},
+			scenario.Layer{Type: "tcp"},
 		}}, Time: base.Add(time.Millisecond)},
 	}
 
@@ -125,71 +114,53 @@ func TestSummarizePlannedWithTime(t *testing.T) {
 	}
 }
 
-// TestSummarizePacketsNoTime: SummarizePackets 路径无时间信息,
-// FormatPacketSummary 保持不含时间列的原格式(向后兼容)。
-func TestSummarizePacketsNoTime(t *testing.T) {
-	pkts := []scenario.Packet{{
-		Stack: []scenario.Layer{
-			{Type: "eth"},
-			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
-			{Type: "tcp"},
-		},
-	}}
-	got := summary.SummarizePackets(pkts)
-	if len(got) != 1 {
-		t.Fatalf("摘要数量=%d,期望 1", len(got))
-	}
-	if got[0].HasTime {
-		t.Errorf("SummarizePackets 不应带时间信息,得到 HasTime=true")
-	}
-	want := "[1] 10.0.0.10 -> 10.0.0.80  eth/ipv4/tcp"
-	if line := summary.FormatPacketSummary(1, got[0]); line != want {
-		t.Errorf("格式=%q,期望 %q", line, want)
-	}
-}
-
 // TestSummarizeWithPorts: 摘要端点应带上 TCP/UDP 源目端口;反向包端口随方向归一
 // (左恒为 base 源端端口、右恒为 base 目的端端口,仅箭头翻转);无 TCP/UDP 层的包不显示端口。
 func TestSummarizeWithPorts(t *testing.T) {
-	pkts := []scenario.Packet{
-		// [1] 正向请求:src=client(49152) -> dst=server(80)。base=(client,server)。
-		{Stack: []scenario.Layer{
-			{Type: "eth"},
-			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
-			{Type: "tcp", Fields: &scenario.TCPFields{SPort: 49152, DPort: 80}},
-		}},
-		// [2] 反向响应:实际 src=server(80)、dst=client(49152);归一为 client <- server。
-		{Stack: []scenario.Layer{
-			{Type: "eth"},
-			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.80", Dst: "10.0.0.10"}},
-			{Type: "tcp", Fields: &scenario.TCPFields{SPort: 80, DPort: 49152}},
-		}},
-		// [3] UDP:端口照样展示。
-		{Stack: []scenario.Layer{
-			{Type: "eth"},
-			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
-			{Type: "udp", Fields: &scenario.UDPFields{SPort: 5353, DPort: 5353}},
-		}},
-		// [4] ICMP:无 TCP/UDP 层,端点仅显示 IP,不带端口。
-		{Stack: []scenario.Layer{
-			{Type: "eth"},
-			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
-			{Type: "icmp"},
-		}},
-		// [5] IPv6 + TCP:端口同样拼接。
-		{Stack: []scenario.Layer{
-			{Type: "eth"},
-			{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2"}},
-			{Type: "tcp", Fields: &scenario.TCPFields{SPort: 443, DPort: 443}},
-		}},
+	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	pkt := func(layers ...scenario.Layer) scenario.PlannedPacket {
+		return scenario.PlannedPacket{Packet: scenario.Packet{Stack: layers}, Time: base}
 	}
-	got := summary.SummarizePackets(pkts)
+	planned := []scenario.PlannedPacket{
+		// [1] 正向请求:src=client(49152) -> dst=server(80)。base=(client,server)。
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
+			scenario.Layer{Type: "tcp", Fields: &scenario.TCPFields{SPort: 49152, DPort: 80}},
+		),
+		// [2] 反向响应:实际 src=server(80)、dst=client(49152);归一为 client <- server。
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.80", Dst: "10.0.0.10"}},
+			scenario.Layer{Type: "tcp", Fields: &scenario.TCPFields{SPort: 80, DPort: 49152}},
+		),
+		// [3] UDP:端口照样展示。
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
+			scenario.Layer{Type: "udp", Fields: &scenario.UDPFields{SPort: 5353, DPort: 5353}},
+		),
+		// [4] ICMP:无 TCP/UDP 层,端点仅显示 IP,不带端口。
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
+			scenario.Layer{Type: "icmp"},
+		),
+		// [5] IPv6 + TCP:端口同样拼接。
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::1", Dst: "2001:db8::2"}},
+			scenario.Layer{Type: "tcp", Fields: &scenario.TCPFields{SPort: 443, DPort: 443}},
+		),
+	}
+	got := summary.SummarizePlanned(planned)
+	ts := base.Format("2006-01-02T15:04:05.000000Z07:00")
 	want := []string{
-		"[1] 10.0.0.10:49152 -> 10.0.0.80:80  eth/ipv4/tcp",
-		"[2] 10.0.0.10:49152 <- 10.0.0.80:80  eth/ipv4/tcp",
-		"[3] 10.0.0.10:5353 -> 10.0.0.80:5353  eth/ipv4/udp",
-		"[4] 10.0.0.10 -> 10.0.0.80  eth/ipv4/icmp",
-		"[5] [2001:db8::1]:443 -> [2001:db8::2]:443  eth/ipv6/tcp",
+		"[1] " + ts + " 10.0.0.10:49152 -> 10.0.0.80:80  eth/ipv4/tcp",
+		"[2] " + ts + " 10.0.0.10:49152 <- 10.0.0.80:80  eth/ipv4/tcp",
+		"[3] " + ts + " 10.0.0.10:5353 -> 10.0.0.80:5353  eth/ipv4/udp",
+		"[4] " + ts + " 10.0.0.10 -> 10.0.0.80  eth/ipv4/icmp",
+		"[5] " + ts + " [2001:db8::1]:443 -> [2001:db8::2]:443  eth/ipv6/tcp",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("摘要数量=%d,期望 %d", len(got), len(want))

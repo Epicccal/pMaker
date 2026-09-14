@@ -5,11 +5,10 @@ import (
 )
 
 // FormatPacketSummary 按 CLI 输出格式格式化单包摘要,index 从 1 开始传入。
-// 单行格式:列宽取本行自身,不做跨行补齐——适合单包输出或向后兼容,输出与历史逐字节等价。
+// 单行格式:列宽取本行自身,不做跨行补齐——适合单包输出。
 // 多行对齐(序号位数、左右端点宽度跨行补齐)请用 FormatPacketSummaries。
 //
-// 当摘要带时间信息(HasTime,来自 PlannedPacket)时,在序号与左端点之间插入时间列
-// (ISO8601 带微秒,与 base_time 语义一致);否则保持不含时间的原格式。
+// 在序号与左端点之间插入时间列(ISO8601 带微秒,与 base_time 语义一致)。
 func FormatPacketSummary(index int, s PacketSummary) string {
 	return formatRow(index, s, indexWidth(index), len(s.Left), len(s.Right))
 }
@@ -35,12 +34,9 @@ func FormatPacketSummaries(summaries []PacketSummary) []string {
 
 // formatRow 按给定列宽格式化单行;列宽由调用方计算(单行=自宽、无补齐;多行=跨行最大宽)。
 // 序号在括号内右对齐(数字列惯例);左右端点左对齐补齐(便于纵向扫读源/目地址),
-// 箭头与协议栈列因此跨行对齐。两空格分隔 right 端点与 stack,与历史格式一致。
+// 箭头与协议栈列因此跨行对齐。两空格分隔 right 端点与 stack。
+// 时间列恒为定宽(ISO8601 带微秒,每行 27 字符),无需补齐。
 func formatRow(index int, s PacketSummary, idxW, leftW, rightW int) string {
-	if !s.HasTime {
-		return fmt.Sprintf("[%*d] %-*s %s %-*s  %s",
-			idxW, index, leftW, s.Left, s.Arrow, rightW, s.Right, s.Stack)
-	}
 	return fmt.Sprintf("[%*d] %s %-*s %s %-*s  %s",
 		idxW, index, s.Time.Format(packetSummaryTimeLayout),
 		leftW, s.Left, s.Arrow, rightW, s.Right, s.Stack)

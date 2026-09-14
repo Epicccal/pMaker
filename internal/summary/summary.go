@@ -18,21 +18,8 @@ type PacketSummary struct {
 	Arrow string
 	Right string
 	Stack string
-	// Time 是该包的显式时间戳(来自 PlannedPacket.Time);HasTime 为 false 时表示
-	// 摘要来源无时间信息(SummarizePackets 路径),FormatPacketSummary 不输出时间列。
-	Time    time.Time
-	HasTime bool
-}
-
-// SummarizePackets 从已展开的包列表生成展示用摘要(不含时间信息)。
-func SummarizePackets(pkts []scenario.Packet) []PacketSummary {
-	baseSrc, baseDst, hasBase := firstIPPair(pkts)
-
-	out := make([]PacketSummary, 0, len(pkts))
-	for _, p := range pkts {
-		out = append(out, summarizePacketWithBase(p, baseSrc, baseDst, hasBase))
-	}
-	return out
+	// Time 是该包的显式时间戳(来自 PlannedPacket.Time),FormatPacketSummary 输出时间列。
+	Time time.Time
 }
 
 // summarizePacketWithBase 计算单包摘要的方向与端点;hasBase 时把双向会话归一到 base 方向。
@@ -67,8 +54,8 @@ func summarizePacketWithBase(p scenario.Packet, baseSrc, baseDst string, hasBase
 }
 
 // SummarizePlanned 从已汇流排序的 PlannedPacket 列表生成展示用摘要。
-// 与 SummarizePackets 不同,此路径保留了 PlannedPacket.Time,FormatPacketSummary 会输出时间列。
-// 方向归一化与 SummarizePackets 一致:以第一个含 IP 的包为基准,反向包显示为 <-。
+// 保留 PlannedPacket.Time,FormatPacketSummary 输出时间列。
+// 方向归一化:以第一个含 IP 的包为基准,反向包显示为 <-。
 func SummarizePlanned(planned []scenario.PlannedPacket) []PacketSummary {
 	baseSrc, baseDst, hasBase := firstPlannedIPPair(planned)
 
@@ -76,7 +63,6 @@ func SummarizePlanned(planned []scenario.PlannedPacket) []PacketSummary {
 	for _, pp := range planned {
 		s := summarizePacketWithBase(pp.Packet, baseSrc, baseDst, hasBase)
 		s.Time = pp.Time
-		s.HasTime = true
 		out = append(out, s)
 	}
 	return out
@@ -86,15 +72,6 @@ func SummarizePlanned(planned []scenario.PlannedPacket) []PacketSummary {
 func firstPlannedIPPair(planned []scenario.PlannedPacket) (string, string, bool) {
 	for _, pp := range planned {
 		if src, dst, ok := packetIPPair(pp.Packet); ok {
-			return src, dst, true
-		}
-	}
-	return "", "", false
-}
-
-func firstIPPair(pkts []scenario.Packet) (string, string, bool) {
-	for _, p := range pkts {
-		if src, dst, ok := packetIPPair(p); ok {
 			return src, dst, true
 		}
 	}
