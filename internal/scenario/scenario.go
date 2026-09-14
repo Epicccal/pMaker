@@ -170,7 +170,6 @@ func validateFlow(f FlowSpec) error {
 			return err
 		}
 	}
-	// 逐层字段校验(tcp_session 无字段级 case,已由 validateFlowSegment 承载其值校验)。
 	for _, l := range f.Stack {
 		if l.Type == "tcp_session" {
 			continue
@@ -638,6 +637,18 @@ func validateLayerIn(l Layer, inFlow bool) error {
 				}
 			}
 		}
+	case *TCPSessionFields:
+		// tcp_session 是 flow 的会话指令(open/close 策略),只允许出现在 flow.stack 的末位，
+		// 不能用于 standalone packets[].stack、message.stack 或 quote.stack。
+		if !inFlow {
+			return fmt.Errorf("tcp_session 只能用于 flow.stack,不能出现在 standalone packet 的 stack 里")
+		}
+	case *GREFields:
+		// GRE 无必填字段:protocol 按内层自动推导,key/seq 可选。
+	default:
+		// validateLayerIn 的 Fields 类型集合须与 layerDecoders(layer_decode.go)保持一致。
+		// 若此处触发,说明某层已在 layerDecoders 注册但未在此 switch 补 case
+		return fmt.Errorf("内部错误:未知 Fields 类型 %T(请在 validateLayerIn 补 case)", l.Fields)
 	}
 	return nil
 }

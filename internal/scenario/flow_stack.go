@@ -66,8 +66,7 @@ func validateFlowSegment(seg []Layer, k segKind) error {
 				return fmt.Errorf("%s.udp: dport 须非零(VXLAN 标准端口 4789);畸形隧道请用 standalone packets", p)
 			}
 		case *TCPSessionFields:
-			// tcp_session 的 open/close 值校验从 validateFlow 主循环搬来:validateLayer 对
-			// tcp_session 无 case,不搬会整块蒸发。
+			// tcp_session 的 open/close 值校验
 			if f.Open != "" && f.Open != "handshake" && f.Open != "none" {
 				return fmt.Errorf("tcp_session.open 只能是 handshake/none,得到 %q", f.Open)
 			}
