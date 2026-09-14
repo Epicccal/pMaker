@@ -11,7 +11,8 @@
 #   make pmaker     # 只构建 CLI
 #   make mcp        # 只构建 MCP server
 #   make test       # 跑完整测试
-#   make quality    # gofmt + go vet + go test(提交前质量门禁)
+#   make quality    # gofmt + go vet + go test -race(提交前质量门禁)
+#   make ci         # 逐字复现 CI 的检查集(含覆盖率)
 #   make clean      # 清理 bin/ 与覆盖率文件
 
 # ===== 可覆盖变量 =====
@@ -34,7 +35,7 @@ BIN_MCP     := $(BIN_DIR)/pmaker-mcp
 
 # ===== 默认目标 =====
 
-.PHONY: all build pmaker mcp clean test test-v test-files race cover vet fmt lint quality run help FORCE
+.PHONY: all build pmaker mcp clean test test-v test-files race cover vet fmt lint quality ci ci-test ci-build run help FORCE
 
 all: build
 
@@ -98,12 +99,27 @@ lint:
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run; \
 	else \
-		echo "⚠ 未安装 golangci-lint,已跳过(可选: https://golangci-lint.run)"; \
+		echo "⚠ 未安装 golangci-lint,已跳过(可选)"; \
+		echo "  安装: https://golangci-lint.run"; \
 	fi
 
-# 提交前质量门禁:gofmt + vet + test,对应 CLAUDE.md「提交前必跑」。
-quality: fmt vet test
+# 提交前质量门禁:gofmt + vet + lint + 带竞态检测的测试。
+quality: fmt vet lint race
 	@echo "✓ 质量门禁通过"
+
+# 逐字复现 CI 的检查集(.github/workflows/ci.yml 的 quality / test / build 三个 job)。
+# 与 quality 的唯一实质差别:测试带 -coverpkg/-covermode 收集覆盖率
+ci: fmt vet lint ci-test ci-build
+	@echo "✓ CI 等价门禁通过"
+
+ci-test:
+	go test -race -coverpkg=./internal/...,./cmd/... -coverprofile=coverage.out -covermode=atomic ./...
+
+ci-build:
+	CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o $(BIN_DIR)/pmaker ./cmd/pmaker
+	CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o $(BIN_DIR)/pmaker-mcp ./cmd/pmaker-mcp
+	./$(BIN_PMMAKER) version >/dev/null && echo "pmaker 冒烟 OK"
+	./$(BIN_MCP) -h >/dev/null && echo "pmaker-mcp 冒烟 OK"
 
 # ===== 辅助 =====
 
@@ -129,8 +145,9 @@ help:
 	@echo "  make cover      带覆盖率的测试"
 	@echo "  make vet        go vet ./..."
 	@echo "  make fmt        检查 gofmt(不修改)"
-	@echo "  make lint       golangci-lint(未安装则跳过)"
-	@echo "  make quality    gofmt + vet + test(提交前门禁)"
+	@echo "  make lint       golangci-lint(未安装则跳过;CI 会强制)"
+	@echo "  make quality    gofmt + vet + lint + race(提交前门禁)"
+	@echo "  make ci         逐字复现 CI 检查集(含覆盖率 + 构建冒烟)"
 	@echo "  make run        构建并用示例场景冒烟出包"
 	@echo "  make clean      清理 bin/ 与 coverage.out"
 	@echo ""
