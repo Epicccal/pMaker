@@ -61,10 +61,15 @@ flows:
 
 ## 一致性告警(软告警,非硬错)
 
-- `transfer_encoding` 非空但 `Transfer-Encoding` 头缺失 / 头文本与列表不符 → 疑似漏声明(或故意 evasion)。
-- `content_encoding` 非空但 `Content-Encoding` 头缺失 / 头文本与列表不符 → 同上。
-- `headers` 有显式 `Content-Length` 且 `transfer_encoding` 非空 → CL+TE 冲突(走私特征),不删不硬错。
-- `chunked` 不在 TE 末位 / 含多个 `chunked` → 异常编码栈(IDS 绕过特征),放行。
+每条告警带稳定 `code`(结构化 `warnings` 里程序化匹配用):
+
+- `transfer_encoding` 非空但 `Transfer-Encoding` 头缺失(`http.coding-header-missing`)/ 头文本与列表不符
+  (`http.coding-header-mismatch`)→ 疑似漏声明(或故意 evasion)。
+- `content_encoding` 非空但 `Content-Encoding` 头缺失 / 头文本与列表不符 → 同上(同两个 code)。
+- `headers` 有显式 `Content-Length` 且 `transfer_encoding` 非空 → CL+TE 冲突(`http.cl-te-conflict`,
+  走私特征),不删不硬错。
+- `chunked` 不在 TE 末位(`http.chunked-not-last`)/ 含多个 `chunked`(`http.chunked-duplicate`)
+  → 异常编码栈(IDS 绕过特征),放行。
 
 ## 静默陷阱
 

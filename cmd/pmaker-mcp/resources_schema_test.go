@@ -112,6 +112,67 @@ func TestSchemaErrorTextsExist(t *testing.T) {
 	}
 }
 
+// ---------- 4. 告警 code ⇄ 文档 双向同步 ----------
+
+// TestSchemaWarningCodesSync 锁定「schema 文档承诺的告警 ⇄ 实现 warning code」双向同步:
+//   - 正向(实现 → 文档):scenario.WarningCodes() 的每个 code 都须出现在某份 schema 文档里,
+//     否则 MCP 客户端拿不到程序化匹配所需的 code 标识符;
+//   - 反向(文档 → 实现):文档里以反引号包裹、形如告警 code 的 token(小写点分且含连字符,
+//     与 snake_case 字段路径区分)必须是真实存在的 code,否则文档承诺了不存在的告警。
+func TestSchemaWarningCodesSync(t *testing.T) {
+	codes := scenario.WarningCodes()
+
+	// 正向:每个 code 至少被一份文档提及。
+	for _, code := range codes {
+		found := false
+		for _, name := range schemaDocNames(t) {
+			if strings.Contains(schemaDocText(t, name), "`"+code+"`") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("告警 code %q 未在任何 schema 文档中提及:请在该告警所属协议文档的"+
+				"「一致性告警」节标注 code(MCP 客户端按 code 程序化匹配 warnings)", code)
+		}
+	}
+
+	// 反向:文档里形如告警 code 的 token 必须真实存在。
+	codeSet := make(map[string]bool, len(codes))
+	for _, c := range codes {
+		codeSet[c] = true
+	}
+	for _, name := range schemaDocNames(t) {
+		for _, token := range backtickTokens(schemaDocText(t, name)) {
+			// 告警 code 的形状:<域>.<kebab-case 问题>(至少一段含连字符)。
+			// 字段路径是 snake_case / 无连字符(如 `multipart.boundary`),不会命中。
+			if !strings.Contains(token, ".") || !strings.Contains(token, "-") {
+				continue
+			}
+			if !codeSet[token] {
+				t.Errorf("schema/%s.md 提及 %q 形如告警 code,但 scenario.WarningCodes() 里不存在:"+
+					"要么 code 写错,要么实现缺了这条告警,要么它其实不是 code(那请改写该 token)", name, token)
+			}
+		}
+	}
+}
+
+// backtickTokens 提取文本里全部反引号包裹的 token(不含空白的短 token;含空白的
+// 内联代码片段不参与告警 code 匹配)。
+func backtickTokens(text string) []string {
+	var out []string
+	// 逐对反引号取内容(Split 后奇数下标是反引号之间的内容)。
+	parts := strings.Split(text, "`")
+	for i := 1; i+1 < len(parts); i += 2 {
+		tok := parts[i]
+		if tok == "" || strings.ContainsAny(tok, " \t\r\n/():;=|") {
+			continue
+		}
+		out = append(out, tok)
+	}
+	return out
+}
+
 // ---------- 辅助 ----------
 
 // parseAndValidate 把片段当完整 scenario 走一遍解析 + 语义校验。

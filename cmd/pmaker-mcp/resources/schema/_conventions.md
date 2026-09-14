@@ -17,6 +17,10 @@
 软告警之所以放行,是因为**畸形包是本工具的一等公民**:构造「协商端口与实际数据连接不一致」
 「boundary 声明与实际不符」「literal 计数撒谎」正是流量验证的用途,校验器不该替你改回来。
 
+每条软告警都是结构化的 `{code, path, message}`:`code` 是稳定标识符(如 `multipart.boundary-collision`,
+可程序化匹配,各协议文档的「一致性告警」节列出全部 code);`path` 是声明级字段路径(如
+`flows[0].messages[1].stack[0].multipart.parts[1]`);`message` 是含定位与改法的人读文案。
+
 静默坏包是本项目最需要警惕的一类。全局性的一条见下方「单段字节上限」,
 其余按层分布,写某层前请读该层文档的「静默陷阱」节。
 
@@ -47,7 +51,7 @@
 开了也是空接线)。同族语义还有 `imap_*.literal.octets`(见 `pmaker://schema/imap_request`)。
 
 checksum / length 覆盖在 `packets` 与 `flows` 中均可用。flow 展开器把显式值原样写入每个包;
-消息长度不同时,length 仍保持字面值,因此产软告警。checksum 真值因伪首部 / seq / ack / 方向 /
+消息长度不同时,length 仍保持字面值,因此产软告警(`flow.override-static`)。checksum 真值因伪首部 / seq / ack / 方向 /
 payload 逐包变,覆盖值同样逐包不符,照 length 同告警;唯一豁免是 VXLAN 外层 UDP 在 IPv4 underlay
 下写 0(RFC 7348 §5 免校验)。
 `vlan.type` / `eth.ethertype` 等 next-proto 覆盖在 `flow.stack` 中也照常生效。

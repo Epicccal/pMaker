@@ -64,7 +64,7 @@ flows:
 
 ## 一致性告警(软告警)
 
-- `literal.octets` 显式值与实际字节数不符 → 软告警(「计数撒谎」,不阻断)。
+- `literal.octets` 显式值与实际字节数不符 → 软告警(`imap.literal-octets-mismatch`;「计数撒谎」,不阻断)。
 
 ## 静默陷阱
 

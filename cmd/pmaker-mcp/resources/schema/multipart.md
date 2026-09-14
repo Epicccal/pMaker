@@ -86,14 +86,20 @@ flows:
 
 ## 一致性告警(软告警,非硬错)
 
-畸形用例可能故意不一致,故只告警不阻断:
+畸形用例可能故意不一致,故只告警不阻断。所有告警以结构化 `warnings` 返回(`generate_yaml` 与
+`generate_pcap` 一致),每条含稳定 `code`(机器可读标识符)、`path`(声明级字段路径,如
+`packets[0].stack[3].multipart.parts[1]`)与 `message`(人读文案):
 
-- **boundary 一致性**:父层 `Content-Type` 头的 `boundary=` 与 `multipart.boundary`(或默认值)不符 → 告警;
-  父层有 `multipart` 但缺 `Content-Type` 头 → 告警。
-- **CTE 一致性**:part 设 `encoding`(非 `none`)但 part 头 `Content-Transfer-Encoding` 缺失或不符 → 告警
+- **boundary 一致性**(`multipart.missing-content-type` / `multipart.boundary-param-missing` /
+  `multipart.boundary-mismatch`):父层 `Content-Type` 头的 `boundary=` 与 `multipart.boundary`(或默认值)
+  不符 → 告警;父层有 `multipart` 但缺 `Content-Type` 头 → 告警。
+- **CTE 一致性**(`multipart.cte-missing` / `multipart.cte-mismatch`):part 设 `encoding`(非 `none`)
+  但 part 头 `Content-Transfer-Encoding` 缺失或不符 → 告警
   (`7bit`/`8bit`/`binary` 同样参与,它们是 RFC 2045 真实 CTE 标签)。
-- **boundary 碰撞**(生成 pcap 时检查):part 编码后 body 里出现独占一行的 `--<boundary>` → 告警
-  (RFC 2046 §5.1.1:分界符须独占一行,解析端会误判切分)。`@file` 注入附件时尤其隐蔽;命中请换更长的 boundary。
+- **boundary 碰撞**(`multipart.boundary-collision`):part 编码后 body 里出现独占一行的 `--<boundary>`
+  → 告警(RFC 2046 §5.1.1:分界符须独占一行,解析端会误判切分)。检查在场景校验阶段完成,
+  `generate_yaml` 与 `generate_pcap` 都会在 `warnings` 里返回它。`@file` 注入附件时尤其隐蔽;
+  命中请换更长的 boundary。
 
 ## 静默陷阱
 
