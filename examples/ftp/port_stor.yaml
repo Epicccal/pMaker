@@ -24,7 +24,6 @@
 #
 # 流量验证关注点:明文凭证、PORT 协商的 IP:端口、数据连接里上传的二进制内容、150/226 响应码序列。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

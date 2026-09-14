@@ -16,7 +16,6 @@
 # data 的 SYN 落在 base+7ms = control 的 227 整组完成点(msgCursor),紧接(无额外 offset)。
 # 若把控制流任意 offset/段间隔改动,data 起点自动跟随——无需手算绝对时刻。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

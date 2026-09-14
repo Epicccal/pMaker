@@ -5,7 +5,6 @@
 # ② 写 total_length: 9999 → 关闭该层自动长度修正,值原样上 wire,ihl 未写仍补成 5(公式值)。
 #    这是「一个开关控两字段」的补值逻辑:只让 total_length 撒谎,header_length 保持正确。
 link_type: ethernet
-seed: 42
 packets:
   # ① 规范包:长度自动计算。
   - stack:

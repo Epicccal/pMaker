@@ -5,7 +5,6 @@
 # code 1 = Fragment Reassembly Time Exceeded。
 # 错误报文含 4 字节 Unused 字段 + quote。
 link_type: ethernet
-seed: 42
 packets:
   # code 0: hop limit exceeded
   - name: udp-probe-hop-limit

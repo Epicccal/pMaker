@@ -8,7 +8,6 @@
 # (recSize = 6 + len("") + 2 = 8,但根名 wire 仅 1 字节 0x00),结构化路径无法正确编码。
 # RDATA = Priority(0) + Weight(0) + Port(0) + 根(0x00) = 7 字节,RDLENGTH 自动 = 7。
 link_type: ethernet
-seed: 42
 packets:
   - name: dns-srv-root
     stack:

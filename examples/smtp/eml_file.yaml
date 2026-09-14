@@ -12,7 +12,6 @@
 #   - segment.mss: 1460 显式切段(大 body 必须切,否则单段撑爆 IPv4 total_length;
 #     tcp.mss 只是 SYN 通告值,不参与切段。见 pmaker://schema/tcp)。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

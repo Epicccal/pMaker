@@ -26,7 +26,6 @@
 #   (5s+)与 flow-B 无关。若需"严格顺序"(flow-B 必在 flow-A 所有包之后),给 flow-B 显式
 #   offset_time 错开到 flow-A 末包之后即可。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

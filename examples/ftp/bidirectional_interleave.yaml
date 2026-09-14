@@ -29,7 +29,6 @@
 #
 # 关键断言:control.150 的包时刻 < data 的包时刻 < control.226 的包时刻。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

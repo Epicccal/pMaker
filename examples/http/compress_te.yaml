@@ -9,7 +9,6 @@
 # compress 能进 TE 是相对 br(仅限 CE)的净新增能力面;现代客户端支持度低,
 # 中间设备/IDS 解码支持往往不完整,是经典 evasion 测试面。
 link_type: ethernet
-seed: 42
 
 flows:
   - name: http-compress-te

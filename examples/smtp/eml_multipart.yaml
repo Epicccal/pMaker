@@ -12,7 +12,6 @@
 #   - 自动 dot-stuffing + 终止符(dot_stuff/dot_terminate 默认 on,作用于编码后的整段 content);
 #   - boundary 一致性(Content-Type 头 boundary= 与 multipart.boundary 一致)。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

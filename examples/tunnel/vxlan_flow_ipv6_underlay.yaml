@@ -3,7 +3,6 @@
 # 示例场景:IPv6 underlay 承载 IPv4 overlay(内外层 IP 版本异构)。
 # flow 两段各自二选一网络层:outer 段 ipv6,inner 段 ipv4。
 link_type: ethernet
-seed: 42
 flows:
   - name: vx-v6-underlay
     stack:

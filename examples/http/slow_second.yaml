@@ -9,7 +9,6 @@
 # 本例:第一轮 GET /a 紧接握手;第二轮 GET /b 距 200 OK 末尾 +10s,且切成 8 字节小段、
 # 段间隔 100ms(模拟慢速客户端);resp-b 距 GET /b 末尾 +15s。
 link_type: ethernet
-seed: 42
 
 base_time: "2024-01-01T00:00:00Z"
 

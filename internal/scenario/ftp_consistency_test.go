@@ -66,7 +66,7 @@ func containsWarning(warnings []scenario.Diagnostic, substr string) bool {
 
 // TestFTPConsistency_PASVMatched: 227 协商端口与 data 流 dst:dport 一致 → 无告警。
 func TestFTPConsistency_PASVMatched(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 227, message: \"Entering Passive Mode (10,0,0,21,195,80).\" }\n" +
@@ -80,7 +80,7 @@ func TestFTPConsistency_PASVMatched(t *testing.T) {
 
 // TestFTPConsistency_PASVPortMismatch: 227 协商 50000,data 流 dport 49999 → 端口不一致告警。
 func TestFTPConsistency_PASVPortMismatch(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 227, message: \"Entering Passive Mode (10,0,0,21,195,80).\" }\n" +
@@ -104,7 +104,7 @@ func TestFTPConsistency_PORTMismatch(t *testing.T) {
 		"      - ipv4: { src: \"10.0.0.21\", dst: \"10.0.0.10\" }\n" +
 		"      - tcp:  { sport: 20, dport: 49156, client_isn: 900000, server_isn: 950000 }\n" +
 		"      - tcp_session: { open: handshake, close: fin }\n"
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + control +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - ftp_request: { command: PORT, args: \"10,0,0,10,192,5\" }\n" +
@@ -118,7 +118,7 @@ func TestFTPConsistency_PORTMismatch(t *testing.T) {
 
 // TestFTPConsistency_NoDataFlow: 227 协商端口,但场景中无对应数据流 → 告警未找到数据流。
 func TestFTPConsistency_NoDataFlow(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 227, message: \"Entering Passive Mode (10,0,0,21,195,80).\" }\n"
@@ -131,7 +131,7 @@ func TestFTPConsistency_NoDataFlow(t *testing.T) {
 // TestFTPConsistency_Unparseable227: 227 文本格式非标(无六元组)→ 解析失败告警。
 // 畸形用例可能故意写怪格式,但用户选择"解析失败也提示",故仍产出告警。
 func TestFTPConsistency_Unparseable227(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 227, message: \"OK\" }\n"
@@ -143,7 +143,7 @@ func TestFTPConsistency_Unparseable227(t *testing.T) {
 
 // TestFTPConsistency_PayloadText227: 原始 payload 文本首 token "227" 也能被识别。
 func TestFTPConsistency_PayloadText227(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - payload: { payload: \"227 Entering Passive Mode (10,0,0,21,195,80).\\r\\n\" }\n" +
@@ -163,7 +163,7 @@ func TestFTPConsistency_NonFTPFlowIgnored(t *testing.T) {
 		"      - ipv4: { src: \"10.0.0.10\", dst: \"10.0.0.21\" }\n" +
 		"      - tcp:  { sport: 5000, dport: 8080, client_isn: 100, server_isn: 200 }\n" +
 		"      - tcp_session: { open: handshake, close: fin }\n"
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: a\n    stack:\n" + nonCtrlStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - payload: { payload: \"227 whatever (10,0,0,21,195,80)\\r\\n\" }\n"
@@ -175,7 +175,7 @@ func TestFTPConsistency_NonFTPFlowIgnored(t *testing.T) {
 
 // TestFTPConsistency_PASVRoleOK: 227 协商 IP=控制连接服务器侧(dst),角色一致 → 无角色告警。
 func TestFTPConsistency_PASVRoleOK(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 227, message: \"Entering Passive Mode (10,0,0,21,195,80).\" }\n"
@@ -190,7 +190,7 @@ func TestFTPConsistency_PASVRoleOK(t *testing.T) {
 // TestFTPConsistency_PASVRoleMismatch: 227 协商 IP=客户端地址,与服务器角色不符 → 告警。
 func TestFTPConsistency_PASVRoleMismatch(t *testing.T) {
 	// 227 协商 10.0.0.10(控制连接客户端 src),而非服务器 dst 10.0.0.21。
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 227, message: \"Entering Passive Mode (10,0,0,10,195,80).\" }\n"
@@ -203,7 +203,7 @@ func TestFTPConsistency_PASVRoleMismatch(t *testing.T) {
 // TestFTPConsistency_PORTRoleMismatch: PORT 协商 IP=服务器地址,与客户端角色不符 → 告警。
 func TestFTPConsistency_PORTRoleMismatch(t *testing.T) {
 	// PORT 协商 10.0.0.21(控制连接服务器 dst),而非客户端 src 10.0.0.10。
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - ftp_request: { command: PORT, args: \"10,0,0,21,192,5\" }\n"
@@ -215,7 +215,7 @@ func TestFTPConsistency_PORTRoleMismatch(t *testing.T) {
 
 // TestFTPConsistency_PORTRoleOK: PORT 协商 IP=客户端地址(src),角色一致 → 无角色告警。
 func TestFTPConsistency_PORTRoleOK(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - ftp_request: { command: PORT, args: \"10,0,0,10,192,5\" }\n"
@@ -247,7 +247,7 @@ func dataStackV6With(dstIP string, dport int) string {
 // TestFTPConsistency_EPSVMatched: 229(EPSV)协商端口与 data 流 dport 一致;
 // 地址隐式为控制连接对端(服务器 2001:db8::21)= data 流 dst → 无告警。
 func TestFTPConsistency_EPSVMatched(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 229, message: \"Entering Extended Passive Mode (|||50000|).\" }\n" +
@@ -261,7 +261,7 @@ func TestFTPConsistency_EPSVMatched(t *testing.T) {
 
 // TestFTPConsistency_EPSVPortMismatch: 229 协商 50000,data 流 dport 49999 → 端口不一致告警。
 func TestFTPConsistency_EPSVPortMismatch(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 229, message: \"Entering Extended Passive Mode (|||50000|).\" }\n" +
@@ -275,7 +275,7 @@ func TestFTPConsistency_EPSVPortMismatch(t *testing.T) {
 
 // TestFTPConsistency_EPSVNoDataFlow: 229 协商端口,但场景中无对应数据流 → 告警未找到数据流。
 func TestFTPConsistency_EPSVNoDataFlow(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 229, message: \"Entering Extended Passive Mode (|||50000|).\" }\n"
@@ -287,7 +287,7 @@ func TestFTPConsistency_EPSVNoDataFlow(t *testing.T) {
 
 // TestFTPConsistency_EPSVUnparseable: 229 文本非标(无 (|||port|))→ 解析失败告警。
 func TestFTPConsistency_EPSVUnparseable(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 229, message: \"OK\" }\n"
@@ -299,7 +299,7 @@ func TestFTPConsistency_EPSVUnparseable(t *testing.T) {
 
 // TestFTPConsistency_EPSVRoleNoWarn: 229 不含地址,无角色可比对 → 不产出角色告警。
 func TestFTPConsistency_EPSVRoleNoWarn(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 229, message: \"Entering Extended Passive Mode (|||50000|).\" }\n"
@@ -313,7 +313,7 @@ func TestFTPConsistency_EPSVRoleNoWarn(t *testing.T) {
 
 // TestFTPConsistency_EPRTMatched: EPRT 协商(IPv6 地址:端口)与 data 流 dst 一致 → 无告警。
 func TestFTPConsistency_EPRTMatched(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::10|49157|\" }\n" +
@@ -327,7 +327,7 @@ func TestFTPConsistency_EPRTMatched(t *testing.T) {
 
 // TestFTPConsistency_EPRTPortMismatch: EPRT 协商 49157,data 流 dport 49999 → 端口不一致告警。
 func TestFTPConsistency_EPRTPortMismatch(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::10|49157|\" }\n" +
@@ -342,7 +342,7 @@ func TestFTPConsistency_EPRTPortMismatch(t *testing.T) {
 // TestFTPConsistency_EPRTRoleMismatch: EPRT 协商 IP=服务器地址,与客户端角色不符 → 角色告警。
 func TestFTPConsistency_EPRTRoleMismatch(t *testing.T) {
 	// EPRT 协商 2001:db8::21(控制连接服务器 dst),而非客户端 src 2001:db8::10。
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::21|49157|\" }\n"
@@ -354,7 +354,7 @@ func TestFTPConsistency_EPRTRoleMismatch(t *testing.T) {
 
 // TestFTPConsistency_EPRTRoleOK: EPRT 协商 IP=客户端地址(src),角色一致 → 无角色告警。
 func TestFTPConsistency_EPRTRoleOK(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::10|49157|\" }\n"
@@ -369,7 +369,7 @@ func TestFTPConsistency_EPRTRoleOK(t *testing.T) {
 // TestFTPConsistency_EPRTRoleMismatchIPv4: EPRT netproto=1(IPv4)也能正确解析与角色校验。
 func TestFTPConsistency_EPRTRoleMismatchIPv4(t *testing.T) {
 	// IPv4 控制连接 + EPRT netproto=1,协商服务器地址 → 角色告警。
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - ftp_request: { command: EPRT, args: \"|1|10.0.0.21|49157|\" }\n"
@@ -381,7 +381,7 @@ func TestFTPConsistency_EPRTRoleMismatchIPv4(t *testing.T) {
 
 // TestFTPConsistency_EPRTBadNetproto: EPRT netproto 非 1/2 → 解析失败告警。
 func TestFTPConsistency_EPRTBadNetproto(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - ftp_request: { command: EPRT, args: \"|3|2001:db8::10|49157|\" }\n"
@@ -393,7 +393,7 @@ func TestFTPConsistency_EPRTBadNetproto(t *testing.T) {
 
 // TestFTPConsistency_EPSVPayloadText: 原始 payload 文本首 token "229" 也能被识别。
 func TestFTPConsistency_EPSVPayloadText(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - payload: { payload: \"229 Entering Extended Passive Mode (|||50000|).\\r\\n\" }\n" +
@@ -408,7 +408,7 @@ func TestFTPConsistency_EPSVPayloadText(t *testing.T) {
 // TestFTPConsistency_EPRTPayloadText: 原始 payload 文本首 token "EPRT" 也能被识别。
 // 原始文本含 CRLF 行尾,parseEPRTArgs 须先剥行尾与 "EPRT " 命令前缀再匹配。
 func TestFTPConsistency_EPRTPayloadText(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - payload: { payload: \"EPRT |2|2001:db8::10|49157|\\r\\n\" }\n" +
@@ -424,7 +424,7 @@ func TestFTPConsistency_EPRTPayloadText(t *testing.T) {
 // 与 data 流 dst 简写比对时,归一化后一致 → 无告警。验证协商侧地址规范化逻辑。
 func TestFTPConsistency_EPRTAddrNormalization(t *testing.T) {
 	// EPRT 协商 |2|2001:db8:0:0:0:0:0:10|49157|(完整展开),data 流 dst 用简写 2001:db8::10。
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8:0:0:0:0:0:10|49157|\" }\n" +
@@ -445,7 +445,7 @@ func TestFTPConsistency_EPRTAddrNormalizationFlowSide(t *testing.T) {
 		"      - ipv6: { src: \"2001:db8:0:0:0:0:0:10\", dst: \"2001:db8::21\", hop_limit: 64 }\n" +
 		"      - tcp:  { sport: 49154, dport: 21, client_isn: 1000, server_isn: 5000 }\n" +
 		"      - tcp_session: { open: handshake, close: fin }\n"
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + stack +
 		"    messages:\n      - from: src\n        stack:\n" +
 		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::10|49157|\" }\n"
@@ -461,7 +461,7 @@ func TestFTPConsistency_EPRTAddrNormalizationFlowSide(t *testing.T) {
 // 前面垫一个 payload 层)。多 payload 生产层放开后,协商端点仍须被提取并参与一致性校验,
 // 否则假阴性。验证非首层的 227 与 data 流端口不一致仍告警。
 func TestFTPConsistency_NonFirstLayer(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - payload: { payload: \"multiline preamble\\r\\n\" }\n" +
@@ -478,7 +478,7 @@ func TestFTPConsistency_NonFirstLayer(t *testing.T) {
 // lines 承载正文)。extractFTPNegotiations 合并 message+lines 后再解析,覆盖 lines 遍历分支。
 func TestFTPConsistency_227LinesMultiline(t *testing.T) {
 	// 227 续行:首行 code-text,末行含六元组(RFC 959 续行格式)。
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 227, lines: [\"Entering Passive Mode\", \"(10,0,0,21,195,80).\"] }\n" +
@@ -493,7 +493,7 @@ func TestFTPConsistency_227LinesMultiline(t *testing.T) {
 // TestFTPConsistency_229LinesMultiline: 229(EPSV)的 (|||port|) 在多行续行 lines 里,
 // 覆盖 229 的 lines 遍历分支。地址隐式为控制连接对端,data 流 dst 一致 → 无告警。
 func TestFTPConsistency_229LinesMultiline(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStackV6 +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 229, lines: [\"Entering Extended Passive Mode\", \"(|||50000|).\"] }\n" +
@@ -511,7 +511,7 @@ func TestFTPConsistency_229LinesMultiline(t *testing.T) {
 func TestFTPConsistency_NonFirstLayerPayloadHex(t *testing.T) {
 	// "227 Entering Passive Mode (10,0,0,21,195,80).\r\n" 的 hex。
 	const hex227 = "0x32323720456e746572696e672050617373697665204d6f6465202831302c302c302c32312c3139352c3830292e0d0a"
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ftpConsistencyStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - payload: { payload: \"preamble\\r\\n\" }\n" +
@@ -532,7 +532,7 @@ func TestFTPConsistency_EPSVAddrNormalizationFlowSide(t *testing.T) {
 		"      - ipv6: { src: \"2001:db8::10\", dst: \"2001:db8:0:0:0:0:0:21\", hop_limit: 64 }\n" +
 		"      - tcp:  { sport: 49154, dport: 21, client_isn: 1000, server_isn: 5000 }\n" +
 		"      - tcp_session: { open: handshake, close: fin }\n"
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: control\n    stack:\n" + ctrlStack +
 		"    messages:\n      - from: dst\n        stack:\n" +
 		"          - ftp_response: { code: 229, message: \"Entering Extended Passive Mode (|||50000|).\" }\n" +

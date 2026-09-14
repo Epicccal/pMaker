@@ -3,7 +3,6 @@
 # 示例场景:flow 版 VXLAN,outer UDP checksum 传 0(RFC 7348 §5 常见形态,outer IPv4)。
 # 模板保留后 flow.stack 上的 checksum 覆盖原样透传到每个展开包(0x0000 恒定值天然正确)。
 link_type: ethernet
-seed: 42
 flows:
   - name: vx-zero-csum
     stack:

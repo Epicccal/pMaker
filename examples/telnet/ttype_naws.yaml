@@ -8,7 +8,6 @@
 #      80=0x0050、24=0x0018,大端 4 字节(RFC 1073)。args_hex 原始字节不转义。
 #      输出 IAC SB 31 00 50 00 18 IAC SE
 link_type: ethernet
-seed: 42
 packets:
   - name: telnet-ttype-is
     stack:

@@ -10,7 +10,6 @@
 #
 # 流量验证关注点:协议解析器对畸形命令/状态的容忍/拒绝边界、CRLF 注入检测、私有命令处理。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 packets:

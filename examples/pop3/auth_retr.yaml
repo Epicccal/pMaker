@@ -10,7 +10,6 @@
 #   - pop3_response 多行 eml(RETR 返回 RFC 5322 正文,复用 eml_data 子结构,自动 dot-stuff + 终止符);
 #   - pop3_request/pop3_response 作为 flow message 的 payload 生产层,序列化为 TCP payload 字节。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

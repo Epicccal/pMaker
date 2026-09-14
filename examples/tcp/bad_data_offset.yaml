@@ -4,7 +4,6 @@
 # ① 不写 header_length → 自动计算(无 option=5,有 MSS option=6);
 # ② 写 header_length: 15 → 关闭自动计算,值原样上 wire(构造超大偏移畸形包)。
 link_type: ethernet
-seed: 42
 packets:
   # ① 规范包:header_length 自动计算(带 MSS option → 6)。
   - stack:

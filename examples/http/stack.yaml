@@ -3,7 +3,6 @@
 # 单个 HTTP/1.1 GET 请求包(stack 模型,当前最小链路即可出包)。
 # 完整 HTTP 会话示例见 http/get.yaml 的 flows 场景。
 link_type: ethernet
-seed: 42
 packets:
   - name: http-get
     stack:

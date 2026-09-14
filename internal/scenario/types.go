@@ -13,7 +13,6 @@ import (
 // Scenario 是一个场景文件的顶层结构。
 type Scenario struct {
 	LinkType string     `yaml:"link_type"`
-	Seed     int64      `yaml:"seed"`
 	BaseTime *AbsTime   `yaml:"base_time"` // 全局基准时刻(绝对 ISO8601);缺省=确定性 2020 基准(见 internal/plan)
 	Packets  []Packet   `yaml:"packets"`
 	Flows    []FlowSpec `yaml:"flows"`

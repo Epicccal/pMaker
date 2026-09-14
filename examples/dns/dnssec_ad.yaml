@@ -4,7 +4,6 @@
 # 模拟校验型解析器返回的已认证应答(RFC 4035 §2)。
 # AA+AD 同时置位表示"权威服务器且数据已通过 DNSSEC 验证"。
 link_type: ethernet
-seed: 42
 packets:
   - name: dns-response-ad
     stack:

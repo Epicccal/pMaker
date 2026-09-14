@@ -29,7 +29,6 @@
 # 流量验证关注点:IPv6 承载的明文 FTP、EPRT 扩展协商(netproto=2、竖线分隔的 IPv6 地址:端口)、
 # 数据连接里上传的二进制内容、150/226 响应码序列。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

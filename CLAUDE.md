@@ -314,6 +314,10 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 
 **未实现 / 简化**:
 
+- **随机化与 `seed` 字段**:当前无任何随机源(零 `math/rand`);确定性靠「压根没有随机」实现。
+  `seed` 字段已移除(曾为随机端口/IP ID/payload 填充预留占位,但功能一直未实现)。
+  将来引入随机化时须新增 `seed` 字段并接 `rand.New(rand.NewSource(seed))`,禁用全局 `rand`,
+  并补 golden 基准——届时再加字段,不要提前占位。
 - flow 的 overlap / 重传 / IP 分片未做(乱序与段间 RTT 已由 `message.offset_time` / `segment.interval` 覆盖)。
 - `checksum` 与 `length` 均为两态覆盖(nil=自动计算/修正,非 nil=原样落值,关闭自动计算/修正),
   在 standalone packet 与 flow 整栈模板中均可用。flow 展开时覆盖值逐包保持相同;length 因消息长度
@@ -534,7 +538,7 @@ segment: { mss: 8, interval: "+10ms" }
 
 ### 约束
 
-- **确定性**:时间戳由 `base_time` + 显式偏移(或默认 `base + 全局序号*1ms`)派生,seed 控制乱序/抖动,不用 `time.Now()`(保持 golden 可比对)。
+- **确定性**:时间戳由 `base_time` + 显式偏移(或默认 `base + 全局序号*1ms`)派生,不用 `time.Now()`(保持 golden 可比对)。
 - **封装组合**:flow.stack 支持单段 `eth + vlan* + ipv4/ipv6 + tcp + tcp_session`,也支持一层
   `outer eth + vlan* + ipv4/ipv6 + udp + vxlan + inner eth + vlan* + ipv4/ipv6 + tcp + tcp_session`。
   反向包同时反转内外层 eth/IP 端点;VNI 与 outer UDP 端口保持声明值。多层 VXLAN 与 GRE 内嵌
@@ -552,9 +556,9 @@ segment: { mss: 8, interval: "+10ms" }
 2. **TCP/UDP checksum 依赖 IP 伪首部。** 序列化前必须
    `transportLayer.SetNetworkLayerForChecksum(ipLayer)`,否则 checksum 恒错。除非该用例**故意**要错误 checksum。
 
-3. **输出必须确定性可复现。** 同一份 scenario + 同一 seed → **逐字节相同**的 pcap。
-   - 不要用 `time.Now()`:时间戳从配置读取,或从 seed 派生。
-   - 所有"随机"(随机端口、IP ID、payload 填充)都走**可配置 seed** 的 `math/rand`,禁用全局 `rand`。
+3. **输出必须确定性可复现。** 同一份 scenario → **逐字节相同**的 pcap。
+   - 不要用 `time.Now()`:时间戳从配置读取。
+   - 当前无随机源;将来引入随机化时须走可配置 seed 的 `math/rand`,禁用全局 `rand`。
    - 保证 map 遍历等顺序稳定。
    - 这是 golden-file 测试和"测试用例可归档复现"的前提。
 
@@ -632,7 +636,6 @@ golangci-lint run # 若已安装
 ```yaml
 # examples/tunnel/qinq_gre.yaml
 link_type: ethernet
-seed: 42
 packets:
   # ① QinQ:双层 VLAN 承载普通 TCP
   - stack:

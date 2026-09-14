@@ -5,7 +5,6 @@
 # 自然构造:工具按 chunked 成帧 body,同时原样保留头里的 Content-Length(CLA+TE 并存,
 # 触发 CL+TE 冲突告警,但不阻断出包 —— 走私用例照常产出字节)。
 link_type: ethernet
-seed: 42
 
 flows:
   - name: http-smuggle-cl-te

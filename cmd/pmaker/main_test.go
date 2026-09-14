@@ -19,7 +19,6 @@ func TestCmdValidateInvalidYAML(t *testing.T) {
 	// tcp 缺 sport/dport,Validate 应报错。
 	path := filepath.Join(t.TempDir(), "bad.yaml")
 	if err := os.WriteFile(path, []byte(`link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth: { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
@@ -95,7 +94,6 @@ func TestCmdGenMissingFlags(t *testing.T) {
 func TestCmdGenInvalidScenario(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bad.yaml")
 	if err := os.WriteFile(path, []byte(`link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth: { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }

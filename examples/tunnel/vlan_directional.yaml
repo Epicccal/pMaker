@@ -14,7 +14,6 @@
 # "后接 VLAN"却没有标签(解析断链)。故这里不写 eth.ethertype,交由 builder 逐包按
 # 实际标签链自动推导(上行 0x8100、下行摘光后 0x0800)。
 link_type: ethernet
-seed: 42
 
 flows:
   # ① 上下行不同 VID:同一条 TCP 会话,上行打 300、下行打 400。

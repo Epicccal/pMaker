@@ -22,7 +22,6 @@
 #
 # 注意:data.GREETING 与 control 前 4 包同 base,声明序 control 在前;RETR 的 data 落在 +4ms。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

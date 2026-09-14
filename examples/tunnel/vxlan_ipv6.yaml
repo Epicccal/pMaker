@@ -3,7 +3,6 @@
 # 示例场景:VXLAN 双栈(外层 IPv6 + UDP 4789 + VNI 200,内层 IPv6 + TCP SYN)。
 # 验证 outer/inner 网络层串接与 checksum 就近绑定:内层 TCP 绑定内层 IPv6 伪首部。
 link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }

@@ -25,7 +25,6 @@ func writeScenario(t *testing.T, name, body string) string {
 // 覆盖 scenario.go 的 Load(KnownFields)与 validateLayer 路径。
 func TestLoadRejectsUnknownSegmentFields(t *testing.T) {
 	path := writeScenario(t, "seg.yaml", `link_type: ethernet
-seed: 42
 flows:
   - name: f
     stack:
@@ -55,7 +54,6 @@ flows:
 // 并带字段名。覆盖 decodeKnownFields 对 layer 子树的校验。
 func TestLoadRejectsTypoLayerField(t *testing.T) {
 	path := writeScenario(t, "typo.yaml", `link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth:  { scr: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
@@ -75,7 +73,6 @@ packets:
 // (如 gre: { foo: 1 })。
 func TestLoadRejectsUnknownGREField(t *testing.T) {
 	path := writeScenario(t, "gre.yaml", `link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
@@ -98,7 +95,6 @@ packets:
 // 覆盖 scenario.go 的 Load + Validate 全路径。
 func TestLoadAcceptsValidScenario(t *testing.T) {
 	path := writeScenario(t, "ok.yaml", `link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
@@ -184,7 +180,7 @@ const flowStackYAML = `      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:
 // TestValidateRejectsDuplicateMessageID 验证同一 flow 内 message_id 重复被 Validate 拒,
 // 并带字段名 + id 值。
 func TestValidateRejectsDuplicateMessageID(t *testing.T) {
-	path := writeScenario(t, "dupmsgid.yaml", "link_type: ethernet\nseed: 42\nflows:\n  - name: f\n    stack:\n"+flowStackYAML+`    messages:
+	path := writeScenario(t, "dupmsgid.yaml", "link_type: ethernet\nflows:\n  - name: f\n    stack:\n"+flowStackYAML+`    messages:
       - from: src
         message_id: dup
         stack:
@@ -211,7 +207,7 @@ func TestValidateRejectsDuplicateMessageID(t *testing.T) {
 
 // TestValidateAcceptsMessageID 验证 message_id 可选、不设与唯一设置都通过 Validate。
 func TestValidateAcceptsMessageID(t *testing.T) {
-	loadValid(t, "okmsgid.yaml", "link_type: ethernet\nseed: 42\nflows:\n  - name: f\n    stack:\n"+flowStackYAML+`    messages:
+	loadValid(t, "okmsgid.yaml", "link_type: ethernet\nflows:\n  - name: f\n    stack:\n"+flowStackYAML+`    messages:
       - from: src
         message_id: first
         stack:
@@ -228,7 +224,7 @@ func TestValidateAcceptsMessageID(t *testing.T) {
 
 // startAfterScenario 用模板 + 给定的两条 flow YAML 段拼一个场景,供 start_after 校验测试。
 func startAfterScenario(flowsYAML string) string {
-	return "link_type: ethernet\nseed: 42\nflows:\n" + flowsYAML
+	return "link_type: ethernet\nflows:\n" + flowsYAML
 }
 
 // twoFlowYAML 生成两条 flow:第一条(name=control)的 dst 消息带 message_id: pasv;
@@ -307,7 +303,7 @@ func TestStartAfterRejectsUnknownMessage(t *testing.T) {
 
 func TestStartAfterRejectsSelfReference(t *testing.T) {
 	// flow a 既被自引,又含 message_id pasv(故引用存在),但构成自环。
-	body := "link_type: ethernet\nseed: 42\nflows:\n  - name: a\n    start_after: \"a.pasv\"\n    stack:\n" + flowStackYAML + `    messages:
+	body := "link_type: ethernet\nflows:\n  - name: a\n    start_after: \"a.pasv\"\n    stack:\n" + flowStackYAML + `    messages:
       - from: dst
         message_id: pasv
         stack:
@@ -336,7 +332,7 @@ func TestStartAfterRejectsCycle(t *testing.T) {
         stack:
           - payload: { payload: "y" }
 `
-	err := loadValidateErr(t, "cycle.yaml", "link_type: ethernet\nseed: 42\nflows:\n"+flowA+flowB)
+	err := loadValidateErr(t, "cycle.yaml", "link_type: ethernet\nflows:\n"+flowA+flowB)
 	if err == nil {
 		t.Fatal("期望 Validate 拒绝 start_after 2-环,实际通过")
 	}
@@ -351,7 +347,7 @@ func TestValidateRejectsDuplicateFlowName(t *testing.T) {
         stack:
           - payload: { payload: "a" }
 `
-	err := loadValidateErr(t, "dupname.yaml", "link_type: ethernet\nseed: 42\nflows:\n"+flowA+flowA)
+	err := loadValidateErr(t, "dupname.yaml", "link_type: ethernet\nflows:\n"+flowA+flowA)
 	if err == nil {
 		t.Fatal("期望 Validate 拒绝重复 flow 名,实际通过")
 	}
@@ -364,7 +360,7 @@ func TestValidateRejectsDuplicateFlowName(t *testing.T) {
 
 // TestStartAfterMessageLevel 校验 message 级 start_after:合法引用另一 flow 的 message_id 通过。
 func TestStartAfterMessageLevel(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: a\n    stack:\n" + flowStackYAML + `    messages:
       - from: src
         message_id: trig
@@ -387,7 +383,7 @@ func TestStartAfterMessageLevel(t *testing.T) {
 
 // TestStartAfterMessageLevelFlowRef:裸 flow 名引用(整流结束)应通过。
 func TestStartAfterMessageLevelFlowRef(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: a\n    stack:\n" + flowStackYAML + `    messages:
       - from: src
         stack:
@@ -406,7 +402,7 @@ func TestStartAfterMessageLevelFlowRef(t *testing.T) {
 
 // TestStartAfterMessageLevelSameFlowRejected:message 级 start_after 同流自引应被拒。
 func TestStartAfterMessageLevelSameFlowRejected(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n  - name: a\n    stack:\n" + flowStackYAML + `    messages:
+	body := "link_type: ethernet\nflows:\n  - name: a\n    stack:\n" + flowStackYAML + `    messages:
       - from: src
         message_id: trig
         stack:
@@ -427,7 +423,7 @@ func TestStartAfterMessageLevelSameFlowRejected(t *testing.T) {
 
 // TestStartAfterMessageLevelUnknownFlow:message 级引用未知 flow 应被拒。
 func TestStartAfterMessageLevelUnknownFlow(t *testing.T) {
-	body := "link_type: ethernet\nseed: 42\nflows:\n" +
+	body := "link_type: ethernet\nflows:\n" +
 		"  - name: a\n    stack:\n" + flowStackYAML + `    messages:
       - from: src
         start_after: "ghost.pasv"
@@ -471,7 +467,7 @@ func TestStartAfterAcceptsFTPStyleInterleave(t *testing.T) {
         stack:
           - payload: { payload: "file-bytes\r\n" }
 `
-	err := loadValidateErr(t, "interleave.yaml", "link_type: ethernet\nseed: 42\nflows:\n"+control+data)
+	err := loadValidateErr(t, "interleave.yaml", "link_type: ethernet\nflows:\n"+control+data)
 	if err != nil {
 		t.Fatalf("FTP 式合法交错应通过 Validate: %v", err)
 	}
@@ -569,7 +565,7 @@ func TestStartAfterMessageLevelCycleRejected(t *testing.T) {
         stack:
           - payload: { payload: "b\r\n" }
 `
-	err := loadValidateErr(t, "msgcycle.yaml", "link_type: ethernet\nseed: 42\nflows:\n"+flowA+flowB)
+	err := loadValidateErr(t, "msgcycle.yaml", "link_type: ethernet\nflows:\n"+flowA+flowB)
 	if err == nil {
 		t.Fatal("期望 Validate 拒绝跨流消息级 2-环,实际通过")
 	}

@@ -4,7 +4,6 @@
 # ① 不写 payload_length → 自动计算(载荷字节数,不含 40B ipv6 头);
 # ② 写 payload_length: 9999 → 关闭该层自动长度修正,值原样上 wire(构造撒谎载荷长度流量)。
 link_type: ethernet
-seed: 42
 packets:
   # ① 规范包:payload_length 自动计算(8 udp 头 + 5 payload = 13,不含 40B ipv6 头)。
   - stack:

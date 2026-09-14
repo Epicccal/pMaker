@@ -6,7 +6,6 @@
 # zstd(Zstandard,RFC 8478)仅限 content_encoding(表示层),不能用于 transfer_encoding
 # (与 br/RFC 7932 同列,二者都是仅 CE 的现代压缩编码)。
 link_type: ethernet
-seed: 42
 
 flows:
   - name: http-zstd

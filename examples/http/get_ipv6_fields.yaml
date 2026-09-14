@@ -5,7 +5,6 @@
 # 修复前:展开器按层类型枚举搬运只取 src/dst/hop_limit,TC/flow_label/next_header
 # 全部静默丢失(wire 上 TC=0、flow_label=0、next_header=0x06)。
 link_type: ethernet
-seed: 42
 flows:
   - name: get-ipv6-fields
     stack:

@@ -4,7 +4,6 @@
 # ① 不写 total_length → 自动计算(头 8 + payload 字节数);
 # ② 写 total_length: 1234 → 关闭自动计算,值原样上 wire(构造撒谎长度流量)。
 link_type: ethernet
-seed: 42
 packets:
   # ① 规范包:total_length 自动计算(8 + 5 = 13)。
   - stack:

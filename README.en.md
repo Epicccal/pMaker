@@ -39,7 +39,7 @@ and regression-friendly.
 | **Arbitrary layer nesting** | QinQ, GRE tunnels, recursive encapsulation — no fixed L2/L3/L4 slots |
 | **Stateful TCP flows** | Auto handshake, seq/ack derivation, MSS segmentation, FIN/RST teardown |
 | **Malformed & evasion** | Per-field `checksum`/`length` overrides, `payload_hex` raw injection, broken next-proto chains |
-| **Deterministic output** | Same scenario + seed → byte-identical pcap |
+| **Deterministic output** | Same scenario → byte-identical pcap |
 | **Pure Go** | Static cross-platform binary via `pcapgo` |
 | **MCP server** | Expose generate/validate as Model Context Protocol tools for LLM agents |
 
@@ -140,7 +140,7 @@ client                                              server
 
 - Timing is optional: `base_time` (ISO8601 / UTC absolute anchor) + non-negative
   `offset_time` at each level. Unspecified → 1 ms per packet in order.
-- Same scenario + same seed → byte-identical pcap.
+- Same scenario → byte-identical pcap.
 
 Full field definitions live in [`internal/scenario`](internal/scenario) types and
 [`examples/`](examples).

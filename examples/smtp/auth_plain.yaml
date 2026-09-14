@@ -8,7 +8,6 @@
 #
 # 流量验证关注点:AUTH 机制(PLAIN)、base64 凭证、235 认证成功响应、认证后再 MAIL/RCPT。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

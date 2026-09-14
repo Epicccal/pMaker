@@ -4,7 +4,6 @@
 # 网络层使用 IPv6。补上 IPv6 flow 规范闭环(与 get.yaml 对称的 v6 版)。
 # flow.stack 里的 src 表示 TCP SYN 发起方,dst 表示 SYN 接收方。
 link_type: ethernet
-seed: 42
 
 flows:
   - name: http-get-200-v6

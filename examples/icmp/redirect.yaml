@@ -2,7 +2,6 @@
 #
 # ICMPv4 Redirect(Type 5)携带 Gateway IPv4(bytes 4-7,RFC 792)。
 link_type: ethernet
-seed: 42
 packets:
   - name: udp-probe-redirect
     stack:

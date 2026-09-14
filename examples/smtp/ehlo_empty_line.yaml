@@ -9,7 +9,6 @@
 #   250-SIZE 10485760\r\n
 #   250 PIPELINING\r\n
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

@@ -30,7 +30,6 @@
 # 时序(默认步长 1ms,open=handshake/close=fin):data 在 control.epsv(150)完成后握手,
 # 226 在 data 挥手后才发,150 < data < 226 自动成立(详见 start_after 机制,无需手算绝对时刻)。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

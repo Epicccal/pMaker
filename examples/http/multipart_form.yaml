@@ -12,7 +12,6 @@
 #   - boundary 一致性(Content-Type 头 boundary= 与 multipart.boundary 一致,无告警);
 #   - Content-Length 由 auto_content_length: true 取 multipart 实际字节长度。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

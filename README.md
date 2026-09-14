@@ -38,7 +38,7 @@
 | **任意层栈嵌套** | QinQ、GRE 隧道、递归封装——无固定 L2/L3/L4 槽位 |
 | **有状态 TCP 流** | 自动握手、seq/ack 推导、MSS 分段、FIN/RST 挥手 |
 | **畸形与逃逸** | 逐层 `checksum`/`length` 覆盖、`payload_hex` 原始字节注入、断链 next-proto |
-| **确定性输出** | 同一 scenario + seed → 逐字节相同的 pcap  |
+| **确定性输出** | 同一 scenario → 逐字节相同的 pcap  |
 | **纯 Go 实现** | 通过 `pcapgo` 生成静态跨平台二进制 |
 | **MCP server** | 将生成/校验暴露为 Model Context Protocol 工具，供 LLM agent 调用 |
 
@@ -142,7 +142,7 @@ flow 内的 `vlan` 还可按方向取值：`src_vid` 用于上行（src→dst）
 
 - 时序可选：`base_time`（ISO8601 / UTC 绝对锚）+ 各级非负 `offset_time`。
 - 未指定时序则每包按序 1ms 递增。
-- 同一 scenario + 同一 seed → 逐字节相同的 pcap。
+- 同一 scenario → 逐字节相同的 pcap。
 
 完整字段定义见 [`internal/scenario`](internal/scenario) 类型与 [`examples/`](examples)。
 

@@ -5,7 +5,6 @@
 # 头里写占位 Content-Length: 0,开启 auto 后被原位覆盖为压缩后实际长度。
 # br(Brotli,RFC 7932)仅限 content_encoding(表示层),不能用于 transfer_encoding。
 link_type: ethernet
-seed: 42
 
 flows:
   - name: http-br

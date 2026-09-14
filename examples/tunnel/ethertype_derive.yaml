@@ -8,7 +8,6 @@
 # 推导表之外的结构化层(如 eth → gre)构建时报错;故意断链走显式覆盖
 # (ethertype / type / protocol / next_header),见 qinq_gre.yaml 用例 ③。
 link_type: ethernet
-seed: 42
 packets:
   # ① eth → vlan → ipv4:0x8100 → 0x0800 全自动
   - stack:

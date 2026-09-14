@@ -4,7 +4,6 @@
 # ① 不写 checksum → 自动计算(伪首部绑就近 IPv4);
 # ② 写 checksum: 0xdead → 关闭自动计算,值原样上 wire,构造错误校验和流量。
 link_type: ethernet
-seed: 42
 packets:
   # ① 规范包:checksum 自动计算。
   - stack:

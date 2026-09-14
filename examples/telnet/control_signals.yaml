@@ -5,7 +5,6 @@
 #   每个 telnet 层序列化为 2 字节(IAC + cmd),拼接成 20 字节连续控制流。
 #   验证二字节控制命令编码(无 option)。注意 DM 的 urgent 指针( SYNCH)不在本层处理。
 link_type: ethernet
-seed: 42
 packets:
   - name: telnet-control
     stack:

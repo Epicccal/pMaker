@@ -2,7 +2,6 @@
 #
 # ICMPv4 echo request/reply(ping) 示例。
 link_type: ethernet
-seed: 42
 packets:
   - name: icmp-echo-request
     stack:

@@ -4,7 +4,6 @@
 # 1) GET /robots.txt -> 404 Not Found
 # 2) GET /../etc/passwd -> 200 OK + passwd-like 内容
 link_type: ethernet
-seed: 42
 
 flows:
   - name: http-keepalive-lfi

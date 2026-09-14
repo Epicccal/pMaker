@@ -3,7 +3,6 @@
 # 示例场景:VXLAN 内层带 VLAN 标签(inner Ethernet + Dot1Q + IPv4 + UDP),
 # 验证 inner EtherType / VLAN 串接与内层 UDP checksum 绑定。
 link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }

@@ -81,7 +81,6 @@ func parseText[T any](t *testing.T, res *mcp.CallToolResult) T {
 
 // validScenarioYAML 是一个合法的最小 HTTP flow 场景,用于成功路径测试。
 const validScenarioYAML = `link_type: ethernet
-seed: 42
 flows:
   - name: http-get
     stack:

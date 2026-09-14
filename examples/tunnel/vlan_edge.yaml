@@ -9,7 +9,6 @@
 #   - pri(PCP)与 dei:TCI 高 4 位落值(非零 PCP、DEI 置位)
 #   - vid: 4096 会在 scenario.Validate 阶段报 vlan.vid 超出 12 位,须走 payload_hex
 link_type: ethernet
-seed: 42
 packets:
   # ① eth.ethertype 显式覆盖:非标 QinQ 外层 TPID 0x9100(设备兼容性用例;
   #    gopacket 回读不会把 0x9100 解为 Dot1Q,wire 字节正确即可)

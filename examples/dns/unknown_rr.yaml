@@ -4,7 +4,6 @@
 # gopacket 无法表达的未知 type 如何处理。type 用数字写法(十进制 99,等价 0x0063)。
 # RDATA 完全由 payload_hex 给定(此处 4 字节),RDLENGTH 自动 = len(RDATA)。
 link_type: ethernet
-seed: 42
 packets:
   - name: dns-unknown-rr
     stack:
