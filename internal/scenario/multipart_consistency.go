@@ -9,14 +9,14 @@ import (
 // (ftp_consistency.go):不强制联动,但配置不自洽时产告警,供用户复核。畸形用例可能故意
 // 构造不一致,故只告警不阻断。
 //
-// 覆盖两类一致性:
+// 覆盖三类一致性:
 //  1. boundary 一致性:父层 Content-Type 头的 boundary= 参数须与 multipart.Boundary(或默认值)
 //     一致;父层有 multipart 但缺 Content-Type 头 → 告警。
 //  2. CTE 一致性:part 设 encoding: base64 但 part 头 Content-Transfer-Encoding 缺失或与之
 //     不符 → 告警。
-//
-// 第三类「boundary 串出现在 part body 内」(RFC 2046 §5.1.1:分界符须独占一行)需扫描**编码后**
-// 实际落盘字节,放在 builder 序列化阶段(见 builder/multipart.go),scenario 层无编码逻辑。
+//  3. boundary 碰撞:part 编码后 body 内出现独占一行的 `--<boundary>` 分界符(RFC 2046 §5.1.1:
+//     分界符须独占一行,解析端会误判切分)→ 告警。碰撞检查走 EncodeMultipartPart(与
+//     builder.serializeMultipart 共享同一编码实现),扫描的就是实际落盘字节。
 
 // CheckMultipartConsistency 扫描所有带 multipart 的 http_request/http_response/eml_data 层,
 // 校验 boundary / CTE 一致性,返回零到多条告警。
@@ -62,6 +62,7 @@ func checkLayerMultipartConsistency(label string, l Layer) []string {
 	var warnings []string
 	warnings = append(warnings, checkBoundaryConsistency(label, l.Type, headers, multipart)...)
 	warnings = append(warnings, checkPartCTEConsistency(label, l.Type, multipart)...)
+	warnings = append(warnings, checkBoundaryCollision(label, l.Type, multipart)...)
 	return warnings
 }
 
@@ -109,6 +110,33 @@ func checkPartCTEConsistency(label, layerType string, m *MultipartBody) []string
 			warnings = append(warnings, fmt.Sprintf(
 				"%s 的 %s 层 multipart.parts[%d] encoding %q 与 Content-Transfer-Encoding 头 %q 不符",
 				label, layerType, i, enc, cte))
+		}
+	}
+	return warnings
+}
+
+// checkBoundaryCollision 扫描每个 part 的编码后字节,若某行(去尾空白/CRLF)独占 "--"+boundary,
+// 产 boundary 碰撞告警(RFC 2046 §5.1.1:分界符须独占一行,解析端会误判切分 multipart)。
+// 非硬错,畸形/故意的边界碰撞用例可继续。@file 注入附件(内容不可预知)时尤其隐蔽。
+// 按行匹配而非朴素子串包含,避免行内偶现子串误报。
+// 编码后字节经 EncodeMultipartPart 取得 —— 与 builder.serializeMultipart 共享同一实现,
+// 按构造保证扫描的就是实际落盘字节。同一 part 只产一条告警(首个命中行足够定位)。
+func checkBoundaryCollision(label, layerType string, m *MultipartBody) []string {
+	delim := "--" + MultipartBoundary(m)
+	var warnings []string
+	for i := range m.Parts {
+		encoded, err := EncodeMultipartPart(&m.Parts[i])
+		if err != nil {
+			// 校验已拦截非法 body_hex/encoding,此处不应到达;跳过避免把硬错降级成告警。
+			continue
+		}
+		for line := range strings.SplitSeq(string(encoded), "\n") {
+			if strings.TrimRight(line, " \t\r\n") == delim {
+				warnings = append(warnings, fmt.Sprintf(
+					"%s 的 %s 层 multipart.parts[%d] 编码后 body 内出现独占一行的 boundary 分界符,解析端可能误判切分;请更换更长的 boundary(默认 boundary 碰撞概率极低)",
+					label, layerType, i))
+				break // 同一 part 只产一条告警(首个命中行足够定位),继续扫后续 part。
+			}
 		}
 	}
 	return warnings
