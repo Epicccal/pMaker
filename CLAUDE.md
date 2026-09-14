@@ -590,10 +590,11 @@ go test -cover ./...
 # 重新生成 golden 基准(约定用 -update)
 go test ./internal/golden -run TestExamplesGolden -update
 
-# 质量门禁(提交前必跑)
-gofmt -l .        # 应无输出
-go vet ./...
-golangci-lint run # 若已安装
+# 质量门禁(提交前必跑,一条命令 —— 不要手写命令序列,会与 Makefile 漂移)
+make quality      # gofmt + go vet + golangci-lint + go test -race
+# 注意:未安装 golangci-lint 时 make quality 会**软跳过** lint(仅警告),而 CI 无条件强制 ——
+# 看到「已跳过」就别当本地绿,装上再跑一遍。
+# 需要逐字复现 CI(含覆盖率数字与构建冒烟)时用 make ci(CI 红了本地绿时排查用)。
 ```
 
 ## 编码规范
