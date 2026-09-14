@@ -26,21 +26,21 @@ import (
 // CONNECT 同 HEAD:响应层无请求方法上下文,无法判定一个 2xx 是否为 CONNECT 响应,故不做处理。
 
 // CheckHTTPConsistency 扫描所有 http_request/http_response 层的 CE/TE 一致性,返回零到多条告警。
-func CheckHTTPConsistency(s *Scenario) []string {
+func CheckHTTPConsistency(s *Scenario) []Diagnostic {
 	if s == nil {
 		return nil
 	}
-	var warnings []string
+	var warnings []Diagnostic
 	for i, p := range s.Packets {
-		for _, l := range p.Stack {
-			warnings = append(warnings, checkLayerHTTPConsistency(fmt.Sprintf("packet[%d]", i), l)...)
+		for j, l := range p.Stack {
+			warnings = append(warnings, checkLayerHTTPConsistency(fmt.Sprintf("packet[%d]", i), packetStackPath(i, j), l)...)
 		}
 	}
 	for i, f := range s.Flows {
 		label := flowLabel(f.Name, i)
-		for _, m := range f.Messages {
-			for _, l := range m.Stack {
-				warnings = append(warnings, checkLayerHTTPConsistency(label, l)...)
+		for k, m := range f.Messages {
+			for j, l := range m.Stack {
+				warnings = append(warnings, checkLayerHTTPConsistency(label, flowMessageStackPath(i, k, j), l)...)
 			}
 		}
 	}
@@ -48,38 +48,38 @@ func CheckHTTPConsistency(s *Scenario) []string {
 }
 
 // checkLayerHTTPConsistency 检查单个 HTTP 层(若该层是 http_request/http_response)的
-// CE/TE 一致性。label 是告警定位。
-func checkLayerHTTPConsistency(label string, l Layer) []string {
+// CE/TE 一致性。label 是人读定位,path 是机器可读字段路径。
+func checkLayerHTTPConsistency(label, path string, l Layer) []Diagnostic {
 	switch f := l.Fields.(type) {
 	case *HTTPReqFields:
-		return checkCodingsConsistency(label, l.Type, f.Headers, f.ContentEncoding, f.TransferEncoding)
+		return checkCodingsConsistency(label, path, l.Type, f.Headers, f.ContentEncoding, f.TransferEncoding)
 	case *HTTPRespFields:
-		w := checkCodingsConsistency(label, l.Type, f.Headers, f.ContentEncoding, f.TransferEncoding)
-		return append(w, CheckHTTPRespConsistency(label, l.Type, f)...)
+		w := checkCodingsConsistency(label, path, l.Type, f.Headers, f.ContentEncoding, f.TransferEncoding)
+		return append(w, CheckHTTPRespConsistency(label, path, l.Type, f)...)
 	default:
 		return nil
 	}
 }
 
 // checkCodingsConsistency 实现 http_request/http_response 共用的 CE/TE 一致性告警。
-func checkCodingsConsistency(label, layerType string, headers HeaderMap, ce, te CodingList) []string {
+func checkCodingsConsistency(label, path, layerType string, headers HeaderMap, ce, te CodingList) []Diagnostic {
 	teEff := te.Effective()
 	ceEff := ce.Effective()
-	var warnings []string
+	var warnings []Diagnostic
 
 	// 1. TE 与头一致性。
 	if len(teEff) > 0 {
-		warnings = append(warnings, checkCodingHeaderConsistency(label, layerType, "Transfer-Encoding", teEff, headers)...)
+		warnings = append(warnings, checkCodingHeaderConsistency(label, path, layerType, "Transfer-Encoding", teEff, headers)...)
 		// 3. CL + TE 冲突(走私特征)。auto_content_length=true + TE 非空已在校验硬错拦截,
 		//    此处只判显式手写 CL 与 TE 并存(auto=false 走私路径)。
 		if headers.Has("Content-Length") {
-			warnings = append(warnings, fmt.Sprintf(
+			warnings = append(warnings, warnf(CodeHTTPCLTEConflict, path,
 				"%s 的 %s 层同时含 Content-Length 头与 transfer_encoding(RFC 9112 §6.1:TE 存在时不得发 CL;CL+TE 并存是请求走私特征,如系故意请忽略)",
 				label, layerType))
 		}
 		// 4. chunked 非末位。
 		if idx := slices.Index(teEff, CodingChunked); idx >= 0 && idx != len(teEff)-1 {
-			warnings = append(warnings, fmt.Sprintf(
+			warnings = append(warnings, warnf(CodeHTTPChunkedNotLast, path,
 				"%s 的 %s 层 transfer_encoding 中 chunked 不在末位(RFC 9112:chunked 须末位;builder 仍按列表顺序 fold,适用于 evasion 测试)",
 				label, layerType))
 		}
@@ -91,7 +91,7 @@ func checkCodingsConsistency(label, layerType string, headers HeaderMap, ce, te 
 			}
 		}
 		if chunkedCount >= 2 {
-			warnings = append(warnings, fmt.Sprintf(
+			warnings = append(warnings, warnf(CodeHTTPChunkedDuplicate, path,
 				"%s 的 %s 层 transfer_encoding 含 %d 个 chunked(异常编码栈,IDS 绕过特征;builder 照常按序 fold 产出)",
 				label, layerType, chunkedCount))
 		}
@@ -99,7 +99,7 @@ func checkCodingsConsistency(label, layerType string, headers HeaderMap, ce, te 
 
 	// 2. CE 与头一致性。
 	if len(ceEff) > 0 {
-		warnings = append(warnings, checkCodingHeaderConsistency(label, layerType, "Content-Encoding", ceEff, headers)...)
+		warnings = append(warnings, checkCodingHeaderConsistency(label, path, layerType, "Content-Encoding", ceEff, headers)...)
 	}
 
 	return warnings
@@ -108,10 +108,10 @@ func checkCodingsConsistency(label, layerType string, headers HeaderMap, ce, te 
 // checkCodingHeaderConsistency 校验 coding 列表与对应头文本是否一致(宽松包含)。
 // headerName 是头名(如 "Transfer-Encoding");list 是归一后大写形列表。
 // 头侧按逗号切分、逐 token TrimSpace + ToUpper 后与列表大写形逐元素比。
-func checkCodingHeaderConsistency(label, layerType, headerName string, list CodingList, headers HeaderMap) []string {
+func checkCodingHeaderConsistency(label, path, layerType, headerName string, list CodingList, headers HeaderMap) []Diagnostic {
 	val, has := headers.Get(headerName)
 	if !has {
-		return []string{fmt.Sprintf(
+		return []Diagnostic{warnf(CodeHTTPCodingHeaderMissing, path,
 			"%s 的 %s 层声明了 %s(%v)但缺 %s 头(头与外置编码不一致;如系故意 evasion 请忽略)",
 			label, layerType, headerName, list, headerName)}
 	}
@@ -119,7 +119,7 @@ func checkCodingHeaderConsistency(label, layerType, headerName string, list Codi
 	// 宽松包含:列表元素须在头 token 中出现,反之亦然(双向包含避免漏告警/误告警)。
 	for _, c := range list {
 		if !slices.Contains(headerTokens, c) {
-			return []string{fmt.Sprintf(
+			return []Diagnostic{warnf(CodeHTTPCodingHeaderMismatch, path,
 				"%s 的 %s 层 %s 列表 %v 与 %s 头 %q 不符(头与外置编码不一致;如系故意 evasion 请忽略)",
 				label, layerType, headerName, list, headerName, val)}
 		}
@@ -129,7 +129,7 @@ func checkCodingHeaderConsistency(label, layerType, headerName string, list Codi
 			continue
 		}
 		if !slices.Contains(list, t) {
-			return []string{fmt.Sprintf(
+			return []Diagnostic{warnf(CodeHTTPCodingHeaderMismatch, path,
 				"%s 的 %s 层 %s 列表 %v 与 %s 头 %q 不符(头与外置编码不一致;如系故意 evasion 请忽略)",
 				label, layerType, headerName, list, headerName, val)}
 		}
@@ -151,7 +151,7 @@ func normalizeHeaderCodings(val string) []string {
 // 仅当 auto=true 且 status 落入特殊范围时触发。1xx/204 仅当 Body/Multipart 非空时触发;
 // 304 无论 body 是否为空均触发。CONNECT 同 HEAD:响应层无请求方法上下文,不做处理。返回零到多条告警。
 // 供 Warnings 汇流与测试直接调用。
-func CheckHTTPRespConsistency(label, layerType string, f *HTTPRespFields) []string {
+func CheckHTTPRespConsistency(label, path, layerType string, f *HTTPRespFields) []Diagnostic {
 	if f == nil || !f.AutoContentLength {
 		return nil
 	}
@@ -160,22 +160,22 @@ func CheckHTTPRespConsistency(label, layerType string, f *HTTPRespFields) []stri
 		status = 200
 	}
 	hasBody := f.Body != "" || f.Multipart != nil
-	var warnings []string
+	var warnings []Diagnostic
 	switch {
 	case status >= 100 && status <= 199:
 		if hasBody {
-			warnings = append(warnings, fmt.Sprintf(
+			warnings = append(warnings, warnf(CodeHTTPStatusBodyForbidden, path,
 				"%s 的 %s 层 status %d(1xx)带 body 且 auto_content_length=true(RFC 9110 §8.6:1xx 禁止 body 与 Content-Length;如系故意请设 auto_content_length: false 手写)",
 				label, layerType, status))
 		}
 	case status == 204:
 		if hasBody {
-			warnings = append(warnings, fmt.Sprintf(
+			warnings = append(warnings, warnf(CodeHTTPStatusBodyForbidden, path,
 				"%s 的 %s 层 status 204(No Content)带 body 且 auto_content_length=true(RFC 9110:204 禁止 body 与 Content-Length;如系故意请设 auto_content_length: false 手写)",
 				label, layerType))
 		}
 	case status == 304:
-		warnings = append(warnings, fmt.Sprintf(
+		warnings = append(warnings, warnf(CodeHTTP304AutoCL, path,
 			"%s 的 %s 层 status 304(Not Modified)且 auto_content_length=true(304 的 CL 语义为对应 200 body 长度,非当前 wire body 长度;auto 只能按当前 body 字节填)",
 			label, layerType))
 	}

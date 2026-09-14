@@ -133,11 +133,11 @@ func flowSegments(stack []Layer) ([][]Layer, error) {
 // CheckFlowOverrideWarning 扫描 flow.stack 的 length/checksum 覆盖(软告警)。
 // 覆盖值每包同值,而展开包载荷逐包变,真值几乎全不符 —— 笔误提醒,恒定值畸形用例可忽略。
 // checksum 只豁免 VXLAN 外层 UDP 在 IPv4 underlay 下写 0(RFC 7348 §5 免校验);其余照告警。
-func CheckFlowOverrideWarning(s *Scenario) []string {
+func CheckFlowOverrideWarning(s *Scenario) []Diagnostic {
 	if s == nil {
 		return nil
 	}
-	var ws []string
+	var ws []Diagnostic
 	for i, f := range s.Flows {
 		outerV4 := flowUnderlayIPv4(f.Stack)
 		for j, l := range f.Stack {
@@ -173,7 +173,7 @@ func CheckFlowOverrideWarning(s *Scenario) []string {
 				}
 			}
 			for _, name := range fields {
-				ws = append(ws, fmt.Sprintf(
+				ws = append(ws, warnf(CodeFlowOverrideStatic, fmt.Sprintf("%s.%s", flowStackPath(i, j), name),
 					"flows[%d](%s).stack[%d].%s: 覆盖值在 flow 中每包同值,而该字段真值逐包变,除个别包外将不符;故意构造可忽略本告警",
 					i, flowLabel(f.Name, i), j, name))
 			}

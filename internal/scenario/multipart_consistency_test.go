@@ -49,9 +49,9 @@ func multipartHTTPResp(ct string, m *scenario.MultipartBody) *scenario.HTTPRespF
 	return &scenario.HTTPRespFields{Status: 200, Headers: headers, Multipart: m}
 }
 
-func warningsContain(ws []string, sub string) bool {
+func warningsContain(ws []scenario.Diagnostic, sub string) bool {
 	for _, w := range ws {
-		if strings.Contains(w, sub) {
+		if strings.Contains(w.Message, sub) {
 			return true
 		}
 	}
@@ -59,86 +59,105 @@ func warningsContain(ws []string, sub string) bool {
 }
 
 // TestMultipartConsistency_HTTPResponseLayer: http_response 层含 multipart 也能被扫到
-// (CheckMultipartConsistency 的 HTTPRespFields 分支),缺 Content-Type 时告警。
+// (覆盖 checkLayerMultipartConsistency 的 *HTTPRespFields case)。
 func TestMultipartConsistency_HTTPResponseLayer(t *testing.T) {
-	s := multiStackScenario("http_response",
-		multipartHTTPResp("", &scenario.MultipartBody{Parts: []scenario.MultipartPart{{Body: "x"}}}))
-	ws := scenario.Warnings(s)
-	if !warningsContain(ws, "缺 Content-Type") {
-		t.Fatalf("http_response 缺 Content-Type 应告警,得到 %v", ws)
+	// 缺 Content-Type → 告警。
+	s := multiStackScenario("http_response", multipartHTTPResp("", &scenario.MultipartBody{
+		Parts: []scenario.MultipartPart{{Body: "x"}},
+	}))
+	if !warningsContain(scenario.Warnings(s), "缺 Content-Type") {
+		t.Fatalf("期望 http_response 缺 Content-Type 告警,得到 %v", scenario.Warnings(s))
 	}
-	// 一致场景不告警。
-	s = multiStackScenario("http_response",
-		multipartHTTPResp("multipart/mixed; boundary=----=_pMaker_0001", &scenario.MultipartBody{Parts: []scenario.MultipartPart{{Body: "x"}}}))
+
+	// boundary 一致 → 无 boundary 相关告警。
+	s = multiStackScenario("http_response", multipartHTTPResp(
+		"multipart/form-data; boundary=----=_pMaker_0001",
+		&scenario.MultipartBody{Parts: []scenario.MultipartPart{{Body: "x"}}},
+	))
 	for _, w := range scenario.Warnings(s) {
-		if strings.Contains(w, "boundary") || strings.Contains(w, "Content-Type") {
+		if strings.Contains(w.Message, "boundary") || strings.Contains(w.Message, "Content-Type") {
 			t.Fatalf("http_response 一致场景不应告警,得到 %v", scenario.Warnings(s))
 		}
 	}
 }
 
 // TestMultipartConsistency_EMLDataLayer: eml_data 层含 multipart 也能被扫到
-// (CheckMultipartConsistency 的 EMLDataFields 分支),缺 Content-Type 时告警。
+// (覆盖 checkLayerMultipartConsistency 的 *EMLDataFields case)。
 func TestMultipartConsistency_EMLDataLayer(t *testing.T) {
-	s := multiStackScenario("eml_data",
-		multipartEML("", &scenario.MultipartBody{Parts: []scenario.MultipartPart{{Body: "x"}}}))
-	ws := scenario.Warnings(s)
-	if !warningsContain(ws, "缺 Content-Type") {
-		t.Fatalf("eml_data 缺 Content-Type 应告警,得到 %v", ws)
+	// boundary 不一致 → 告警。
+	s := multiStackScenario("eml_data", multipartEML(
+		"multipart/mixed; boundary=wrong",
+		&scenario.MultipartBody{Parts: []scenario.MultipartPart{{Body: "x"}}},
+	))
+	if !warningsContain(scenario.Warnings(s), "不一致") {
+		t.Fatalf("期望 eml_data boundary 不一致告警,得到 %v", scenario.Warnings(s))
 	}
-	// 一致场景不告警。
-	s = multiStackScenario("eml_data",
-		multipartEML("multipart/mixed; boundary=----=_pMaker_0001", &scenario.MultipartBody{Parts: []scenario.MultipartPart{{Body: "x"}}}))
+
+	// boundary 一致(默认值)→ 无 boundary 相关告警。
+	s = multiStackScenario("eml_data", multipartEML(
+		"multipart/mixed; boundary=----=_pMaker_0001",
+		&scenario.MultipartBody{Parts: []scenario.MultipartPart{{Body: "x"}}},
+	))
 	for _, w := range scenario.Warnings(s) {
-		if strings.Contains(w, "boundary") || strings.Contains(w, "Content-Type") {
+		if strings.Contains(w.Message, "boundary") || strings.Contains(w.Message, "Content-Type") {
 			t.Fatalf("eml_data 一致场景不应告警,得到 %v", scenario.Warnings(s))
 		}
 	}
 }
 
 // TestMultipartConsistency_QuotedBoundary: Content-Type 头里 boundary 值带双引号
-// (RFC 2046 quoted-string),去引号后与实际一致 → 不告警。
+// (RFC 2046 §5.1.1 允许 quoted-string),解析去引号后与 multipart 实际 boundary 一致 → 无告警。
 func TestMultipartConsistency_QuotedBoundary(t *testing.T) {
-	s := multiStackScenario("eml_data", multipartEML("multipart/mixed; boundary=\"----=_pMaker_0001\"", &scenario.MultipartBody{
-		Parts: []scenario.MultipartPart{{Body: "x"}},
-	}))
+	s := multiStackScenario("http_request", &scenario.HTTPReqFields{
+		Headers: scenario.HeaderMap{
+			{Key: "Content-Type", Value: `multipart/form-data; boundary="my-boundary_123"`},
+		},
+		Multipart: &scenario.MultipartBody{
+			Boundary: "my-boundary_123",
+			Parts:    []scenario.MultipartPart{{Body: "x"}},
+		},
+	})
 	for _, w := range scenario.Warnings(s) {
-		if strings.Contains(w, "boundary") {
+		if strings.Contains(w.Message, "boundary") {
 			t.Fatalf("quoted boundary 去引号后一致不应告警,得到 %v", scenario.Warnings(s))
 		}
 	}
 }
 
 // TestMultipartConsistency_CTWithoutBoundaryParam: Content-Type 头存在但未带 boundary= 参数
-// → 告警(与缺头区分)。
+// (parseBoundaryParam 返回空串)→ 专用告警。
 func TestMultipartConsistency_CTWithoutBoundaryParam(t *testing.T) {
-	s := multiStackScenario("eml_data", multipartEML("multipart/mixed", &scenario.MultipartBody{
-		Parts: []scenario.MultipartPart{{Body: "x"}},
-	}))
+	s := multiStackScenario("http_request", &scenario.HTTPReqFields{
+		Headers: scenario.HeaderMap{
+			{Key: "Content-Type", Value: "multipart/form-data"},
+		},
+		Multipart: &scenario.MultipartBody{Parts: []scenario.MultipartPart{{Body: "x"}}},
+	})
 	if !warningsContain(scenario.Warnings(s), "未带 boundary=") {
-		t.Fatalf("Content-Type 未带 boundary= 参数应告警,得到 %v", scenario.Warnings(s))
+		t.Fatalf("期望 Content-Type 缺 boundary= 参数告警,得到 %v", scenario.Warnings(s))
 	}
 }
 
 // TestMultipartConsistency_FlowMessages: 含 multipart 的层出现在 flow 的 message stack 里
-// 也能被扫到(flowLabel 定位、messages 遍历分支)。
+// 也能被扫到(覆盖 CheckMultipartConsistency 的 flows 遍历分支)。
 func TestMultipartConsistency_FlowMessages(t *testing.T) {
+	// flow message 里 http_response 缺 Content-Type → 告警定位含 flow 标签。
 	s := &scenario.Scenario{
 		LinkType: "ethernet",
 		Flows: []scenario.FlowSpec{{
 			Name: "http-upload",
 			Stack: []scenario.Layer{
 				{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "66:77:88:99:aa:bb"}},
-				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
-				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1, DPort: 80}},
+				{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.80"}},
+				{Type: "tcp", Fields: &scenario.TCPFields{SPort: 49152, DPort: 80, ClientISN: 1000, ServerISN: 5000}},
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{Open: "handshake", Close: "fin"}},
 			},
 			Messages: []scenario.Message{{
-				From: "src",
+				From: "dst",
 				Stack: []scenario.Layer{
-					{Type: "http_request", Fields: &scenario.HTTPReqFields{
-						// 故意不给 Content-Type 头,触发缺头告警。
-						Multipart: &scenario.MultipartBody{Parts: []scenario.MultipartPart{{Body: "x"}}},
-					}},
+					{Type: "http_response", Fields: multipartHTTPResp("", &scenario.MultipartBody{
+						Parts: []scenario.MultipartPart{{Body: "x"}},
+					})},
 				},
 			}},
 		}},
@@ -166,7 +185,7 @@ func TestMultipartConsistency_NilScenario(t *testing.T) {
 
 // TestMultipartConsistency_BoundaryCollision: part 编码后 body 内出现独占一行的
 // `--<boundary>` 分界符 → boundary 碰撞告警(RFC 2046 §5.1.1)。断言告警出现在
-// scenario.Warnings 输出中,锁定告警经 Warnings 回流 CLI/MCP(而非 builder 阶段 slog)。
+// scenario.Warnings 输出中且带稳定 code 与声明级 path,锁定告警经 Warnings 回流 CLI/MCP。
 func TestMultipartConsistency_BoundaryCollision(t *testing.T) {
 	boundary := "----=_pMaker_0001"
 	s := multiStackScenario("http_request", &scenario.HTTPReqFields{
@@ -179,8 +198,22 @@ func TestMultipartConsistency_BoundaryCollision(t *testing.T) {
 			},
 		},
 	})
-	if !warningsContain(scenario.Warnings(s), "boundary 分界符") {
-		t.Fatalf("boundary 碰撞应经 Warnings 产出告警,得到 %v", scenario.Warnings(s))
+	ws := scenario.Warnings(s)
+	found := false
+	for _, w := range ws {
+		if w.Code != scenario.CodeMultipartBoundaryCollision {
+			continue
+		}
+		found = true
+		if w.Path != "packets[0].stack[3].multipart.parts[0]" {
+			t.Errorf("碰撞告警 path 应为声明级 part 路径,得到 %q", w.Path)
+		}
+		if !strings.Contains(w.Message, boundary) {
+			t.Errorf("碰撞告警文案应含 boundary,得到 %q", w.Message)
+		}
+	}
+	if !found {
+		t.Fatalf("boundary 碰撞应经 Warnings 产出 %q 告警,得到 %v", scenario.CodeMultipartBoundaryCollision, ws)
 	}
 
 	// 行内子串(未独占一行)不告警,避免误报。
@@ -195,7 +228,7 @@ func TestMultipartConsistency_BoundaryCollision(t *testing.T) {
 		},
 	})
 	for _, w := range scenario.Warnings(s) {
-		if strings.Contains(w, "boundary 分界符") {
+		if w.Code == scenario.CodeMultipartBoundaryCollision {
 			t.Fatalf("行内子串不应触发碰撞告警,得到 %v", w)
 		}
 	}

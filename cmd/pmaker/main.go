@@ -90,7 +90,7 @@ func cmdGen(args []string) int {
 		return 1
 	}
 	for _, w := range scenario.Warnings(s) {
-		fmt.Fprintln(os.Stderr, "warn:", w)
+		fmt.Fprintf(os.Stderr, "warn: [%s] %s\n", w.Code, w.Message)
 	}
 	// packets 与 flows 汇流成带显式时间戳的 PlannedPacket,按时间排序后再构建。
 	planned, err := plan.Plan(s)
@@ -144,7 +144,7 @@ func cmdValidate(args []string) int {
 		return 1
 	}
 	for _, w := range scenario.Warnings(s) {
-		fmt.Fprintln(os.Stderr, "warn:", w)
+		fmt.Fprintf(os.Stderr, "warn: [%s] %s\n", w.Code, w.Message)
 	}
 	fmt.Printf("OK: %s,%d 个包,%d 条 flow\n", *in, len(s.Packets), len(s.Flows))
 	return 0

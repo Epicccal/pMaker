@@ -251,7 +251,7 @@ func TestFlowLengthOverrideWarning(t *testing.T) {
 			s := plainFlowStack()
 			s[1] = tc.layer
 			ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "f", Stack: s}}})
-			if len(ws) != 1 || !strings.Contains(ws[0], tc.want) {
+			if len(ws) != 1 || !strings.Contains(ws[0].Message, tc.want) {
 				t.Fatalf("期望一条含 %q 的告警,得到 %v", tc.want, ws)
 			}
 		})
@@ -264,8 +264,8 @@ func TestFlowLengthOverrideWarning(t *testing.T) {
 		s[6].Fields.(*scenario.TCPFields).DataOffset = hexPtr(0x5)
 		ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "vx", Stack: s}}})
 		if len(ws) != 2 ||
-			!strings.Contains(ws[0], "stack[2].total_length") ||
-			!strings.Contains(ws[1], "stack[6].header_length") {
+			!strings.Contains(ws[0].Message, "stack[2].total_length") ||
+			!strings.Contains(ws[1].Message, "stack[6].header_length") {
 			t.Fatalf("期望 udp/tcp 各一条告警,得到 %v", ws)
 		}
 	})
@@ -284,7 +284,7 @@ func TestFlowChecksumOverrideWarning(t *testing.T) {
 		s := plainFlowStack()
 		s[2].Fields.(*scenario.TCPFields).Checksum = hexPtr(0x1234)
 		ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "f", Stack: s}}})
-		if len(ws) != 1 || !strings.Contains(ws[0], "stack[2].checksum") {
+		if len(ws) != 1 || !strings.Contains(ws[0].Message, "stack[2].checksum") {
 			t.Fatalf("期望一条含 stack[2].checksum 的告警,得到 %v", ws)
 		}
 	})
@@ -292,7 +292,7 @@ func TestFlowChecksumOverrideWarning(t *testing.T) {
 		s := plainFlowStack()
 		s[1].Fields.(*scenario.IPv4Fields).Checksum = hexPtr(0x1234)
 		ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "f", Stack: s}}})
-		if len(ws) != 1 || !strings.Contains(ws[0], "stack[1].checksum") {
+		if len(ws) != 1 || !strings.Contains(ws[0].Message, "stack[1].checksum") {
 			t.Fatalf("期望一条含 stack[1].checksum 的告警,得到 %v", ws)
 		}
 	})
@@ -300,7 +300,7 @@ func TestFlowChecksumOverrideWarning(t *testing.T) {
 		s := vxlanFlowStackValid()
 		s[5].Fields.(*scenario.IPv4Fields).Checksum = hexPtr(0x1234)
 		ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "vx", Stack: s}}})
-		if len(ws) != 1 || !strings.Contains(ws[0], "stack[5].checksum") {
+		if len(ws) != 1 || !strings.Contains(ws[0].Message, "stack[5].checksum") {
 			t.Fatalf("期望一条含 stack[5].checksum 的告警,得到 %v", ws)
 		}
 	})
@@ -308,7 +308,7 @@ func TestFlowChecksumOverrideWarning(t *testing.T) {
 		s := vxlanFlowStackValid()
 		s[2].Fields.(*scenario.UDPFields).Checksum = hexPtr(0x1234)
 		ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "vx", Stack: s}}})
-		if len(ws) != 1 || !strings.Contains(ws[0], "stack[2].checksum") {
+		if len(ws) != 1 || !strings.Contains(ws[0].Message, "stack[2].checksum") {
 			t.Fatalf("期望一条含 stack[2].checksum 的告警,得到 %v", ws)
 		}
 	})
@@ -331,7 +331,7 @@ func TestFlowChecksumOverrideWarning(t *testing.T) {
 			{Type: "tcp_session", Fields: &scenario.TCPSessionFields{}},
 		}
 		ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "v6", Stack: s}}})
-		if len(ws) != 1 || !strings.Contains(ws[0], "stack[2].checksum") {
+		if len(ws) != 1 || !strings.Contains(ws[0].Message, "stack[2].checksum") {
 			t.Fatalf("IPv6 underlay 外层 UDP 零校验和应告警(强制校验),得到 %v", ws)
 		}
 	})
