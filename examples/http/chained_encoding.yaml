@@ -5,7 +5,6 @@
 # content_encoding: [deflate, gzip] 同理 = gzip(deflate(body))。合规 chunked 应在末位,
 # 此处 chunked 在末位(合法);非末位或双 chunked 属异常编码栈,会触发 Warning 但照常出包。
 link_type: ethernet
-seed: 42
 
 flows:
   - name: http-chained-encoding

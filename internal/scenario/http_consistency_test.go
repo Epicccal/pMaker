@@ -290,7 +290,6 @@ func TestHTTPConsistency_FlowMessageWarns(t *testing.T) {
 	// 验证 CheckHTTPConsistency 的 s.Flows 分支(而非 s.Packets)被走到,且告警定位含 flow 名。
 	// 走 Load + Validate + Warnings 完整路径(对齐 ftp_consistency_test 的 loadWarnings 范式)。
 	yamlText := `link_type: ethernet
-seed: 42
 flows:
   - name: http-flow
     stack:

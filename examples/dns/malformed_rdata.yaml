@@ -4,7 +4,6 @@
 # 用于测解析端如何处理「RDLENGTH/type 与 RDATA 内容不匹配」的畸形 —— 这是解析器鲁棒性
 # 测试的经典点。RDLENGTH 由 payload_hex 实际长度推导(=3),不被修正为 4。
 link_type: ethernet
-seed: 42
 packets:
   - name: dns-malformed-a
     stack:

@@ -3,7 +3,6 @@
 # 同一个 pcap 中的多组 UDP DNS 请求/响应。
 # 当前支持的 DNS RR 类型(A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV)各有一组 query/response。
 link_type: ethernet
-seed: 42
 packets:
   - name: dns-query-a
     stack:

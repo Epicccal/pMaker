@@ -5,7 +5,6 @@
 # @file 路径相对本场景文件所在目录(examples/http/)解析,故写成 @file(assets/put_body.json)。
 # Content-Length 由 auto_content_length: true 按 body 实际长度自动计算(头里写占位值 0),与内联 body 行为一致。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

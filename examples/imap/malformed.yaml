@@ -15,7 +15,6 @@
 # 流量验证关注点:literal 计数与实际字节的解析器攻击、同步 literal 中途断连、
 # 非法 tag 字符、缺空格状态行的成帧畸形。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 packets:

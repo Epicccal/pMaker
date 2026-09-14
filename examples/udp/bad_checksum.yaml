@@ -6,7 +6,6 @@
 # ③ 写 checksum: 0 → RFC 768 下 IPv4 里表示「不校验」,合法且有意义的构造。
 #    gopacket 的 0xffff 翻转只在自动计算时发生,覆盖层关掉计算后字面 0 原样上 wire。
 link_type: ethernet
-seed: 42
 packets:
   # ① 规范包:checksum 自动计算。
   - stack:

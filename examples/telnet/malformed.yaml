@@ -12,7 +12,6 @@
 # 这些用例刻意不规范,telnet 层的校验/转义会"修正"它们,故须用 payload_hex 直接落原始字节
 # (payload_hex 不做任何转义或语义校验),由用户自负字节正确性。
 link_type: ethernet
-seed: 42
 packets:
   # ① 非法 IAC 序列:IAC + 未知码 0xAA
   - name: telnet-bad-iac

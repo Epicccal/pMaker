@@ -3,7 +3,6 @@
 # 一次完整的 HTTP/1.1 POST 请求 + 201 响应,跑在 TCP 会话之上(flow 场景)。
 # 演示带 body 的提交:Content-Length 由 auto_content_length: true 自动计算(头里写占位值 0)。
 link_type: ethernet
-seed: 42
 
 flows:
   - name: http-post-201

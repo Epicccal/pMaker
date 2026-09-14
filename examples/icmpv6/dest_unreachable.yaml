@@ -4,7 +4,6 @@
 # quote_from 自动按 RFC 4443 从触发包提取 IPv6 头 + 后续数据(尽力含整包,≤1280)。
 # 错误报文在 Checksum 与 quote 之间含 4 字节 Unused 字段(RFC 4443 §3)。
 link_type: ethernet
-seed: 42
 packets:
   - name: udp-probe
     stack:

@@ -4,7 +4,6 @@
 # 与 dest_unreachable/redirect/parameter_problem 的"命名 code + quote_from"风格互补,
 # 演示"数字写法"这条不同维度。
 link_type: ethernet
-seed: 42
 packets:
   - name: udp-probe-redirect
     stack:

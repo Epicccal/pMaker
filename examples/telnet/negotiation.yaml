@@ -6,7 +6,6 @@
 #   每个 telnet 层序列化为 3 字节(IAC + cmd + option),SerializeLayers 顺序拼接,
 #   自然得到 12 字节连续协商流。验证 command+option 三字节编码与多层拼接。
 link_type: ethernet
-seed: 42
 packets:
   - name: telnet-negotiate
     stack:

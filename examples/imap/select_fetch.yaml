@@ -11,7 +11,6 @@
 #   - 多条 untagged 响应共处一个 TCP 段(层栈重复,零新关键字);
 #   - literal 内容走 eml 子结构(复用 eml_data,IMAP 加 {n}\r\n 前缀,无 dot-stuffing)。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

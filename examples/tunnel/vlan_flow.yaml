@@ -9,7 +9,6 @@
 #   - 标签间 TPID 写在上一层 vlan.type
 #   - 内层 C-TAG 的 type 缺省自动推导(后接 ipv4 → 0x0800)
 link_type: ethernet
-seed: 42
 
 flows:
   - name: qinq-http-get

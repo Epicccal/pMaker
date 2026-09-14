@@ -2,7 +2,6 @@
 #
 # ICMPv6 echo request/reply(ping6) 示例。镜像 icmp/echo.yaml。
 link_type: ethernet
-seed: 42
 packets:
   - name: icmpv6-echo-request
     stack:

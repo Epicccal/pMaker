@@ -4,7 +4,6 @@
 # ① next_header 显式覆盖制造解析断链(IPv6 声称后接 UDP,实际载荷为 ICMPv6);
 # ② checksum 覆盖(显式写 0xdead,关闭自动计算,值原样上 wire)。
 link_type: ethernet
-seed: 42
 packets:
   # ① 断链:IPv6 NextHeader 显式指向 udp,但内层实为 ICMPv6。
   #    解析端按 UDP 解析载荷会失败 —— 测试其对 next-header 不一致的处理。

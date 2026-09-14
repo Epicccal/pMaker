@@ -26,7 +26,6 @@ pMaker 用声明式 YAML 描述协议栈与会话,**离线**生成确定性 `.pc
 
 ```yaml-sketch
 link_type: ethernet              # ethernet(默认)| raw | ipv4 | ipv6
-seed: 42                         # 随机种子,保证同输入逐字节相同
 base_time: 2024-01-01T00:00:00Z  # 唯一绝对时间锚(ISO8601/UTC),缺省=确定性 2020 基准
 packets:                         # 逐包(无状态),与 flows 二选一或共存
   - stack: [ ... ]

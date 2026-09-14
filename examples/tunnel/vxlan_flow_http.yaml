@@ -4,7 +4,6 @@
 # outer(VTEP 对)eth → ipv4 → udp(4789) → vxlan(VNI 100) → inner(VM 对)eth → ipv4 → tcp,
 # 完整握手 + GET/200 + 四次挥手;反向包 outer/inner 端点一并交换,VNI 与 UDP 端口两向不变。
 link_type: ethernet
-seed: 42
 flows:
   - name: vx-http
     stack:

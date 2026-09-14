@@ -4,7 +4,7 @@
 #   1. 畸形包/原始字节兜底通道不能被自动修正(FixLengths/ComputeChecksums)悄悄废掉;
 #   2. 任意深度封装(QinQ/GRE 递归)的 next-proto 串接正确性,多层 IP 下传输层
 #      checksum 绑定「就近内层 IP」;
-#   3. 确定性输出(禁用 time.Now()/全局 rand,同 scenario+seed 逐字节相同);
+#   3. 确定性输出(禁用 time.Now()/全局 rand,同 scenario 逐字节相同);
 #   4. 错误处理一律 fmt.Errorf("%w") 包装、库路径不 panic、配置校验尽早报具体字段路径。
 # 详细工作流规范见仓库根 CLAUDE.md 与 ~/.claude/CLAUDE.md。
 
@@ -61,7 +61,7 @@ reviews:
            覆盖能力是否被写死。
         3. 多层 IP 时,TCP/UDP checksum 必须绑定「就近内层 IP」
            (SetNetworkLayerForChecksum),不是外层。绑错标为问题。
-        4. 确定性:禁用 time.Now()/全局 rand,时间戳来自配置或 seed;同一 scenario+seed 必须
+        4. 确定性:禁用 time.Now()/全局 rand,时间戳来自配置;同一 scenario 必须
            逐字节相同 pcap。发现引入非确定来源的标为问题。
         5. 错误处理一律 fmt.Errorf("...: %w", err) 包装上抛,库路径不 panic,CLI 层统一打到
            stderr 并非零码退出。配置校验尽早失败,报错带字段路径(用户多为非开发者)。

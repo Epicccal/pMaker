@@ -3,7 +3,6 @@
 # ICMPv4 Destination Unreachable(Type 3)各 code 示例(RFC 792)。
 # 每条响应前放触发包,响应用 quote_from 自动按 RFC 792 提取 IPv4 头 + 8 字节。
 link_type: ethernet
-seed: 42
 packets:
   # code 0: net unreachable
   - name: udp-probe-net

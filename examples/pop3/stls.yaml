@@ -8,7 +8,6 @@
 #   - CAPA 命令(禁带 args)+ 多行 lines 响应(能力标签,含 STLS/SASL/PIPELINING);
 #   - STLS 命令(禁带 args)+ 单行 +OK 响应(RFC 2595 §4:TLS 握手在响应 CRLF 后开始)。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

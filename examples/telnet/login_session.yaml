@@ -19,7 +19,6 @@
 #   flow 中 src=客户端(发起方)、dst=服务器(接收方),from: dst 的消息会自动反转地址。
 #   验证 flow 接入、多轮消息状态机(seq/ack 持续累加)、协商+文本+subneg 混合。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

@@ -25,7 +25,6 @@
 # 流量验证关注点:POP3 解析器对 SASL 续行 "+" 的识别、base64 挑战/响应的
 # 往返、AUTH 机制协商(CAPA 中的 SASL 能力)。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

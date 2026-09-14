@@ -2,7 +2,6 @@
 #
 # 纯 IPv6/UDP 规范用例:eth/ipv6/udp/payload。补上纯 IPv6 规范闭环。
 link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }

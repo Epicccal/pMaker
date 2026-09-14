@@ -51,7 +51,7 @@ func TestFTPBidirectionalPlan(t *testing.T) {
 	)
 	// data: 整流 start_after control.pasv(150 收完后才开始)
 	data := planFlow("data", 2222, "control.pasv", msg("src", "", ""))
-	s := &scenario.Scenario{LinkType: "ethernet", Seed: 1,
+	s := &scenario.Scenario{LinkType: "ethernet",
 		Flows: []scenario.FlowSpec{control, data}}
 
 	if err := scenario.Validate(s); err != nil {

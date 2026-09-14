@@ -2,7 +2,6 @@
 #
 # 示例场景:VXLAN 标准封装(外层 IPv4 + UDP 4789 + VNI 100,内层 IPv4 + TCP SYN)。
 link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }

@@ -58,7 +58,6 @@ func TestGenerateYAMLReportsFieldError(t *testing.T) {
 
 	// tcp 缺 sport/dport,Validate 应报「需要 sport 与 dport」,并带 packet/stack 路径。
 	bad := `link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
@@ -178,7 +177,6 @@ func TestGeneratePcapReportsValidationErrorWithoutFile(t *testing.T) {
 	defer srv.Close()
 
 	bad := `link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }

@@ -3,7 +3,6 @@
 # ICMPv4 Destination Unreachable code 4(Fragmentation Needed)携带下一跳 MTU
 # (RFC 1191,MTU 在 bytes 6-7)。演示 code 4 + mtu 字段。
 link_type: ethernet
-seed: 42
 packets:
   - name: udp-probe-frag
     stack:

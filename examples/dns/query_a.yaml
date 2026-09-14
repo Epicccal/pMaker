@@ -2,7 +2,6 @@
 #
 # 最简单的单组 DNS A 记录查询/响应。比 dns/multi.yaml 更小,便于快速理解 DNS 用法。
 link_type: ethernet
-seed: 42
 packets:
   - name: dns-query-a
     stack:

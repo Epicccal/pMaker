@@ -12,7 +12,6 @@
 #
 # 每包为独立 TCP 段（eth/ipv4/tcp PSH+ACK），不构成完整会话，仅演示构造能力。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 packets:

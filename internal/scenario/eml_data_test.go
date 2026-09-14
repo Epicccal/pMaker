@@ -131,7 +131,6 @@ func TestValidateEMLData_DotFieldsRemoved(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.field, func(t *testing.T) {
 			path := writeScenario(t, "eml_removed_"+c.field+".yaml", `link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth:  { src: "00:00:00:00:00:01", dst: "00:00:00:00:00:02" }
@@ -155,7 +154,6 @@ packets:
 func TestValidateEMLData_UnknownFieldRejects(t *testing.T) {
 	// 通过 YAML 解析路径验证未知字段（decodeKnownFields）
 	path := writeScenario(t, "eml_unknown.yaml", `link_type: ethernet
-seed: 42
 packets:
   - stack:
       - eth:  { src: "00:00:00:00:00:01", dst: "00:00:00:00:00:02" }

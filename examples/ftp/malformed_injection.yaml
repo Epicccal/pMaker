@@ -10,7 +10,6 @@
 # 原始字节通道。本用例命令本身仍是合法动词(retr),畸形点在 args 的 CRLF 注入,
 # 故仍走 ftp_request;若要注入自定义动词,改用 payload / payload_hex。
 link_type: ethernet
-seed: 42
 packets:
   - name: ftp-injection
     stack:

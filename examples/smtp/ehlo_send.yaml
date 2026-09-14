@@ -12,7 +12,6 @@
 # 流量验证关注点:EHLO 广告的扩展(PIPELINING/SIZE/STARTTLS/AUTH/8BITMIME)、
 # MAIL FROM:<>/RCPT TO:<> 信封路径、params 排序输出、DATA 后正文以 <CRLF>.CRLF 终止。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

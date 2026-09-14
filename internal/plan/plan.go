@@ -42,7 +42,7 @@ import (
 // 与历史 builder 内建基准保持一致,以保证 golden 不变。
 //
 // 以函数暴露:time.Date 不能做 const,而可变 var 是可被全局赋值篡改的共享状态,
-// 会破坏"同一 scenario+seed 逐字节相同"的确定性。函数每次返回同一时刻,不可被
+// 会破坏"同一 scenario 逐字节相同"的确定性。函数每次返回同一时刻,不可被
 // 外部赋值。
 func DefaultBaseTime() time.Time { return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC) }
 

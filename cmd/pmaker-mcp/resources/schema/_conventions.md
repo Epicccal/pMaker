@@ -116,5 +116,6 @@ TCP/UDP 的 checksum 伪首部自动绑定**就近**的 IP 层(多层 IP 时绑�
 
 ## 确定性
 
-同一份 scenario(+ 同 `seed`)→ 逐字节相同的 pcap。时间戳来自 `base_time` + 显式偏移,
-全程不用当前时间;压缩、boundary、随机填充都走确定性路径。这是 golden 比对与用例归档复现的前提。
+同一份 scenario → 逐字节相同的 pcap。时间戳来自 `base_time` + 显式偏移,
+全程不用当前时间;压缩、boundary 都走确定性路径,且当前无任何随机源。
+这是 golden 比对与用例归档复现的前提。

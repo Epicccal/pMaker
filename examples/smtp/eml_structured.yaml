@@ -10,7 +10,6 @@
 #   - 自动 dot-stuffing（dot_stuff 缺省 on）+ 自动终止符（dot_terminate 缺省 on）；
 #   - eml_data 作为 flow message 的 payload 生产层，序列化为 TCP payload 字节。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

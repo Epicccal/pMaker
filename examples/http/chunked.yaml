@@ -4,7 +4,6 @@
 # chunked.size 切多块,演示外置 transfer_encoding 字段驱动成帧(body 不再裸透传)。
 # 块长自动十六进制,末尾自动追加终止块 0\r\n\r\n。
 link_type: ethernet
-seed: 42
 
 flows:
   - name: http-chunked

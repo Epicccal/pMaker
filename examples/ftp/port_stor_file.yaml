@@ -9,7 +9,6 @@
 #
 # @file 路径相对本场景文件所在目录(examples/ftp/)解析,故写成 @file(assets/upload.bin)。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

@@ -11,7 +11,6 @@
 #     不推到 payload,是合规主线流程);
 #   - IDLE 结束后的 tagged OK 响应。
 link_type: ethernet
-seed: 42
 base_time: "2024-01-01T00:00:00Z"
 
 flows:

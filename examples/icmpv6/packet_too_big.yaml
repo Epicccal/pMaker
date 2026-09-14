@@ -3,7 +3,6 @@
 # ICMPv6 Packet Too Big(RFC 4443 §3.2):
 # Checksum 之后携带 4 字节 MTU 字段(下一跳 MTU),之后为触发包 quote。
 link_type: ethernet
-seed: 42
 packets:
   - name: udp-probe
     stack:
