@@ -309,6 +309,67 @@ func TestGenerateYAMLRejectsBadExtension(t *testing.T) {
 	}
 }
 
+// TestGeneratePcapArchiveYAMLWriteFailure:pcap 写盘成功但归档 YAML 写盘失败 →
+// pcap 正常产出(isError=false),归档失败以 code=archive.yaml-write-failed 的软告警回传;
+// Path 必须留空(它是声明级字段路径文法,执行层故障不指向任何 YAML 字段),文件名只进 Message。
+func TestGeneratePcapArchiveYAMLWriteFailure(t *testing.T) {
+	workdir := t.TempDir()
+	pcapDir := filepath.Join(workdir, "pcap")
+	if err := os.MkdirAll(pcapDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config{
+		workdir: workdir,
+		yamlDir: filepath.Join(workdir, "missing-yaml"), // 未创建 → 归档写盘必失败
+		pcapDir: pcapDir,
+	}
+	srv := mcptest.NewUnstartedServer(t)
+	srv.AddTool(generateYAMLTool(), cfg.handleGenerateYAML)
+	srv.AddTool(generatePcapTool(), cfg.handleGeneratePcap)
+	cfg.registerResources(srv)
+	if err := srv.Start(t.Context()); err != nil {
+		t.Fatalf("启动 server: %v", err)
+	}
+	defer srv.Close()
+
+	res := callTool(t, srv, "generate_pcap", map[string]any{
+		"yaml":        validScenarioYAML,
+		"output_name": "out.pcap",
+	})
+	// 归档失败不影响 pcap 产出:isError=false、Path 有值。
+	if res.IsError {
+		t.Fatalf("pcap 已产出,不应 isError,Content: %v", res.Content)
+	}
+	out := parseText[generatePcapOutput](t, res)
+	if !out.Valid || out.Path == "" {
+		t.Fatalf("pcap 应正常产出(Valid=true 且 Path 非空),得到 Valid=%v Path=%q", out.Valid, out.Path)
+	}
+	if out.YAMLPath != "" {
+		t.Errorf("归档失败 YAMLPath 应空,得到 %q", out.YAMLPath)
+	}
+	// 恰好一条 archive.yaml-write-failed 告警,Path 留空、Message 含归档文件名。
+	count := 0
+	for i := range out.Warnings {
+		w := out.Warnings[i]
+		if w.Code != codeArchiveYAMLWriteFailed {
+			continue
+		}
+		count++
+		if count > 1 {
+			t.Fatalf("应恰好一条 %q 告警,得到 %v", codeArchiveYAMLWriteFailed, out.Warnings)
+		}
+		if w.Path != "" {
+			t.Errorf("执行层故障告警 Path 应留空(非声明级字段路径),得到 %q", w.Path)
+		}
+		if !strings.Contains(w.Message, "out.yaml") {
+			t.Errorf("告警 Message 应含归档文件名 out.yaml,得到 %q", w.Message)
+		}
+	}
+	if count == 0 {
+		t.Fatalf("应有一条 %q 告警,得到 %v", codeArchiveYAMLWriteFailed, out.Warnings)
+	}
+}
+
 // ---------- validateOutputName ----------
 
 func TestValidateOutputName(t *testing.T) {

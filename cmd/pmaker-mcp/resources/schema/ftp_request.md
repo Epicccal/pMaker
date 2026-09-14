@@ -44,7 +44,9 @@ RETR/STOR/STOU/APPE/ALLO/REST/RNFR/RNTO/ABOR/DELE/RMD/MKD/PWD/LIST/NLST/SITE/SYS
 - **`args` 不拦换行符**:写 `args: "a\r\nRETR x"` 会产出两行命令字节,校验器不报错。
   这是可用的注入构造点,也是易误踩点;若不是有意注入,别在 `args` 里放 `\r\n`。
 - **PORT / EPRT / PASV / EPSV 的端口协商一致性只告警、不拦**:控制通道声明的数据连接端点
-  与实际数据流 dst 不一致时产软告警(见 `pmaker://schema/overview` 的 warnings),包照出。
+  与实际数据流 dst 不一致时产软告警(`ftp.port-mismatch`);协商地址与控制连接角色不匹配
+  (PASV/EPSV 应答控制对端、PORT/EPRT 应答本端)同样只告警(`ftp.role-mismatch`);
+  协商文本解析不出端点则提示无法校验(`ftp.negotiation-parse`)。包照出,
   故意构造不一致是合规的流量验证用例。
 - 命令名拼错(如 `RETER`)是**硬错**而非静默降级 —— 这点与 `dns.type` 的数字兜底不同,
   `ftp_request.command` 无数字写法。

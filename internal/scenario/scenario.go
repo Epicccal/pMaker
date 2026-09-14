@@ -108,8 +108,8 @@ func Validate(s *Scenario) error {
 //     实际字节数不符(计数撒谎)。
 //  5. flow 覆盖告警(CheckFlowOverrideWarning):flow.stack 的 length/checksum 覆盖值每包
 //     同值而真值逐包变(几乎全不符);唯一豁免 VXLAN 外层 UDP 在 IPv4 underlay 下写 0。
-func Warnings(s *Scenario) []string {
-	var ws []string
+func Warnings(s *Scenario) []Diagnostic {
+	var ws []Diagnostic
 	ws = append(ws, CheckFTPDataPortConsistency(s)...)
 	ws = append(ws, CheckMultipartConsistency(s)...)
 	ws = append(ws, CheckHTTPConsistency(s)...)

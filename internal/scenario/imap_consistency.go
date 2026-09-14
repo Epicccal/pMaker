@@ -1,7 +1,6 @@
 package scenario
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/Epicccal/pMaker/internal/util/crlf"
@@ -18,29 +17,29 @@ import (
 
 // CheckIMAPLiteralConsistency 扫描所有 packet / flow message 的 imap_request / imap_response
 // 层,对 literal.Octets != nil 且其值 ≠ 实际内容字节数的情况产出告警(软错)。
-func CheckIMAPLiteralConsistency(s *Scenario) []string {
+func CheckIMAPLiteralConsistency(s *Scenario) []Diagnostic {
 	if s == nil {
 		return nil
 	}
-	var ws []string
+	var ws []Diagnostic
 	for i := range s.Packets {
 		for j, l := range s.Packets[i].Stack {
-			ws = append(ws, checkIMAPLiteralLayer("packets", fmt.Sprintf("%d.stack[%d]", i, j), l)...)
+			ws = append(ws, checkIMAPLiteralLayer(packetStackPath(i, j), l)...)
 		}
 	}
 	for i, f := range s.Flows {
 		for j, m := range f.Messages {
 			for k, l := range m.Stack {
-				ws = append(ws, checkIMAPLiteralLayer("flows", fmt.Sprintf("%s.messages[%d].stack[%d]", flowLabel(f.Name, i), j, k), l)...)
+				ws = append(ws, checkIMAPLiteralLayer(flowMessageStackPath(i, j, k), l)...)
 			}
 		}
 	}
 	return ws
 }
 
-// checkIMAPLiteralLayer 检查单个层的 literal 计数一致性。
-// loc 是告警定位前缀(如 "packets" / "flows"),path 是层路径(如 "0.stack[1]")。
-func checkIMAPLiteralLayer(loc, path string, l Layer) []string {
+// checkIMAPLiteralLayer 检查单个层的 literal 计数一致性。path 是机器可读字段路径
+// (如 "packets[0].stack[1]")。
+func checkIMAPLiteralLayer(path string, l Layer) []Diagnostic {
 	var lit *IMAPLiteral
 	switch f := l.Fields.(type) {
 	case *IMAPRequestFields:
@@ -63,7 +62,9 @@ func checkIMAPLiteralLayer(loc, path string, l Layer) []string {
 	if declared == actual {
 		return nil
 	}
-	return []string{fmt.Sprintf("%s.%s: imap literal 计数不一致(声明 octets %d / 实际 %d 字节;若为故意撒谎的畸形用例可忽略此告警)", loc, path, declared, actual)}
+	return []Diagnostic{warnf(CodeIMAPLiteralOctetsMismatch, path+".literal",
+		"%s: imap literal 计数不一致(声明 octets %d / 实际 %d 字节;若为故意撒谎的畸形用例可忽略此告警)",
+		path, declared, actual)}
 }
 
 // imapLiteralActualBytes 计算 literal 八位组的实际内容字节数(与 builder.imapLiteralBytes

@@ -42,7 +42,7 @@ func itoa(n int) string {
 }
 
 // loadWarnings 走 Load + Validate + Warnings,返回告警列表(Validate 必须通过)。
-func loadWarnings(t *testing.T, name, body string) []string {
+func loadWarnings(t *testing.T, name, body string) []scenario.Diagnostic {
 	t.Helper()
 	path := writeScenario(t, name, body)
 	s, err := scenario.Load(path)
@@ -55,9 +55,9 @@ func loadWarnings(t *testing.T, name, body string) []string {
 	return scenario.Warnings(s)
 }
 
-func containsWarning(warnings []string, substr string) bool {
+func containsWarning(warnings []scenario.Diagnostic, substr string) bool {
 	for _, w := range warnings {
-		if strings.Contains(w, substr) {
+		if strings.Contains(w.Message, substr) {
 			return true
 		}
 	}
@@ -181,7 +181,7 @@ func TestFTPConsistency_PASVRoleOK(t *testing.T) {
 		"          - ftp_response: { code: 227, message: \"Entering Passive Mode (10,0,0,21,195,80).\" }\n"
 	warnings := loadWarnings(t, "pasv_role_ok.yaml", body)
 	for _, w := range warnings {
-		if strings.Contains(w, "角色") {
+		if strings.Contains(w.Message, "角色") {
 			t.Fatalf("227 协商 IP=服务器侧不应触发角色告警,实际: %v", warnings)
 		}
 	}
@@ -221,7 +221,7 @@ func TestFTPConsistency_PORTRoleOK(t *testing.T) {
 		"          - ftp_request: { command: PORT, args: \"10,0,0,10,192,5\" }\n"
 	warnings := loadWarnings(t, "port_role_ok.yaml", body)
 	for _, w := range warnings {
-		if strings.Contains(w, "角色") {
+		if strings.Contains(w.Message, "角色") {
 			t.Fatalf("PORT 协商 IP=客户端侧不应触发角色告警,实际: %v", warnings)
 		}
 	}
@@ -305,7 +305,7 @@ func TestFTPConsistency_EPSVRoleNoWarn(t *testing.T) {
 		"          - ftp_response: { code: 229, message: \"Entering Extended Passive Mode (|||50000|).\" }\n"
 	warnings := loadWarnings(t, "epsv_role.yaml", body)
 	for _, w := range warnings {
-		if strings.Contains(w, "角色") {
+		if strings.Contains(w.Message, "角色") {
 			t.Fatalf("EPSV(229)不含地址,不应触发角色告警,实际: %v", warnings)
 		}
 	}
@@ -360,7 +360,7 @@ func TestFTPConsistency_EPRTRoleOK(t *testing.T) {
 		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::10|49157|\" }\n"
 	warnings := loadWarnings(t, "eprt_role_ok.yaml", body)
 	for _, w := range warnings {
-		if strings.Contains(w, "角色") {
+		if strings.Contains(w.Message, "角色") {
 			t.Fatalf("EPRT 协商 IP=客户端侧不应触发角色告警,实际: %v", warnings)
 		}
 	}
@@ -451,7 +451,7 @@ func TestFTPConsistency_EPRTAddrNormalizationFlowSide(t *testing.T) {
 		"          - ftp_request: { command: EPRT, args: \"|2|2001:db8::10|49157|\" }\n"
 	warnings := loadWarnings(t, "eprt_norm_flow.yaml", body)
 	for _, w := range warnings {
-		if strings.Contains(w, "角色") {
+		if strings.Contains(w.Message, "角色") {
 			t.Fatalf("协商地址与控制流 src 是同一 IPv6(不同文本形式),不应触发角色告警,实际: %v", warnings)
 		}
 	}

@@ -267,9 +267,11 @@ golden pcap 测试基准不放在仓库根,而是**就近放在测试包内**:`i
   7bit/8bit/binary 恒等透传 / base64/quoted-printable 真变换;base64 按 RFC 2045 每 76 字符折行,确定性)。**不做 CRLF 归一化**:`@file` 可注入二进制附件,
   归一化会破坏文件字节;换行正确性交给用户(与 HTTP body 现状一致)。
 - 一致性告警(`scenario.CheckMultipartConsistency`,非硬错,与 FTP 端口告警同一套 `Warnings`):
-  boundary 不一致 / 缺 `Content-Type` / part `encoding` 与 `Content-Transfer-Encoding` 头不符或缺失。
-  **boundary 碰撞告警**在 builder 序列化阶段(`slog.Warn`):part 编码后 body 逐行扫描,某行独占 `--<boundary>`
+  boundary 不一致 / 缺 `Content-Type` / part `encoding` 与 `Content-Transfer-Encoding` 头不符或缺失 / boundary 碰撞。
+  **boundary 碰撞告警**:part 经 `scenario.EncodeMultipartPart` 编码后的 body 逐行扫描,某行独占 `--<boundary>`
   → 告警(RFC 2046 §5.1.1:分界符须独占一行,解析端会误判切分);按行匹配避免行内子串误报。
+  告警在 scenario 一致性告警内产出、经 `Warnings` 回流 CLI/MCP;编码实现由 builder 与碰撞检查共享
+  `EncodeMultipartPart`,口径一致。
 - EML 下 multipart 字节作为 content,作用顺序固定「编码 → 拼装 → stuff(接入层) → terminate(接入层)」:
   `SerializeEMLData` 产纯内容(编码 → 拼装),接入层(SMTP/POP3)做 stuff + terminate。dot-stuff 作用于
   编码后整段 content(boundary 行 `--` 开头不受影响;base64 字母表不含 `.` 行首不会是 `.`;`none`/QP 的 part
@@ -332,8 +334,8 @@ HTTP 请求/响应、多轮消息、`close: fin` 四次挥手、`close: rst` 对
 >
 > scenario 包(详见 `doc.go`):
 > - `types.go`(顶层结构体与 Hex/PayloadHex)、`time.go`(AbsTime/Offset)、`layer_fields.go`(各层 *Fields + `MultipartBody`/`MultipartPart` 子结构)、
->   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Parse/Load/Validate/Warnings)、`start_after_graph.go`、
->   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_command.go`(SMTP verb/响应码校验)、`pop3_command.go`(POP3 命令/状态校验)、`imap_command.go`(IMAP 命令/tag/状态/literal 校验)、`imap_consistency.go`(IMAP literal octets 计数撒谎告警)、`eml_data.go`(RFC 5322 正文校验)、`multipart.go`(RFC 2046 multipart 校验 + boundary 校验)、`multipart_consistency.go`(boundary/CTE 一致性告警)、
+>   `layer_decode.go`(Layer 解码分发)、`scenario.go`(Parse/Load/Validate/Warnings)、`diagnostic.go`(软告警统一模型 `Diagnostic{Code,Path,Message}` + code 常量表 + 路径文法)、`start_after_graph.go`、
+>   `ftp_command.go`、`ftp_consistency.go`、`telnet_command.go`、`smtp_command.go`(SMTP verb/响应码校验)、`pop3_command.go`(POP3 命令/状态校验)、`imap_command.go`(IMAP 命令/tag/状态/literal 校验)、`imap_consistency.go`(IMAP literal octets 计数撒谎告警)、`eml_data.go`(RFC 5322 正文校验)、`multipart.go`(RFC 2046 multipart 校验 + boundary 校验 + `EncodeMultipartPart` part 编码,builder 与碰撞检查共享)、`multipart_consistency.go`(boundary/CTE 一致性 + boundary 碰撞告警)、
 >   `http_validate.go`(HTTP 字段校验)、`summary_layers.go`(摘要层名白名单,供 internal/summary 与 flow 调用)、`file_placeholder.go`(`@file(...)` 占位符替换,反射遍历 Scenario 全部 string 字段)。
 >
 > 测试按「一一对应 + 公共辅助集中」组织,详见下文「测试文件命名规约」。
@@ -595,7 +597,15 @@ golangci-lint run # 若已安装
 - **格式化**:`gofmt` / `goimports`;命名遵循 Go 惯例(导出加注释、缩写全大写如 `TCP`/`IP`/`ID`)。
 - **错误处理**:一律 `fmt.Errorf("...: %w", err)` 包装并上抛;库代码路径**不 panic**。CLI 在 `cmd/` 层统一打到 stderr 并以非零码退出。
 - **配置校验尽早、报错够具体**:指出是哪个包、哪个字段、期望什么。用户大多不是开发者,错误信息就是他们的调试器。
-- **日志**:用 `log/slog`;正常输出走 stdout,诊断/进度走 stderr。
+- **异常表达只有两套模型**(见 `internal/scenario/diagnostic.go`):
+  - **硬错** = `error`(`Validate` 返回,带字段路径),失败即中止,不迁移进告警模型;
+  - **软告警** = `scenario.Diagnostic{Code, Path, Message}`(`[]Diagnostic`,经 `scenario.Warnings` 聚合),
+    CLI 渲染为 stderr 文本、MCP 渲染为结构化 `warnings`。`Code` 是稳定对外契约(`"<协议>.<问题>"`
+    kebab-case,常量表单一真相源,只能新增不能改名);`Path` 是声明级字段路径(flow 用声明序)。
+  - **禁止 `internal/` 内用 slog 打用户可见诊断**——日志不回流调用方,MCP(stdio) 下模型永远看不到。
+    由 `internal/scenario/diagnostic_test.go` 的守卫测试锁定;进度/调试日志只放 `cmd/` 层。
+    schema 文档承诺的告警 ⇄ code 双向同步由 `cmd/pmaker-mcp` 的 `TestSchemaWarningCodesSync` 锁定。
+- **日志**:用 `log/slog`(仅 `cmd/` 入口层);正常输出走 stdout,诊断/进度走 stderr。
 - **测试**:表驱动;新协议/新字段都要有对应的 golden pcap;关键路径跑 `-race`。
 - **依赖克制**:标准库能做的不引第三方;新增依赖前先问"是否真需要"(参见构包/CLI 选型说明)。
 

@@ -60,11 +60,16 @@ flows:
 
 ## 一致性告警(软告警,非硬错)
 
-- TE 非空但 `Transfer-Encoding` 头缺失 / 不符;CE 非空但 `Content-Encoding` 头缺失 / 不符 → 疑似漏声明。
-- `headers` 有显式 `Content-Length` 且 TE 非空 → CL+TE 冲突(走私特征),不删不硬错。
-- `chunked` 不在 TE 末位 / 含多个 `chunked` → 异常编码栈,放行。
-- **`status` 1xx / 204 带 body 且 `auto_content_length: true`** → 软告警(RFC 9110:1xx/204 禁止 body 与 CL)。
-- **`status` 304 且 `auto_content_length: true`** → 软告警(304 的 CL 语义是 200 body 长度,非当前 wire body)。
+每条告警带稳定 `code`(结构化 `warnings` 里程序化匹配用):
+
+- TE 非空但 `Transfer-Encoding` 头缺失 / 不符;CE 非空但 `Content-Encoding` 头缺失 / 不符
+  → 疑似漏声明(`http.coding-header-missing` / `http.coding-header-mismatch`)。
+- `headers` 有显式 `Content-Length` 且 TE 非空 → CL+TE 冲突(`http.cl-te-conflict`,走私特征),不删不硬错。
+- `chunked` 不在 TE 末位 / 含多个 `chunked` → 异常编码栈(`http.chunked-not-last` / `http.chunked-duplicate`),放行。
+- **`status` 1xx / 204 带 body 且 `auto_content_length: true`** → 软告警(`http.status-body-forbidden`,
+  RFC 9110:1xx/204 禁止 body 与 CL)。
+- **`status` 304 且 `auto_content_length: true`** → 软告警(`http.304-auto-content-length`,304 的 CL 语义是
+  200 body 长度,非当前 wire body)。
 
 ## 静默陷阱
 

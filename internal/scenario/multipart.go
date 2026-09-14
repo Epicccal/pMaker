@@ -1,6 +1,10 @@
 package scenario
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/Epicccal/pMaker/internal/util/cte"
+)
 
 // 本文件实现 MIME multipart body(RFC 2046)的「合法基线」校验,对齐 SMTP/FTP/Telnet
 // 校验风格:只判合法性,绝不改变序列化行为(序列化在 builder/multipart.go)。无法用结构化
@@ -103,4 +107,34 @@ func MultipartBoundary(m *MultipartBody) string {
 		return m.Boundary
 	}
 	return multipartDefaultBoundary
+}
+
+// EncodeMultipartPart 取单个 part 的编码后字节:body(或 ParsePayloadHex(body_hex))
+// 按 encoding 做传输编码。builder.serializeMultipart 与 CheckMultipartConsistency 的
+// boundary 碰撞检查共用本函数,按构造保证「检查看到的字节」与「实际落盘字节」一致,
+// 消除两处实现漂移的可能。纯函数。
+//   - ""/none 与 7bit/8bit/binary:恒等透传(RFC 2045 §6,仅声明字节性质);
+//   - base64:RFC 2045 每 76 字符折行(\r\n 分隔),见 util/cte;
+//   - quoted-printable:RFC 2045 QP 编码,见 util/cte。
+func EncodeMultipartPart(p *MultipartPart) ([]byte, error) {
+	var body []byte
+	if p.Body != "" {
+		body = []byte(p.Body)
+	} else if p.BodyHex != "" {
+		b, err := ParsePayloadHex(p.BodyHex)
+		if err != nil {
+			return nil, err
+		}
+		body = b
+	}
+	switch p.Encoding {
+	case "", "none", "7bit", "8bit", "binary":
+		return body, nil
+	case "base64":
+		return cte.Base64Fold(body), nil
+	case "quoted-printable":
+		return cte.QPEncode(body)
+	}
+	// 校验已拦截非法 encoding,兜底原样返回。
+	return body, nil
 }

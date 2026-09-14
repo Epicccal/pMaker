@@ -49,9 +49,9 @@ func multipartHTTPResp(ct string, m *scenario.MultipartBody) *scenario.HTTPRespF
 	return &scenario.HTTPRespFields{Status: 200, Headers: headers, Multipart: m}
 }
 
-func warningsContain(ws []string, sub string) bool {
+func warningsContain(ws []scenario.Diagnostic, sub string) bool {
 	for _, w := range ws {
-		if strings.Contains(w, sub) {
+		if strings.Contains(w.Message, sub) {
 			return true
 		}
 	}
@@ -75,7 +75,7 @@ func TestMultipartConsistency_HTTPResponseLayer(t *testing.T) {
 		&scenario.MultipartBody{Parts: []scenario.MultipartPart{{Body: "x"}}},
 	))
 	for _, w := range scenario.Warnings(s) {
-		if strings.Contains(w, "boundary") || strings.Contains(w, "Content-Type") {
+		if strings.Contains(w.Message, "boundary") || strings.Contains(w.Message, "Content-Type") {
 			t.Fatalf("http_response 一致场景不应告警,得到 %v", scenario.Warnings(s))
 		}
 	}
@@ -99,7 +99,7 @@ func TestMultipartConsistency_EMLDataLayer(t *testing.T) {
 		&scenario.MultipartBody{Parts: []scenario.MultipartPart{{Body: "x"}}},
 	))
 	for _, w := range scenario.Warnings(s) {
-		if strings.Contains(w, "boundary") || strings.Contains(w, "Content-Type") {
+		if strings.Contains(w.Message, "boundary") || strings.Contains(w.Message, "Content-Type") {
 			t.Fatalf("eml_data 一致场景不应告警,得到 %v", scenario.Warnings(s))
 		}
 	}
@@ -118,7 +118,7 @@ func TestMultipartConsistency_QuotedBoundary(t *testing.T) {
 		},
 	})
 	for _, w := range scenario.Warnings(s) {
-		if strings.Contains(w, "boundary") {
+		if strings.Contains(w.Message, "boundary") {
 			t.Fatalf("quoted boundary 去引号后一致不应告警,得到 %v", scenario.Warnings(s))
 		}
 	}
@@ -180,5 +180,81 @@ func TestMultipartConsistency_NilScenario(t *testing.T) {
 	})
 	if ws := scenario.CheckMultipartConsistency(s); len(ws) != 0 {
 		t.Fatalf("无 multipart 层不应告警,得到 %v", ws)
+	}
+}
+
+// TestMultipartConsistency_BoundaryCollision: part 编码后 body 内出现独占一行的
+// `--<boundary>` 分界符 → boundary 碰撞告警(RFC 2046 §5.1.1)。断言告警出现在
+// scenario.Warnings 输出中且带稳定 code 与声明级 path,锁定告警经 Warnings 回流 CLI/MCP。
+func TestMultipartConsistency_BoundaryCollision(t *testing.T) {
+	boundary := "----=_pMaker_0001"
+	s := multiStackScenario("http_request", &scenario.HTTPReqFields{
+		Headers: scenario.HeaderMap{
+			{Key: "Content-Type", Value: "multipart/form-data; boundary=" + boundary},
+		},
+		Multipart: &scenario.MultipartBody{
+			Parts: []scenario.MultipartPart{
+				{Body: "前置内容\r\n--" + boundary + "\r\n后续内容"}, // 碰撞行:独占一行
+			},
+		},
+	})
+	ws := scenario.Warnings(s)
+	found := false
+	for _, w := range ws {
+		if w.Code != scenario.CodeMultipartBoundaryCollision {
+			continue
+		}
+		found = true
+		if w.Path != "packets[0].stack[3].multipart.parts[0]" {
+			t.Errorf("碰撞告警 path 应为声明级 part 路径,得到 %q", w.Path)
+		}
+		if !strings.Contains(w.Message, boundary) {
+			t.Errorf("碰撞告警文案应含 boundary,得到 %q", w.Message)
+		}
+	}
+	if !found {
+		t.Fatalf("boundary 碰撞应经 Warnings 产出 %q 告警,得到 %v", scenario.CodeMultipartBoundaryCollision, ws)
+	}
+
+	// 行内子串(未独占一行)不告警,避免误报。
+	s = multiStackScenario("http_request", &scenario.HTTPReqFields{
+		Headers: scenario.HeaderMap{
+			{Key: "Content-Type", Value: "multipart/form-data; boundary=" + boundary},
+		},
+		Multipart: &scenario.MultipartBody{
+			Parts: []scenario.MultipartPart{
+				{Body: "行内出现 --" + boundary + " 子串但未独占一行"},
+			},
+		},
+	})
+	for _, w := range scenario.Warnings(s) {
+		if w.Code == scenario.CodeMultipartBoundaryCollision {
+			t.Fatalf("行内子串不应触发碰撞告警,得到 %v", w)
+		}
+	}
+
+	// 编码后碰撞:quoted-printable 编码后的字节撞 boundary 同样告警(检查基于编码后字节,
+	// 与 builder.serializeMultipart 共享 EncodeMultipartPart,口径一致)。边界用不含 '=' 的
+	// boundary:QP 会把 '=' 编为 =3D,含 '=' 的 boundary 经 QP 后必然失配,天然不可能碰撞;
+	// 不含 '=' 时 QP 对可打印 ASCII 原样保留,碰撞行编码后不变,照常命中。
+	// (base64 字母表不含 '-',编码后也不可能碰撞,故不作碰撞载体。)
+	qpBoundary := "my-boundary-123"
+	s = multiStackScenario("http_request", &scenario.HTTPReqFields{
+		Headers: scenario.HeaderMap{
+			{Key: "Content-Type", Value: "multipart/form-data; boundary=" + qpBoundary},
+		},
+		Multipart: &scenario.MultipartBody{
+			Boundary: qpBoundary,
+			Parts: []scenario.MultipartPart{
+				{
+					Encoding: "quoted-printable",
+					Headers:  scenario.HeaderMap{{Key: "Content-Transfer-Encoding", Value: "quoted-printable"}},
+					Body:     "前置\r\n--" + qpBoundary + "\r\n后续",
+				},
+			},
+		},
+	})
+	if !warningsContain(scenario.Warnings(s), "boundary 分界符") {
+		t.Fatalf("编码后碰撞同样应告警,得到 %v", scenario.Warnings(s))
 	}
 }

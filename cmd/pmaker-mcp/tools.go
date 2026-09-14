@@ -19,6 +19,10 @@ import (
 
 // ---------- 通用入参 ----------
 
+// codeArchiveYAMLWriteFailed:generate_pcap 归档场景 YAML 写盘失败的告警 code。
+// 执行层故障(非场景不自洽),不在 scenario.WarningCodes 常量表内,但同样是对外契约。
+const codeArchiveYAMLWriteFailed = "archive.yaml-write-failed"
+
 // toolInput 是两个工具共用的入参(YAML 文本 + 输出文件名),字段完全相同。
 // bindToolInput 统一完成反序列化与参数校验,避免在两个 handler 里各写一遍。
 type toolInput struct {
@@ -53,10 +57,10 @@ func bindToolInput(req mcp.CallToolRequest, ext string) (toolInput, error) {
 
 // generateYAMLOutput 是 generate_yaml 的结构化输出。
 type generateYAMLOutput struct {
-	Valid    bool     `json:"valid"`
-	Path     string   `json:"path,omitempty"`
-	Errors   []string `json:"errors,omitempty"`
-	Warnings []string `json:"warnings,omitempty"`
+	Valid    bool                  `json:"valid"`
+	Path     string                `json:"path,omitempty"`
+	Errors   []string              `json:"errors,omitempty"`
+	Warnings []scenario.Diagnostic `json:"warnings,omitempty"`
 }
 
 func generateYAMLTool() mcp.Tool {
@@ -118,12 +122,12 @@ func (c config) handleGenerateYAML(ctx context.Context, req mcp.CallToolRequest)
 // Valid 与 generate_yaml 对齐:校验通过=true、失败=false。失败时 isError 也=true、
 // Path/YAMLPath/Summary 留空,客户端可据 Valid 或 isError 判断是否拿到 pcap。
 type generatePcapOutput struct {
-	Valid       bool     `json:"valid"`
-	Path        string   `json:"path,omitempty"`
-	YAMLPath    string   `json:"yaml_path,omitempty"`
-	PacketCount int      `json:"packet_count"`
-	Summary     []string `json:"summary,omitempty"`
-	Warnings    []string `json:"warnings,omitempty"`
+	Valid       bool                  `json:"valid"`
+	Path        string                `json:"path,omitempty"`
+	YAMLPath    string                `json:"yaml_path,omitempty"`
+	PacketCount int                   `json:"packet_count"`
+	Summary     []string              `json:"summary,omitempty"`
+	Warnings    []scenario.Diagnostic `json:"warnings,omitempty"`
 	// 校验失败时填充(不写文件),供调用方据以修正。
 	Errors []string `json:"errors,omitempty"`
 }
@@ -192,7 +196,13 @@ func (c config) handleGeneratePcap(ctx context.Context, req mcp.CallToolRequest)
 	yamlName := strings.TrimSuffix(in.OutputName, filepath.Ext(in.OutputName)) + ".yaml"
 	yamlPath := filepath.Join(c.yamlDir, yamlName)
 	if err := os.WriteFile(yamlPath, []byte(in.YAML), 0o600); err != nil {
-		out.Warnings = append(out.Warnings, fmt.Sprintf("归档 YAML 失败: %v", err))
+		// 归档失败不影响 pcap 产出,以软告警回传(执行层故障,code 固定便于客户端识别)。
+		// Path 留空:它是声明级字段路径文法,执行层故障不指向任何 YAML 字段;
+		// 归档文件名只进 Message(避免客户端把 Path 误当字段路径解析)。
+		out.Warnings = append(out.Warnings, scenario.Diagnostic{
+			Code:    codeArchiveYAMLWriteFailed,
+			Message: fmt.Sprintf("归档 YAML %q 失败: %v", yamlName, err),
+		})
 	} else {
 		out.YAMLPath = yamlPath
 	}

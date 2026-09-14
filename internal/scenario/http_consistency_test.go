@@ -11,14 +11,14 @@ import (
 // 语义告警(CheckHTTPRespConsistency),全部为非硬错(畸形用例可故意不一致)。
 
 // httpConsistencyScenario 构造仅含单 HTTP 层 packet 的 Scenario,返回 Warnings。
-func httpConsistencyScenario(layer scenario.Layer) []string {
+func httpConsistencyScenario(layer scenario.Layer) []scenario.Diagnostic {
 	s := &scenario.Scenario{Packets: []scenario.Packet{{Stack: []scenario.Layer{layer}}}}
 	return scenario.Warnings(s)
 }
 
-func hasWarning(warns []string, substr string) bool {
+func hasWarning(warns []scenario.Diagnostic, substr string) bool {
 	for _, w := range warns {
-		if strings.Contains(w, substr) {
+		if strings.Contains(w.Message, substr) {
 			return true
 		}
 	}
@@ -152,7 +152,7 @@ func TestHTTPRespConsistency_204WithBodyAutoCL(t *testing.T) {
 		Headers:           scenario.HeaderMap{{Key: "Content-Length", Value: "0"}},
 		Body:              "should not be here",
 	}
-	warns := scenario.CheckHTTPRespConsistency("test", "http_response", f)
+	warns := scenario.CheckHTTPRespConsistency("test", "packets[0].stack[0]", "http_response", f)
 	if !hasWarning(warns, "204") {
 		t.Errorf("204+body+auto 应告警, got %v", warns)
 	}
@@ -165,7 +165,7 @@ func TestHTTPRespConsistency_204NoBodyNoWarning(t *testing.T) {
 		AutoContentLength: true,
 		Headers:           scenario.HeaderMap{{Key: "Content-Length", Value: "0"}},
 	}
-	warns := scenario.CheckHTTPRespConsistency("test", "http_response", f)
+	warns := scenario.CheckHTTPRespConsistency("test", "packets[0].stack[0]", "http_response", f)
 	if len(warns) != 0 {
 		t.Errorf("204 无 body 不应告警, got %v", warns)
 	}
@@ -178,7 +178,7 @@ func TestHTTPRespConsistency_304AlwaysWarns(t *testing.T) {
 		AutoContentLength: true,
 		Headers:           scenario.HeaderMap{{Key: "Content-Length", Value: "0"}},
 	}
-	warns := scenario.CheckHTTPRespConsistency("test", "http_response", f)
+	warns := scenario.CheckHTTPRespConsistency("test", "packets[0].stack[0]", "http_response", f)
 	if !hasWarning(warns, "304") {
 		t.Errorf("304+auto 应告警(无论 body), got %v", warns)
 	}
@@ -191,7 +191,7 @@ func TestHTTPRespConsistency_AutoOffNoWarning(t *testing.T) {
 		Headers: scenario.HeaderMap{{Key: "Content-Length", Value: "10"}},
 		Body:    "data",
 	}
-	warns := scenario.CheckHTTPRespConsistency("test", "http_response", f)
+	warns := scenario.CheckHTTPRespConsistency("test", "packets[0].stack[0]", "http_response", f)
 	if len(warns) != 0 {
 		t.Errorf("auto=false 不应告警, got %v", warns)
 	}

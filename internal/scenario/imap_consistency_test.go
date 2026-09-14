@@ -40,7 +40,7 @@ func TestCheckIMAPLiteralConsistency(t *testing.T) {
 			if tc.wantWarn {
 				found := false
 				for _, w := range ws {
-					if strings.Contains(w, "imap literal 计数不一致") && (tc.warnSub == "" || strings.Contains(w, tc.warnSub)) {
+					if strings.Contains(w.Message, "imap literal 计数不一致") && (tc.warnSub == "" || strings.Contains(w.Message, tc.warnSub)) {
 						found = true
 						break
 					}
@@ -50,7 +50,7 @@ func TestCheckIMAPLiteralConsistency(t *testing.T) {
 				}
 			} else {
 				for _, w := range ws {
-					if strings.Contains(w, "imap literal") {
+					if strings.Contains(w.Message, "imap literal") {
 						t.Errorf("不期望 imap literal 告警,得到: %v", w)
 					}
 				}
@@ -76,7 +76,7 @@ func TestCheckIMAPLiteralConsistency_EML(t *testing.T) {
 	}}}
 	ws := scenario.Warnings(s)
 	for _, w := range ws {
-		if strings.Contains(w, "imap literal") {
+		if strings.Contains(w.Message, "imap literal") {
 			t.Errorf("准确计数不应告警,得到: %v", w)
 		}
 	}
@@ -92,7 +92,7 @@ func TestCheckIMAPLiteralConsistency_EML(t *testing.T) {
 	ws2 := scenario.Warnings(s2)
 	found := false
 	for _, w := range ws2 {
-		if strings.Contains(w, "imap literal 计数不一致") {
+		if strings.Contains(w.Message, "imap literal 计数不一致") {
 			found = true
 		}
 	}
@@ -123,7 +123,7 @@ func TestCheckIMAPLiteralConsistency_RequestFlow(t *testing.T) {
 	ws := scenario.Warnings(s)
 	found := false
 	for _, w := range ws {
-		if strings.Contains(w, "imap literal 计数不一致") {
+		if strings.Contains(w.Message, "imap literal 计数不一致") {
 			found = true
 		}
 	}

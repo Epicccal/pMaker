@@ -54,7 +54,8 @@ var eprtArgsRegex = regexp.MustCompile(`^\s*\|(\d+)\|([^|]+)\|(\d+)\|\s*$`)
 
 // ftpNegotiation 是一条从 227/PORT/229/EPRT 文本解析出的数据连接协商端点。
 type ftpNegotiation struct {
-	flowName string // 所在控制流名(空名则用 "#<下标>"),用于告警定位
+	flowIdx  int    // 所在控制流在 flows 里的声明序,用于字段路径
+	flowName string // 所在控制流名(空名则用 "#<下标>"),用于告警人读文案
 	msgIdx   int    // 所在消息在 flow 内的序号,用于告警定位
 	kind     string // "227" | "PORT" | "229" | "EPRT"
 	ip       string // 协商地址(227/PORT/EPRT 时填解析出的地址;229/EPSV 时为空,地址隐式为控制连接对端)
@@ -75,7 +76,7 @@ type flowEndpoint struct {
 // 解析出协商的 IP:端口,再与场景中各 flow 的 dst IP : dport 比对。对解析失败、或协商端点
 // 与数据流端点不一致的情况,产出告警(非硬错:畸形用例可能故意构造不一致以构造异常场景)。
 // 返回零到多条告警,每条带 flow/message 定位。
-func CheckFTPDataPortConsistency(s *Scenario) []string {
+func CheckFTPDataPortConsistency(s *Scenario) []Diagnostic {
 	if s == nil || len(s.Flows) == 0 {
 		return nil
 	}
@@ -110,13 +111,13 @@ func CheckFTPDataPortConsistency(s *Scenario) []string {
 		eps[i] = ep
 	}
 
-	var warnings []string
+	var warnings []Diagnostic
 	for i, f := range s.Flows {
 		if !eps[i].isCtrl {
 			continue
 		}
 		for j, m := range f.Messages {
-			negotiations, parseWarns := extractFTPNegotiations(flowLabel(f.Name, i), j, m)
+			negotiations, parseWarns := extractFTPNegotiations(flowLabel(f.Name, i), i, j, m)
 			warnings = append(warnings, parseWarns...)
 			for _, n := range negotiations {
 				warnings = append(warnings, matchNegotiation(n, s.Flows, eps, i)...)
@@ -132,18 +133,19 @@ func CheckFTPDataPortConsistency(s *Scenario) []string {
 // extractFTPNegotiations 从单条消息提取 227/PORT 协商端点;解析失败时产出告警。
 // 仅识别明确为 227/PORT 的内容(结构化 ftp_response(227)/ftp_request(PORT),或
 // 原始 payload/payload_hex 文本首 token 为 "227"/"PORT"/"229"/"EPRT"),避免误判其它响应码或命令。
-func extractFTPNegotiations(flowName string, msgIdx int, m Message) (negotiations []ftpNegotiation, parseWarnings []string) {
+func extractFTPNegotiations(flowName string, flowIdx, msgIdx int, m Message) (negotiations []ftpNegotiation, parseWarnings []Diagnostic) {
 	if len(m.Stack) == 0 {
 		return
 	}
+	msgPath := flowMessagePath(flowIdx, msgIdx)
 	// add6 解析 227/PORT 的六元组(带 IPv4 地址):成功则记端点,失败则记告警。
 	add6 := func(kind, text string) {
 		ip, port, ok := parseFTPPortTuple(text)
 		if ok {
-			negotiations = append(negotiations, ftpNegotiation{flowName, msgIdx, kind, ip, port})
+			negotiations = append(negotiations, ftpNegotiation{flowIdx, flowName, msgIdx, kind, ip, port})
 			return
 		}
-		parseWarnings = append(parseWarnings, fmt.Sprintf(
+		parseWarnings = append(parseWarnings, warnf(CodeFTPNegotiationParse, msgPath,
 			"flow %q 的 messages[%d] 的 %s 协商文本 %q 未解析出 IPv4:端口六元组,无法校验数据端口一致性",
 			flowName, msgIdx, kind, text))
 	}
@@ -151,10 +153,10 @@ func extractFTPNegotiations(flowName string, msgIdx int, m Message) (negotiation
 	addEpsv := func(text string) {
 		port, ok := parseEPSVTuple(text)
 		if ok {
-			negotiations = append(negotiations, ftpNegotiation{flowName, msgIdx, "229", "", port})
+			negotiations = append(negotiations, ftpNegotiation{flowIdx, flowName, msgIdx, "229", "", port})
 			return
 		}
-		parseWarnings = append(parseWarnings, fmt.Sprintf(
+		parseWarnings = append(parseWarnings, warnf(CodeFTPNegotiationParse, msgPath,
 			"flow %q 的 messages[%d] 的 229(EPSV)协商文本 %q 未解析出 (|||port|) 端口,无法校验数据端口一致性",
 			flowName, msgIdx, text))
 	}
@@ -162,10 +164,10 @@ func extractFTPNegotiations(flowName string, msgIdx int, m Message) (negotiation
 	addEprt := func(text string) {
 		ip, port, ok := parseEPRTArgs(text)
 		if ok {
-			negotiations = append(negotiations, ftpNegotiation{flowName, msgIdx, "EPRT", ip, port})
+			negotiations = append(negotiations, ftpNegotiation{flowIdx, flowName, msgIdx, "EPRT", ip, port})
 			return
 		}
-		parseWarnings = append(parseWarnings, fmt.Sprintf(
+		parseWarnings = append(parseWarnings, warnf(CodeFTPNegotiationParse, msgPath,
 			"flow %q 的 messages[%d] 的 EPRT 协商文本 %q 未解析出 |netproto|addr|port|,无法校验数据端口一致性",
 			flowName, msgIdx, text))
 	}
@@ -253,7 +255,7 @@ func extractFTPNegotiations(flowName string, msgIdx int, m Message) (negotiation
 // 协商 IP 与控制连接对应角色不一致时,声明的是与本次会话无关的地址(常见笔误或配置错),
 // 产出告警。畸形用例可能故意构造不一致以构造异常场景,故只告警不阻断。
 // 控制流缺端点信息时跳过(无法判定)。
-func checkNegotiationRole(n ftpNegotiation, ctrl flowEndpoint) []string {
+func checkNegotiationRole(n ftpNegotiation, ctrl flowEndpoint) []Diagnostic {
 	if ctrl.srcIP == "" || ctrl.dstIP == "" {
 		return nil
 	}
@@ -271,7 +273,7 @@ func checkNegotiationRole(n ftpNegotiation, ctrl flowEndpoint) []string {
 	if actual == expected {
 		return nil
 	}
-	return []string{fmt.Sprintf(
+	return []Diagnostic{warnf(CodeFTPRoleMismatch, flowMessagePath(n.flowIdx, n.msgIdx),
 		"flow %q 的 %s 协商地址 %s 与控制连接 %s 端 %s 不一致(协商地址与控制连接角色不匹配)",
 		n.flowName, n.kind, actual, role, expected)}
 }
@@ -280,7 +282,7 @@ func checkNegotiationRole(n ftpNegotiation, ctrl flowEndpoint) []string {
 // 完全一致 → 无告警;仅端口或仅 IP 一致 → 给出指向性告警;都不一致 → 告警未找到对应数据流。
 // 对 229(EPSV):ip 为空,地址隐式为控制连接对端(服务器侧=控制流 dst IP),故比对时
 // 把 n.ip 补为 ctrl.dstIP,再按"完全一致 / 端口一致 / IP 一致 / 未找到"判定。
-func matchNegotiation(n ftpNegotiation, flows []FlowSpec, eps []flowEndpoint, ctrlIdx int) []string {
+func matchNegotiation(n ftpNegotiation, flows []FlowSpec, eps []flowEndpoint, ctrlIdx int) []Diagnostic {
 	// 229(EPSV)不含地址:隐式为控制连接服务器侧(ctrl.dstIP)。补上后再比对。
 	if n.kind == "229" && n.ip == "" {
 		n.ip = eps[ctrlIdx].dstIP
@@ -299,17 +301,18 @@ func matchNegotiation(n ftpNegotiation, flows []FlowSpec, eps []flowEndpoint, ct
 			ipMatch = append(ipMatch, fmt.Sprintf("flow %q 的 dst %s:%d", flowLabel(flows[k].Name, k), eps[k].dstIP, eps[k].dport))
 		}
 	}
+	msgPath := flowMessagePath(n.flowIdx, n.msgIdx)
 	switch {
 	case len(portMatch) > 0:
-		return []string{fmt.Sprintf(
+		return []Diagnostic{warnf(CodeFTPPortMismatch, msgPath,
 			"flow %q 的 %s 协商数据连接 %s:%d,但 %s:端口一致而 IP 不一致(端口协商与数据连接不一致)",
 			n.flowName, n.kind, n.ip, n.port, strings.Join(portMatch, "、"))}
 	case len(ipMatch) > 0:
-		return []string{fmt.Sprintf(
+		return []Diagnostic{warnf(CodeFTPPortMismatch, msgPath,
 			"flow %q 的 %s 协商数据连接 %s:%d,但 %s:IP 一致而端口不一致(端口协商与数据连接不一致)",
 			n.flowName, n.kind, n.ip, n.port, strings.Join(ipMatch, "、"))}
 	default:
-		return []string{fmt.Sprintf(
+		return []Diagnostic{warnf(CodeFTPPortMismatch, msgPath,
 			"flow %q 的 %s 协商数据连接 %s:%d,但未找到 dst 为 %s:%d 的数据流(端口协商与数据连接不一致)",
 			n.flowName, n.kind, n.ip, n.port, n.ip, n.port)}
 	}

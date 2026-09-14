@@ -353,7 +353,7 @@ func TestMultipartConsistencyWarnings(t *testing.T) {
 		t.Helper()
 		ws := scenario.Warnings(s)
 		for _, w := range ws {
-			if strings.Contains(w, sub) {
+			if strings.Contains(w.Message, sub) {
 				return
 			}
 		}
@@ -363,7 +363,7 @@ func TestMultipartConsistencyWarnings(t *testing.T) {
 		t.Helper()
 		ws := scenario.Warnings(s)
 		for _, w := range ws {
-			if strings.Contains(w, sub) {
+			if strings.Contains(w.Message, sub) {
 				t.Errorf("不期望出现含 %q 的告警,得到 %v", sub, ws)
 			}
 		}
