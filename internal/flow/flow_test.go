@@ -380,9 +380,10 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 		4: "10.0.0.10:49152 -> 10.0.0.80:80  eth/ipv4/tcp/http",
 		6: "10.0.0.10:49152 <- 10.0.0.80:80  eth/ipv4/tcp/http",
 	}
+	lines := summary.FormatPacketSummaries(summaries)
 	for n, w := range want {
-		if line := summary.FormatPacketSummary(n, summaries[n-1]); !strings.Contains(line, w) {
-			t.Errorf("第%d行=%q,期望包含 %q", n, line, w)
+		if !strings.Contains(lines[n-1], w) {
+			t.Errorf("第%d行=%q,期望包含 %q", n, lines[n-1], w)
 		}
 	}
 }

@@ -4,19 +4,10 @@ import (
 	"fmt"
 )
 
-// FormatPacketSummary 按 CLI 输出格式格式化单包摘要,index 从 1 开始传入。
-// 单行格式:列宽取本行自身,不做跨行补齐——适合单包输出。
-// 多行对齐(序号位数、左右端点宽度跨行补齐)请用 FormatPacketSummaries。
-//
-// 在序号与左端点之间插入时间列(ISO8601 带微秒,与 base_time 语义一致)。
-func FormatPacketSummary(index int, s PacketSummary) string {
-	return formatRow(index, s, indexWidth(index), len(s.Left), len(s.Right))
-}
-
 // FormatPacketSummaries 批量格式化摘要并跨行对齐:index 从 1 开始;序号按最大位数、
 // 左右端点按各自最大宽度补齐,使每行的 ']'(序号尾)、箭头、协议栈起点落同一列。
 //
-// 对齐是整表属性——单行无从知晓其它行的宽度,故多行输出必须走此函数而非逐行 FormatPacketSummary。
+// 对齐是整表属性——单行无从知晓其它行的宽度,故所有输出统一走此函数。
 // 时间列恒为定宽(ISO8601 带微秒,AbsTime 结构性保证 UTC,故每行 27 字符),无需补齐。
 func FormatPacketSummaries(summaries []PacketSummary) []string {
 	idxW := indexWidth(len(summaries))

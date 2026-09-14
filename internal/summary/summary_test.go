@@ -61,23 +61,24 @@ func TestSummarizePlanned(t *testing.T) {
 	}
 
 	got := summary.SummarizePlanned(planned)
-	ts := at(0).Format("2006-01-02T15:04:05.000000Z07:00")
-	want := []string{
-		"[1] " + ts + " 10.0.0.1 -> 10.0.0.2  eth/ipv4/tcp/http",
-		"[2] " + ts + " 10.0.0.1 <- 10.0.0.2  eth/ipv4/tcp",
-		"[3] " + ts + " 192.168.1.1 -> 192.168.1.2  eth/ipv4/gre/ipv4/tcp",
-		"[4] " + ts + " - -> -  eth",
-		"[5] " + ts + " 10.0.0.1 -> 10.0.0.2  eth/ipv4/tcp/http",
-		"[6] " + ts + " - -> -  http",
-		"[7] " + ts + " 2001:db8::1 -> 2001:db8::2  eth/ipv6/tcp",
-		"[8] " + ts + " 2001:db8::2 -> 2001:db8::1  eth/ipv6/icmpv6",
+	// 逐行断言端点/方向/协议栈(格式化对齐由 format_test.go 单独覆盖)。
+	want := []struct{ left, arrow, right, stack string }{
+		{"10.0.0.1", "->", "10.0.0.2", "eth/ipv4/tcp/http"},
+		{"10.0.0.1", "<-", "10.0.0.2", "eth/ipv4/tcp"},
+		{"192.168.1.1", "->", "192.168.1.2", "eth/ipv4/gre/ipv4/tcp"},
+		{"-", "->", "-", "eth"},
+		{"10.0.0.1", "->", "10.0.0.2", "eth/ipv4/tcp/http"},
+		{"-", "->", "-", "http"},
+		{"2001:db8::1", "->", "2001:db8::2", "eth/ipv6/tcp"},
+		{"2001:db8::2", "->", "2001:db8::1", "eth/ipv6/icmpv6"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("摘要数量=%d,期望 %d", len(got), len(want))
 	}
 	for i, w := range want {
-		if line := summary.FormatPacketSummary(i+1, got[i]); line != w {
-			t.Errorf("第%d行=%q,期望 %q", i+1, line, w)
+		s := got[i]
+		if s.Left != w.left || s.Arrow != w.arrow || s.Right != w.right || s.Stack != w.stack {
+			t.Errorf("第%d行=%v,期望 %v", i+1, s, w)
 		}
 	}
 }
@@ -100,16 +101,17 @@ func TestSummarizePlannedWithTime(t *testing.T) {
 	}
 
 	got := summary.SummarizePlanned(planned)
+	lines := summary.FormatPacketSummaries(got)
 	want := []string{
 		"[1] 2020-01-01T00:00:00.000000Z 10.0.0.10 -> 10.0.0.80  eth/ipv4/tcp",
 		"[2] 2020-01-01T00:00:00.001000Z 10.0.0.10 <- 10.0.0.80  eth/ipv4/tcp",
 	}
-	if len(got) != len(want) {
-		t.Fatalf("摘要数量=%d,期望 %d", len(got), len(want))
+	if len(lines) != len(want) {
+		t.Fatalf("行数=%d,期望 %d", len(lines), len(want))
 	}
 	for i, w := range want {
-		if line := summary.FormatPacketSummary(i+1, got[i]); line != w {
-			t.Errorf("第%d行=%q,期望 %q", i+1, line, w)
+		if lines[i] != w {
+			t.Errorf("第%d行=%q,期望 %q", i+1, lines[i], w)
 		}
 	}
 }
@@ -154,20 +156,21 @@ func TestSummarizeWithPorts(t *testing.T) {
 		),
 	}
 	got := summary.SummarizePlanned(planned)
-	ts := base.Format("2006-01-02T15:04:05.000000Z07:00")
-	want := []string{
-		"[1] " + ts + " 10.0.0.10:49152 -> 10.0.0.80:80  eth/ipv4/tcp",
-		"[2] " + ts + " 10.0.0.10:49152 <- 10.0.0.80:80  eth/ipv4/tcp",
-		"[3] " + ts + " 10.0.0.10:5353 -> 10.0.0.80:5353  eth/ipv4/udp",
-		"[4] " + ts + " 10.0.0.10 -> 10.0.0.80  eth/ipv4/icmp",
-		"[5] " + ts + " [2001:db8::1]:443 -> [2001:db8::2]:443  eth/ipv6/tcp",
+	// 逐行断言端点(格式化对齐由 format_test.go 单独覆盖):端口随方向归一,左恒为 base 源端。
+	want := []struct{ left, arrow, right string }{
+		{"10.0.0.10:49152", "->", "10.0.0.80:80"},
+		{"10.0.0.10:49152", "<-", "10.0.0.80:80"},
+		{"10.0.0.10:5353", "->", "10.0.0.80:5353"},
+		{"10.0.0.10", "->", "10.0.0.80"},
+		{"[2001:db8::1]:443", "->", "[2001:db8::2]:443"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("摘要数量=%d,期望 %d", len(got), len(want))
 	}
 	for i, w := range want {
-		if line := summary.FormatPacketSummary(i+1, got[i]); line != w {
-			t.Errorf("第%d行=%q,期望 %q", i+1, line, w)
+		s := got[i]
+		if s.Left != w.left || s.Arrow != w.arrow || s.Right != w.right {
+			t.Errorf("第%d行端点=%q %s %q,期望 %q %s %q", i+1, s.Left, s.Arrow, s.Right, w.left, w.arrow, w.right)
 		}
 	}
 }
