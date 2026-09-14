@@ -46,8 +46,8 @@ func ExpandFilePlaceholders(s *Scenario, baseDir string) error {
 // walkStrings 递归遍历 v,对其所有可设置的 string 字段执行占位符替换。
 // path 是当前值在 Scenario 结构中的字段路径(用于错误定位,如 "Packets[0].Stack[0].Fields.Body")。
 //
-// 对 HeaderEntry(HeaderMap 的元素):只替换 Value、不替换 Key,对齐旧 map[string]string
-// 「值替换、键不替换」语义(HTTP headers 的 key 是结构字段,不应被 @file 改写)。
+// 对 HeaderEntry(HeaderMap 的元素):只替换 Value、不替换 Key
+// (HTTP headers 的 key 是结构字段,不应被 @file 改写)。
 func walkStrings(v reflect.Value, baseDir, path string) error {
 	if !v.IsValid() {
 		return nil
@@ -81,7 +81,7 @@ func walkStrings(v reflect.Value, baseDir, path string) error {
 		if v.Type() == yamlNodeType {
 			return nil // 跳过 yaml.Node
 		}
-		// HeaderMap 的元素 HeaderEntry 只替换 Value、不替换 Key(对齐旧 map 语义)。
+		// HeaderMap 的元素 HeaderEntry 只替换 Value、不替换 Key(key 是结构字段)。
 		if v.Type() == reflect.TypeFor[HeaderEntry]() {
 			return walkStrings(v.FieldByName("Value"), baseDir, joinPath(path, "Value"))
 		}
@@ -101,30 +101,6 @@ func walkStrings(v reflect.Value, baseDir, path string) error {
 			fp := fmt.Sprintf("%s[%d]", path, i)
 			if err := walkStrings(v.Index(i), baseDir, fp); err != nil {
 				return err
-			}
-		}
-		return nil
-	case reflect.Map:
-		// map 值(非键)参与替换:HTTP headers 是 map[string]string,值可能含 @file。
-		// map 元素经 reflect 取得不可寻址,须用 SetMapIndex 写回。
-		if !v.CanSet() {
-			return nil
-		}
-		for _, key := range v.MapKeys() {
-			old := v.MapIndex(key)
-			if old.Kind() != reflect.String {
-				continue
-			}
-			s := old.String()
-			if !strings.Contains(s, "@") {
-				continue
-			}
-			expanded, err := expandString(s, baseDir)
-			if err != nil {
-				return fmt.Errorf("%s[%v]: %w", path, key.String(), err)
-			}
-			if expanded != s {
-				v.SetMapIndex(key, reflect.ValueOf(expanded))
 			}
 		}
 		return nil
