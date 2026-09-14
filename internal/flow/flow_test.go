@@ -136,7 +136,7 @@ func TestFlowSeqSegmentation(t *testing.T) {
 			Segment: &scenario.Segment{MSS: 8},
 		}},
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestFlowExpandMessageIDTimes(t *testing.T) {
 			{From: "dst", MessageID: "m2", Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "bbbb"}}}},
 		},
 	}
-	_, _, msgids, err := flow.Expand(f, time.Time{}, nil, nil)
+	_, _, msgids, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestFlowCloseRST(t *testing.T) {
 			}},
 		}},
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	for _, f := range s.Flows {
-		fp, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+		fp, _, _, err := flow.Expand(f, time.Time{}, nil)
 		if err != nil {
 			t.Fatalf("expand: %v", err)
 		}
@@ -481,7 +481,7 @@ func TestFlowVLANEncapsulation(t *testing.T) {
 			Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "hello"}}},
 		}},
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -675,7 +675,7 @@ func TestFlowVLANDirectionalVID(t *testing.T) {
 			if err := scenario.Validate(&scenario.Scenario{Flows: []scenario.FlowSpec{f}}); err != nil {
 				t.Fatalf("Validate: %v", err)
 			}
-			pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+			pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 			if err != nil {
 				t.Fatalf("expand: %v", err)
 			}
@@ -709,7 +709,7 @@ func TestFlowVLANDirectionalKeepsSharedFields(t *testing.T) {
 	tpid := scenario.Hex(0x88a8)
 	tmpl := &scenario.VLANFields{SrcVID: u(300), DstVID: u(400), Pri: &pri, DEI: &dei, Type: &tpid}
 	f := dirVLANFlow(tmpl)
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}

@@ -110,19 +110,11 @@ type conn struct {
 }
 
 // MessageSchedule 是单条消息的起始时刻(由 plan 阶段一算好后传入)。
-// Expand 不再为每条消息运行期解析 start_after;它只按给定的 Start 把消息整组铺到时间轴。
-// nil 时按默认链式 msgCursor 接续(无跨流依赖的退化路径,逐字节等价)。
+// Expand 不运行期解析 start_after;只按给定的 Start 把消息整组铺到时间轴。
+// nil(整个 schedule 为空)时按默认链式 msgCursor 接续,不支持跨流 start_after。
 type MessageSchedule struct {
 	Start time.Time
 }
-
-// noopResolve 是无跨流依赖时的占位解析器,恒返回未命中(本 flow 无 message 级 start_after)。
-func noopResolve(refFlow, refMsg string) (time.Time, bool) { return time.Time{}, false }
-
-// ResolveRef 解析 message 级 start_after 引用为绝对时刻。形如 "flow名" → 该 flow 整流结束
-// (挥手后);"flow名.message_id" → 该消息整组完成(msgCursor)。仅供 Expand 的 resolve 参数
-// 退化路径使用(plan 阶段一算时方案未注入 per-message schedule 时)。
-type ResolveRef func(refFlow, refMsg string) (time.Time, bool)
 
 // Expand 把一条 flow 展开成有序的、带显式时间戳的 PlannedPacket。
 //
@@ -147,21 +139,15 @@ type ResolveRef func(refFlow, refMsg string) (time.Time, bool)
 //
 // schedule 是该 flow 各消息的起始时刻表(按 message 声明序,一一对应)。由 plan 算时阶段
 // 预先算好(跨流 start_after 已解析为绝对时刻);Expand 只照表把每条消息铺到时间轴,不再运行期
-// 解析跨流依赖。nil 时退化为 resolve 回调路径(无跨流依赖时的历史行为,逐字节等价)。
-//
-// resolve 仅供 schedule==nil 的退化路径用:解析 message 级 start_after 引用为被引时刻(整流结束
-// 或某消息 msgCursor)。nil 时用 noopResolve(本 flow 无 message 级 start_after)。
+// 解析跨流依赖。nil 时按默认链式 msgCursor 接续(不支持跨流 start_after)。
 //
 // 返回值:
 //   - 第二个返回值是该 flow 真正结束的时刻(挥手后),供 plan 解析裸 flow 名引用(整流结束)。
 //   - 第三个返回值是 message_id → 该消息整组完成时刻(msgCursor)的映射,仅收录显式设了
 //     message_id 的消息;供 plan 解析其它 flow / message 的 start_after 引用。空(无具名消息)时为 nil。
-func Expand(f scenario.FlowSpec, anchor time.Time, schedule []MessageSchedule, resolve ResolveRef) ([]scenario.PlannedPacket, time.Time, map[string]time.Time, error) {
+func Expand(f scenario.FlowSpec, anchor time.Time, schedule []MessageSchedule) ([]scenario.PlannedPacket, time.Time, map[string]time.Time, error) {
 	if len(schedule) > 0 && len(schedule) != len(f.Messages) {
 		return nil, time.Time{}, nil, fmt.Errorf("schedule 长度 %d 与消息数 %d 不符", len(schedule), len(f.Messages))
-	}
-	if resolve == nil {
-		resolve = noopResolve
 	}
 	c, err := parseFlowStack(f.Stack)
 	if err != nil {
@@ -195,24 +181,13 @@ func Expand(f scenario.FlowSpec, anchor time.Time, schedule []MessageSchedule, r
 		// 本消息起始:
 		//   - schedule 非空(plan 算时方案):start 来自算时阶段给出的绝对时刻(已含 start_after
 		//     解析与 offset_time),Expand 不再推导、不再叠加 offset(否则会重复)。
-		//   - 退化路径(无 schedule):默认 = 上一条末尾 + offset;message 级 start_after 把参照点
-		//     从 msgCursor 改为被引时刻(整流结束或某消息 msgCursor),再 + offset_time。
+		//   - 退化路径(无 schedule):start = 上一条末尾 + offset_time(无 offset 则紧接 msgCursor)。
+		//     message 级 start_after 由 plan 算时阶段解析后经 schedule 注入,退化路径不支持跨流引用。
 		start := msgCursor
 		if len(schedule) > 0 {
 			start = schedule[mi].Start
-		} else {
-			if m.StartAfter != "" {
-				refFlow, refMsg, _ := scenario.SplitStartAfter(m.StartAfter)
-				got, ok := resolve(refFlow, refMsg)
-				if !ok {
-					// 被引时刻未解析到:plan 在展开前应保证被引 flow 已展开,此处不应到达。
-					return nil, time.Time{}, msgids, fmt.Errorf("message 的 start_after %q 未能解析(被引 flow/message 未展开)", m.StartAfter)
-				}
-				start = got
-			}
-			if m.OffsetTime != nil {
-				start = start.Add(m.OffsetTime.Duration())
-			}
+		} else if m.OffsetTime != nil {
+			start = start.Add(m.OffsetTime.Duration())
 		}
 		// 段间间隔:缺省 DefaultStep(与历史等价),显式 interval 覆盖。
 		// interval 只作用于数据段(规避节奏);对端 ACK 是伴生控制包,用 DefaultStep,

@@ -315,7 +315,7 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 			}
 			sched[j] = flow.MessageSchedule{Start: st}
 		}
-		expanded, _, _, err := flow.Expand(f, anchor, sched, nil)
+		expanded, _, _, err := flow.Expand(f, anchor, sched)
 		if err != nil {
 			return nil, fmt.Errorf("flow[%d](%s): %w", fi, f.Name, err)
 		}

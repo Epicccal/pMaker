@@ -31,7 +31,7 @@ func TestFlowIPv6Stack(t *testing.T) {
 			}},
 		}},
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestFlowIPv6ReverseDirection(t *testing.T) {
 			{From: "dst", Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "rep"}}}},
 		},
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
