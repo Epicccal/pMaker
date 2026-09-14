@@ -1,6 +1,7 @@
 package scenario_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,14 +20,14 @@ import (
 // TestInternalNoSlog 扫描 internal/ 全部非测试 .go 源文件,出现 slog 引用即失败。
 func TestInternalNoSlog(t *testing.T) {
 	root := ".." // 测试工作目录是 internal/scenario,扫整个 internal/
-	var offenders []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	var paths []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			// 跳过测试数据与 vendor 类目录(无 Go 源)。
-			if info.Name() == "testdata" {
+			if d.Name() == "testdata" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -34,18 +35,23 @@ func TestInternalNoSlog(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
+		paths = append(paths, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("扫描 internal/ 失败: %v", err)
+	}
+
+	var offenders []string
+	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			t.Fatalf("读取 %s 失败: %v", path, err)
 		}
 		src := string(data)
 		if strings.Contains(src, "log/slog") || strings.Contains(src, "slog.") {
 			offenders = append(offenders, path)
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("扫描 internal/ 失败: %v", err)
 	}
 	if len(offenders) > 0 {
 		t.Fatalf("internal/ 内禁止用 slog 打用户可见诊断(日志不回流调用方,MCP 下模型永远看不到):\n%s\n软告警一律经 scenario.Diagnostic / Warnings 回流;进度/调试日志放 cmd/ 层",
