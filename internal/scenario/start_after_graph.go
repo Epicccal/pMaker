@@ -5,28 +5,16 @@ import (
 	"strings"
 )
 
-// StartAfterNode 是事件粒度依赖图的一个节点(方案 A/B 共用)。节点代表一个"事件":
+// StartAfterNode 是事件粒度依赖图的一个节点。节点代表一个"事件":
 // flow 的起点 / 终点,或一条参与 start_after 的 message。ID 为该节点在图中的稳定序号,
-// 仅供内部索引;对外含义由 Kind 与 Label 表达。
+// 仅供内部索引;对外含义由 Label 表达。
 type StartAfterNode struct {
-	Kind  NodeKind
-	Flow  int    // 所属 flow 的声明序号
-	Msg   int    // Kind==NodeMsg 时为该消息在 flow 内的序号;否则为 -1
 	Label string // 可读标签,如 "start:control" / "msg:control.pasv" / "end:data"
 }
 
-// NodeKind 枚举事件节点的种类。
-type NodeKind int
-
-const (
-	NodeStart NodeKind = iota // flow 起点(flowStart)
-	NodeEnd                   // flow 终点(flowEnd,挥手后)
-	NodeMsg                   // 一条参与引用的 message(带 start_after 或 msgid 被引)
-)
-
 // StartAfterGraph 是事件粒度的有向依赖图:边 X→Y 表示"X 依赖 Y(X 在 Y 之后发生)"。
-// validateStartAfter 用它做三色 DFS 检环;plan 阶段一(算时)消费它的拓扑序逐事件算时刻。
-// 两个关注点共用同一张图,避免在两个包里重复实现图逻辑。
+// 仅供 validateStartAfter 做三色 DFS 检环;plan 的算时阶段(scheduler)按同一事件粒度
+// 规则独立递归,不消费本图。
 type StartAfterGraph struct {
 	Nodes []StartAfterNode
 	// Adj[i] 为节点 i 依赖的节点集(X→Y:X 在 Y 之后)。
@@ -42,16 +30,16 @@ type StartAfterGraph struct {
 //     (无参与消息则依赖 flowStart)。跨过非参与消息连相邻参与消息仍是真实"之后"。
 //   - 连 start_after 边:引用方节点(flowStart 或某 msg)依赖被引方节点(flowEnd 或某 msg)。
 //
-// 该图仅供检环与算时;它**有意省略非参与消息**(它们的时间在 plan 算时阶段按流内链式游标
+// 该图仅供 validateStartAfter 检环;它**有意省略非参与消息**(它们的时间在 plan 算时阶段按流内链式游标
 // 另行推进,不影响依赖结构)。返回的边方向为"X 依赖 Y";检环时回边即环。
 func BuildStartAfterGraph(flows []FlowSpec) *StartAfterGraph {
 	g := &StartAfterGraph{key: map[string]int{}}
-	add := func(label string, kind NodeKind, fi, j int) int {
+	add := func(label string) int {
 		if i, ok := g.key[label]; ok {
 			return i
 		}
 		i := len(g.Nodes)
-		g.Nodes = append(g.Nodes, StartAfterNode{Kind: kind, Flow: fi, Msg: j, Label: label})
+		g.Nodes = append(g.Nodes, StartAfterNode{Label: label})
 		g.Adj = append(g.Adj, nil)
 		g.key[label] = i
 		return i
@@ -132,8 +120,8 @@ func BuildStartAfterGraph(flows []FlowSpec) *StartAfterGraph {
 		if label == "" {
 			label = fmt.Sprintf("#%d", fi)
 		}
-		s := add("start:"+label, NodeStart, fi, -1)
-		e := add("end:"+label, NodeEnd, fi, -1)
+		s := add("start:" + label)
+		e := add("end:" + label)
 		startNode[fi] = s
 		endNode[fi] = e
 
@@ -147,7 +135,7 @@ func BuildStartAfterGraph(flows []FlowSpec) *StartAfterGraph {
 			if m.MessageID != "" {
 				mlabel = "msg:" + label + "." + m.MessageID
 			}
-			n := add(mlabel, NodeMsg, fi, j)
+			n := add(mlabel)
 			msgNodeByPos[[2]int{fi, j}] = n
 			if m.MessageID != "" && f.Name != "" {
 				if msgNodeByName[f.Name] == nil {
