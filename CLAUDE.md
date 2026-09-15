@@ -74,7 +74,7 @@ gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ 
 | L2 | `eth`、`vlan`(Dot1Q,支持 QinQ 多层) |
 | L3 | `ipv4`、`ipv6`、`gre`、`vxlan` |
 | L4 | `tcp`、`udp`、`tcp_session`(flow 会话开关,非 wire 层) |
-| 控制 | `icmp`、`icmpv6`(别名 `icmp6`) |
+| 控制 | `icmp`、`icmpv6` |
 | 应用 | `dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet` |
 | 应用 | `smtp_request`、`smtp_response`、`pop3_request`、`pop3_response` |
 | 应用 | `imap_request`、`imap_response`、`eml_data` |

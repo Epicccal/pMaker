@@ -21,7 +21,7 @@ packets:
 | `src` | IPv4 字符串 | 是 | 源地址 |
 | `dst` | IPv4 字符串 | 是 | 目的地址 |
 | `ttl` | uint8 | 否(缺省 64) | 生存时间 |
-| `protocol` | **枚举名** | 否 | 覆盖下一层协议号,**只认名字**:`tcp` `udp` `icmp` `icmpv6`/`icmp6` `gre` `ipv4` `ipv6` |
+| `protocol` | **枚举名** | 否 | 覆盖下一层协议号,**只认名字**:`tcp` `udp` `icmp` `icmpv6` `gre` `ipv4` `ipv6` |
 | `checksum` | `Hex` | 否 | 两态覆盖:不写=自动计算;写值=关闭自动计算,原样上 wire |
 | `total_length` | `Hex` | 否 | 两态覆盖(16 位):不写=自动计算(含头总字节数);写值=原样上 wire |
 | `header_length` | `Hex` | 否 | 两态覆盖(IHL,4 位,0-15):不写=自动计算;写值=原样上 wire。5-15 是规范范围,0-4 是合法畸形值 |

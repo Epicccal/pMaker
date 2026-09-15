@@ -113,7 +113,6 @@ var layerDecoders = map[string]layerDecoder{
 	// 控制
 	"icmp":   fieldsDecoder[ICMPFields](),
 	"icmpv6": fieldsDecoder[ICMPv6Fields](),
-	"icmp6":  fieldsDecoder[ICMPv6Fields](), // icmpv6 的别名
 	// 应用
 	"dns":           fieldsDecoder[DNSFields](),
 	"http_request":  fieldsDecoder[HTTPReqFields](),

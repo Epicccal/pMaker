@@ -109,7 +109,7 @@ flows:
 | L2 | `eth`、`vlan` |
 | L3 | `ipv4`、`ipv6`、`gre`、`vxlan`(UDP 承载二层隧道:`udp(4789) → vxlan → eth`;支持 `packets` 与单层 VXLAN TCP flow) |
 | L4 | `tcp`、`udp`、`tcp_session`(仅 `flow.stack`) |
-| 控制/应用 | `icmp`、`icmpv6`(别名 `icmp6`)、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data` |
+| 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data` |
 | 兜底 | `payload`、`payload_hex` |
 
 各层 schema 一律 `pmaker://schema/<层名>`。

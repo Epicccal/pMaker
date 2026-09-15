@@ -19,7 +19,7 @@ func lookupIPProto(next string) (layers.IPProtocol, bool) {
 		return layers.IPProtocolUDP, true
 	case "icmp":
 		return layers.IPProtocolICMPv4, true
-	case "icmpv6", "icmp6":
+	case "icmpv6":
 		return layers.IPProtocolICMPv6, true
 	case "gre":
 		return layers.IPProtocolGRE, true
@@ -49,7 +49,7 @@ func ipProtoFor(next string) (layers.IPProtocol, error) {
 func ipProtoOverride(field, value string) (layers.IPProtocol, error) {
 	p, ok := lookupIPProto(value)
 	if !ok {
-		return 0, fmt.Errorf("%s 覆盖值 %q 不是合法协议名:只认 tcp/udp/icmp/icmpv6(icmp6)/gre/ipv4/ipv6,不认数字或其它名字(如 sctp/47);任意协议号当前不支持,走 payload_hex 整段手拼", field, value)
+		return 0, fmt.Errorf("%s 覆盖值 %q 不是合法协议名:只认 tcp/udp/icmp/icmpv6/gre/ipv4/ipv6,不认数字或其它名字(如 sctp/47);任意协议号当前不支持,走 payload_hex 整段手拼", field, value)
 	}
 	return p, nil
 }

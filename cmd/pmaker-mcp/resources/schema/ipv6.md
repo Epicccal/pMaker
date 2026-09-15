@@ -23,7 +23,7 @@ packets:
 | `hop_limit` | uint8 | 否(缺省 64) | 跳数限制(对应 IPv4 的 `ttl`) |
 | `traffic_class` | uint8 | 否 | 流量类别 |
 | `flow_label` | uint32 | 否 | 流标签 |
-| `next_header` | **枚举名** | 否 | 覆盖下一层协议号,**只认名字**:`tcp` `udp` `icmp` `icmpv6`/`icmp6` `gre` `ipv4` `ipv6` |
+| `next_header` | **枚举名** | 否 | 覆盖下一层协议号,**只认名字**:`tcp` `udp` `icmp` `icmpv6` `gre` `ipv4` `ipv6` |
 | `payload_length` | `Hex` | 否 | 两态覆盖(16 位):不写=自动计算(**不含** 40 字节固定头);写值=原样上 wire |
 
 next-header 自动推导:后接 `tcp` → 6、`udp` → 17、`icmpv6` → 58、`gre` → 47、`ipv6` → 41;

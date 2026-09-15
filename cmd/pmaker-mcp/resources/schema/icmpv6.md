@@ -1,7 +1,7 @@
 # icmpv6 —— ICMPv6(控制报文)
 
 echo 与错误报文。校验和依赖 **IPv6 伪首部**(builder 自动绑就近 IPv6)。
-别名 `icmp6` 完全等价(见 `pmaker://schema/icmp6`)。通则见 `pmaker://schema/_conventions`。
+通则见 `pmaker://schema/_conventions`。
 
 ## 骨架
 
@@ -101,4 +101,4 @@ packets:
 
 ## 相关
 
-`pmaker://schema/icmp6`(别名)、`pmaker://schema/icmp`(ICMPv4)、`pmaker://schema/ipv6`
+`pmaker://schema/icmp`(ICMPv4)、`pmaker://schema/ipv6`
