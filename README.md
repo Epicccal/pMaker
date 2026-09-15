@@ -144,6 +144,8 @@ pmaker version                                                 # 打印版本
 
 ### MCP Server
 
+![pMaker MCP 演示](img/pMaker-mcp.gif)
+
 客户端配置示例（Claude Code）：
 
 ```sh
