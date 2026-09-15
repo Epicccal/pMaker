@@ -51,9 +51,6 @@ func isASCIIDigits(s string) bool {
 // chunk 大小远小于此值。
 const maxChunkedSize = 1 << 20 // 1 MiB
 
-// MaxChunkedSize 返回 chunked.size 的固定上限,供校验与测试使用。
-func MaxChunkedSize() int { return maxChunkedSize }
-
 // validContentCodings 是 content_encoding 的合法元素集合(归一后大写形)。
 // chunked 是传输编码,不是内容编码,出现在 CE 里 -> 报错。
 var validContentCodings = map[string]bool{
