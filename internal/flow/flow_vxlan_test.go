@@ -42,7 +42,7 @@ func expandVXLAN(t *testing.T) []scenario.PlannedPacket {
 		{From: "src", Stack: []scenario.Layer{payload("hello")}},
 		{From: "src", Stack: []scenario.Layer{payload("world")}},
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestFlowVXLANTemplatePreserved(t *testing.T) {
 		{From: "src", Stack: []scenario.Layer{payload("hello")}},
 		{From: "src", Stack: []scenario.Layer{payload("world!")}}, // 长度不同 → 每包同值更可辨
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}

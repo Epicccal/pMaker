@@ -136,7 +136,7 @@ func TestFlowSeqSegmentation(t *testing.T) {
 			Segment: &scenario.Segment{MSS: 8},
 		}},
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestFlowExpandMessageIDTimes(t *testing.T) {
 			{From: "dst", MessageID: "m2", Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "bbbb"}}}},
 		},
 	}
-	_, _, msgids, err := flow.Expand(f, time.Time{}, nil, nil)
+	_, _, msgids, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestFlowCloseRST(t *testing.T) {
 			}},
 		}},
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -363,27 +363,27 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 	if err := scenario.Validate(s); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
+	var planned []scenario.PlannedPacket
 	for _, f := range s.Flows {
-		fp, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+		fp, _, _, err := flow.Expand(f, time.Time{}, nil)
 		if err != nil {
 			t.Fatalf("expand: %v", err)
 		}
-		for _, pp := range fp {
-			s.Packets = append(s.Packets, pp.Packet)
-		}
+		planned = append(planned, fp...)
 	}
 
-	summaries := summary.SummarizePackets(s.Packets)
+	summaries := summary.SummarizePlanned(planned)
 	if len(summaries) < 6 {
 		t.Fatalf("摘要数量=%d,期望至少 6", len(summaries))
 	}
 	want := map[int]string{
-		4: "[4] 10.0.0.10:49152 -> 10.0.0.80:80  eth/ipv4/tcp/http",
-		6: "[6] 10.0.0.10:49152 <- 10.0.0.80:80  eth/ipv4/tcp/http",
+		4: "10.0.0.10:49152 -> 10.0.0.80:80  eth/ipv4/tcp/http",
+		6: "10.0.0.10:49152 <- 10.0.0.80:80  eth/ipv4/tcp/http",
 	}
+	lines := summary.FormatPacketSummaries(summaries)
 	for n, w := range want {
-		if line := summary.FormatPacketSummary(n, summaries[n-1]); line != w {
-			t.Errorf("第%d行=%q,期望 %q", n, line, w)
+		if !strings.Contains(lines[n-1], w) {
+			t.Errorf("第%d行=%q,期望包含 %q", n, lines[n-1], w)
 		}
 	}
 }
@@ -481,7 +481,7 @@ func TestFlowVLANEncapsulation(t *testing.T) {
 			Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "hello"}}},
 		}},
 	}
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -675,7 +675,7 @@ func TestFlowVLANDirectionalVID(t *testing.T) {
 			if err := scenario.Validate(&scenario.Scenario{Flows: []scenario.FlowSpec{f}}); err != nil {
 				t.Fatalf("Validate: %v", err)
 			}
-			pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+			pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 			if err != nil {
 				t.Fatalf("expand: %v", err)
 			}
@@ -709,7 +709,7 @@ func TestFlowVLANDirectionalKeepsSharedFields(t *testing.T) {
 	tpid := scenario.Hex(0x88a8)
 	tmpl := &scenario.VLANFields{SrcVID: u(300), DstVID: u(400), Pri: &pri, DEI: &dei, Type: &tpid}
 	f := dirVLANFlow(tmpl)
-	pkts, _, _, err := flow.Expand(f, time.Time{}, nil, nil)
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}

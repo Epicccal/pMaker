@@ -376,8 +376,7 @@ func validateStartAfter(flows []FlowSpec) error {
 		}
 	}
 
-	// 建事件依赖图(BuildStartAfterGraph 与 plan 算时阶段共用图逻辑,见 start_after_graph.go),
-	// 再三色 DFS 检环。回边(指向当前栈中灰节点的边)即环。
+	// 建事件依赖图(见 start_after_graph.go)再三色 DFS 检环。回边(指向当前栈中灰节点的边)即环。
 	g := BuildStartAfterGraph(flows)
 	if err := g.DetectCycle(); err != nil {
 		return err

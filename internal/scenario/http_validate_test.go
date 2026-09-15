@@ -247,7 +247,7 @@ func TestValidateHTTPCodings_ChunkedSizeRange(t *testing.T) {
 	// size 超上限 -> 硬错。
 	if err := httpValidateScenario(mustHTTPRespLayer(t, &scenario.HTTPRespFields{
 		TransferEncoding: scenario.CodingList{"CHUNKED"},
-		Chunked:          &scenario.ChunkedOptions{Size: scenario.MaxChunkedSize() + 1},
+		Chunked:          &scenario.ChunkedOptions{Size: scenario.MaxChunkedSize + 1},
 	})); err == nil || !strings.Contains(err.Error(), "chunked.size") {
 		t.Errorf("chunked.size 超上限期望被拒,得到 %v", err)
 	}
