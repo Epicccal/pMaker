@@ -18,7 +18,7 @@ type PacketSummary struct {
 	Arrow string
 	Right string
 	Stack string
-	// Time 是该包的显式时间戳(来自 PlannedPacket.Time),FormatPacketSummary 输出时间列。
+	// Time 是该包的显式时间戳(来自 PlannedPacket.Time),FormatPacketSummaries 输出时间列。
 	Time time.Time
 }
 
@@ -54,7 +54,7 @@ func summarizePacketWithBase(p scenario.Packet, baseSrc, baseDst string, hasBase
 }
 
 // SummarizePlanned 从已汇流排序的 PlannedPacket 列表生成展示用摘要。
-// 保留 PlannedPacket.Time,FormatPacketSummary 输出时间列。
+// 保留 PlannedPacket.Time,FormatPacketSummaries 输出时间列。
 // 方向归一化:以第一个含 IP 的包为基准,反向包显示为 <-。
 func SummarizePlanned(planned []scenario.PlannedPacket) []PacketSummary {
 	baseSrc, baseDst, hasBase := firstPlannedIPPair(planned)

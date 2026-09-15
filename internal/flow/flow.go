@@ -3,6 +3,7 @@ package flow
 import (
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/Epicccal/pMaker/internal/builder"
@@ -47,7 +48,7 @@ func SessionOf(stack []scenario.Layer) (open, close string) {
 }
 
 // messagePlan 计算一条消息的分段与段间间隔:payload 字节按 segment.mss 切段,
-// interval 缺省 DefaultStep(与未显式定时的历史行为逐字节等价),显式 segment.interval 覆盖。
+// interval 缺省 DefaultStep,显式 segment.interval 覆盖。
 // Expand(阶段二发包)与 MessageDuration(plan 阶段一算时)共用此函数,保证两端对
 // "一条消息占多久"的认知一致——这是跨流 start_after 锚点能精确对齐的前提。
 func messagePlan(m scenario.Message) ([][]byte, time.Duration, error) {
@@ -179,17 +180,17 @@ func Expand(f scenario.FlowSpec, anchor time.Time, schedule []MessageSchedule) (
 			return nil, time.Time{}, msgids, err
 		}
 		// 本消息起始:
-		//   - schedule 非空(plan 算时方案):start 来自算时阶段给出的绝对时刻(已含 start_after
+		//   - schedule 非空(plan 注入):start 来自算时阶段给出的绝对时刻(已含 start_after
 		//     解析与 offset_time),Expand 不再推导、不再叠加 offset(否则会重复)。
-		//   - 退化路径(无 schedule):start = 上一条末尾 + offset_time(无 offset 则紧接 msgCursor)。
-		//     message 级 start_after 由 plan 算时阶段解析后经 schedule 注入,退化路径不支持跨流引用。
+		//   - schedule 为空:start = 上一条末尾 + offset_time(无 offset 则紧接 msgCursor)。
+		//     message 级 start_after 由 plan 算时阶段解析后经 schedule 注入,schedule 为空时不支持跨流引用。
 		start := msgCursor
 		if len(schedule) > 0 {
 			start = schedule[mi].Start
 		} else if m.OffsetTime != nil {
 			start = start.Add(m.OffsetTime.Duration())
 		}
-		// 段间间隔:缺省 DefaultStep(与历史等价),显式 interval 覆盖。
+		// 段间间隔:缺省 DefaultStep,显式 interval 覆盖。
 		// interval 只作用于数据段(规避节奏);对端 ACK 是伴生控制包,用 DefaultStep,
 		// 不被数据段的慢速节奏传染——保持"只让数据慢"的语义纯净。
 		interval := DefaultStep
@@ -405,12 +406,7 @@ func split(b []byte, mss int) [][]byte {
 }
 
 func hasFlag(flags []string, f string) bool {
-	for _, x := range flags {
-		if x == f {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(flags, f)
 }
 
 func sideOf(s string) side {

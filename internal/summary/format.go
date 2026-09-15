@@ -23,7 +23,7 @@ func FormatPacketSummaries(summaries []PacketSummary) []string {
 	return out
 }
 
-// formatRow 按给定列宽格式化单行;列宽由调用方计算(单行=自宽、无补齐;多行=跨行最大宽)。
+// formatRow 按给定列宽格式化单行;列宽由调用方(FormatPacketSummaries)按整表最大宽计算。
 // 序号在括号内右对齐(数字列惯例);左右端点左对齐补齐(便于纵向扫读源/目地址),
 // 箭头与协议栈列因此跨行对齐。两空格分隔 right 端点与 stack。
 // 时间列恒为定宽(ISO8601 带微秒,每行 27 字符),无需补齐。

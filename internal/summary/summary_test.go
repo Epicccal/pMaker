@@ -84,7 +84,7 @@ func TestSummarizePlanned(t *testing.T) {
 }
 
 // TestSummarizePlannedWithTime: SummarizePlanned 保留 PlannedPacket.Time,
-// FormatPacketSummary 在序号与源 IP 之间输出 ISO8601 时间列;反向包仍归一化为 <-。
+// FormatPacketSummaries 在序号与源 IP 之间输出 ISO8601 时间列;反向包仍归一化为 <-。
 func TestSummarizePlannedWithTime(t *testing.T) {
 	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	planned := []scenario.PlannedPacket{
