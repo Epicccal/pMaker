@@ -466,9 +466,9 @@ segment: { mss: 8, interval: "+10ms" }
 
 `internal/plan.Plan` 是 packets 与 flows 的汇流点:把 standalone packets 与各 flow 展开后的
 `PlannedPacket{ Stack []Layer; Time time.Time }` 汇流成列表,按 `Time` **稳定排序**后再交
-`builder.BuildPlanned` 序列化、`writer` 落盘。`flow.Expand(f, anchor)` 接收流起始锚、自管时间轴,
-直接产出 `[]scenario.PlannedPacket`(已带 Time);plan 只负责汇流 + 稳定排序,不再为 flow 内部包
-分配时间。时间语义为「**相对上一包 + 跨流独立**」——各 `offset_time` 的参照点因字段而异:
+`builder.BuildPlanned` 序列化、`writer` 落盘。`flow.Expand(f, anchor, schedule)` 接收流起始锚与
+per-message 起始时刻表,直接产出 `[]scenario.PlannedPacket`(已带 Time);plan 只负责汇流 + 稳定排序,
+不再为 flow 内部包分配时间。时间语义为「**相对上一包 + 跨流独立**」——各 `offset_time` 的参照点因字段而异:
 
 - **跨流独立(flow)**:每条 flow 的 `anchor=base+flow.offset_time`(无 offset 则 = base),plan 不夹紧、不读
   packet 游标、不推进它——无 offset 的多条 flow 在 `base` **并发**(模拟浏览器多连接并行);想顺序就显式
@@ -498,15 +498,17 @@ segment: { mss: 8, interval: "+10ms" }
 - `flow.start_after`:可选,形如 `"flow名"`(该 flow 整流结束,挥手后)或 `"flow名.message_id"`
   (该消息整组完成,msgCursor),置则本 flow 锚基准 = 被引时刻,`anchor = 被引时刻 + flow.offset_time`
   (缺省 0 紧接)。用于"一个 flow 在另一个 flow / 另一个 flow 某消息完成后开始"(如 FTP 控制通道触发
-  数据通道)。这是**显式跨流依赖**(opt-in),默认独立性不变;plan 多遍拓扑展开(被引 flow 先展开登记
-  时刻,引用方多遍解析),循环依赖在校验阶段(`validateStartAfter` 三色 DFS)拦截。被引 message 须在该
+  数据通道)。这是**显式跨流依赖**(opt-in),默认独立性不变;plan 阶段一(scheduler)按事件粒度
+  递归+记忆化把跨流引用解算为绝对时刻,阶段二各 flow 按声明序独立展开(无需多遍拓扑展开),
+  循环依赖在校验阶段(`validateStartAfter` 事件粒度三色 DFS)拦截。被引 message 须在该
   flow 内有唯一 `message_id`;被引 flow 须具名且唯一。被引 flow 可声明在后(拓扑序,非声明序)。
 - `message.start_after`:可选,同形 `"flow名"` 或 `"flow名.message_id"`,置则该消息起点 =
   被引时刻 + `message.offset_time`(缺省 0 紧接),取代默认的"上一条消息末尾 + offset"。用于"某条
   消息在另一个 flow / 另一个 flow 某消息完成后才开始"(比 flow 级更细:不必把整条 flow 的握手都推迟,
   只让某一条消息等跨流事件)。**禁止同流自引**(流内顺序由 message 链式游标保证);被引 flow 须具名且
-  唯一、被引 message 须有唯一 `message_id`,可声明在后(拓扑序)。循环检测仍是 flow 粒度:同 flow 内
-  多条 message 各自 start_after 不同被引 flow,该 flow 整体视作依赖这些被引 flow(建边 = `f.Name → refFlow`)。
+  唯一、被引 message 须有唯一 `message_id`,可声明在后(拓扑序)。循环检测在**事件粒度**而非
+  flow 粒度(见「跨流 start_after 的实现」):同 flow 内多条 message 各自 start_after 不同被引
+  flow 不会把整条 flow 压成一个依赖节点,合法交错(FTP 式 150 → data → 226)不被误判为环。
 - `message.offset_time`:单条消息起始相对**上一条消息末尾**的时长偏移(第一条相对握手完成后 = 流锚
   `anchor`);把该消息整组(各数据段 + 对端 ACK)锚定到 `上一条末尾 + offset`。链式 delta、天然单调,
   用于多轮请求间隔(慢响应拖慢下一条)。握手固定 `DefaultStep` 不参与定时,故第一条消息的 offset 从
@@ -528,10 +530,10 @@ segment: { mss: 8, interval: "+10ms" }
   FTP 式 `control.150 → data → control.226` 在事件粒度是有向无环的(整流粒度会压成"互等对方整流先完成"
   的死锁)。
 - **阶段二各 flow 拿已算好的 per-message 起始时刻表独立 `flow.Expand`**(seq/ack 状态单次展开内连续
-  维护)。`flow.Expand` 的 `schedule` 参数注入 per-message 起始时刻;无跨流依赖时可传 nil,退化为
-  链式 msgCursor 接续,行为与历史逐字节等价。
-- **事件依赖图共用**:`scenario.StartAfterGraph`(`BuildStartAfterGraph`)由 `validateStartAfter` 与
-  plan 算时阶段共用,避免两处重复实现图逻辑。真环(跨流消息级互引)由校验阶段三色 DFS 拦截。
+  维护)。`flow.Expand` 的 `schedule` 参数注入 per-message 起始时刻;无跨流依赖时可传 nil,
+  退化为链式 msgCursor 接续。
+- **事件依赖图**:`scenario.StartAfterGraph`(`BuildStartAfterGraph`)仅供 `validateStartAfter` 做三色
+  DFS 检环;plan 算时阶段按同一事件粒度规则独立递归,不消费该图。真环(跨流消息级互引)由校验阶段拦截。
 
 > 后续若要更通用的封装 stack 反转或外层/内层分片,可在 `PlannedPacket` 之上再加
 > `PlannedPacket{ Stack []Layer; Time time.Time }` 之外的中间态;当前已支持多流按显式时间戳交织。
@@ -679,7 +681,8 @@ packets:
   MCP 部署下场景 YAML 由远端模型生成,放任任意路径读取会构成可被提示注入利用的任意文件读取原语
   (且告警文本会把内容回显)。需要引用 baseDir 外的文件时,把文件拷进 baseDir 或把 baseDir 指向上层目录。
 - **实现**:见 `internal/scenario/file_placeholder.go`。反射遍历 `Scenario`,跳过 `yaml.Node`
-  (ICMP type/code 等结构化字段),对 `map[string]string`(HTTP headers)替换值不替换键。
+  (ICMP type/code 等结构化字段),对 `HeaderMap` 的元素 `HeaderEntry` 替换 `Value` 不替换 `Key`
+  (HTTP headers 的 key 是结构字段,不应被 `@file` 改写)。
 - **确定性**:文件内容固定 → 同 scenario 同输入 → 逐字节相同 pcap。被引文件需随场景一起归档
   (与 golden pcap 就近放 testdata 同理),否则换机器不可复现。
 - **注意**:`payload_hex` 是 hex 编码字段,`@file` 注入原始字节会破坏 hex 语义;二进制内容请用 `payload`。
