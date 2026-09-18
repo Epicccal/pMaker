@@ -13,7 +13,6 @@
   <h1 align="center">pMaker</h1>
 
   <p align="center">
-    <strong>Make Pcap Easier Again</strong>
     <br />
     用声明式 YAML 构造可复现的离线流量样本，让测试流量像代码一样可读、可审、可回归。
     <br />
