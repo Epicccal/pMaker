@@ -1,0 +1,33 @@
+# examples/udp/flow_dns.yaml
+#
+# DNS 问答 —— UDP 会话的头号用例:dns 层单层序列化为 DNS 消息字节,作 UDP 数据报 payload。
+# 事务 ID 两向一致(id: 0x1234),响应带 question 回显 + A 记录,与真实解析流量形态一致。
+# 域名不做压缩指针、段计数恒由实际记录数推导,详见 pmaker://schema/dns。
+link_type: ethernet
+flows:
+  - name: dns
+    stack:
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.53", ttl: 64 }
+      - udp:         { sport: 40000, dport: 53 }
+      - udp_session: {}
+    messages:
+      - from: src
+        stack:
+          - dns:
+              id: 0x1234
+              qr: query
+              recursion_desired: true
+              questions:
+                - { name: "example.com", type: A, class: IN }
+      - from: dst
+        stack:
+          - dns:
+              id: 0x1234
+              qr: response
+              rcode: no_error
+              recursion_available: true
+              questions:
+                - { name: "example.com", type: A, class: IN }
+              answers:
+                - { name: "example.com", type: A, class: IN, ttl: 300, data: "93.184.216.34" }
