@@ -11,9 +11,7 @@
   </a>
 
   <h1 align="center">pMaker</h1>
-  <br />
   <p align="center">
-    <br />
     用声明式 YAML 构造可复现的离线流量样本，让测试流量像代码一样可读、可审、可回归。
     <br />
     <a href="examples"><strong>浏览示例场景 »</strong></a>
@@ -28,6 +26,8 @@
     <a href="README.en.md">English</a>
   </p>
 </div>
+
+<br />
 
 ## 关于 pMaker
 
@@ -105,14 +105,41 @@ seq/ack 推导、三次握手、四次挥手、对端 ACK 全部由 flow 展开�
 
 层名以 `internal/scenario/layer_decode.go` 为准，字段速查见 [schema 文档](cmd/pmaker-mcp/resources/schema)。
 
-| 分层 | 层名 |
-|------|------|
-| L2 | `eth`、`vlan` |
-| L3 | `ipv4`、`ipv6`、`gre`、`vxlan` |
-| L4 | `tcp`、`udp`、`tcp_session`、`udp_session` |
-| 控制 | `icmp`、`icmpv6` |
-| 应用 | `dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data` |
-| 兜底 | `payload`、`payload_hex` |
+<table>
+  <thead>
+    <tr>
+      <th width="80">分层</th>
+      <th>层名</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>L2</td>
+      <td>eth、vlan</td>
+    </tr>
+    <tr>
+      <td>L3</td>
+      <td>ipv4、ipv6、gre、vxlan</td>
+    </tr>
+    <tr>
+      <td>L4</td>
+      <td>tcp、udp、tcp_session、udp_session</td>
+    </tr>
+    <tr>
+      <td>控制</td>
+      <td>icmp、icmpv6</td>
+    </tr>
+    <tr>
+      <td>应用</td>
+      <td>dns、http_request、http_response、ftp_request、ftp_response、telnet、smtp_request、smtp_response、pop3_request、pop3_response、imap_request、imap_response、eml_data</td>
+    </tr>
+    <tr>
+      <td>兜底</td>
+      <td>payload、payload_hex</td>
+    </tr>
+  </tbody>
+</table>
+
 
 ## 快速开始
 
