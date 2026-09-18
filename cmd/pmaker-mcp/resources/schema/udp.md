@@ -29,7 +29,8 @@ packets:
 - UDP 的下一层是任意 payload 生产层(`dns` / `payload` / `payload_hex` …),
   IP 层 protocol 会自动推导为 17。
 - **UDP 在 flow 里作 VXLAN outer 传输层**:VXLAN 两段栈里 outer 段须含 `udp`(dport 须非零,标准 4789)。
-  普通 UDP 数据报会话(无握手/挥手)不支持 flow;多个 UDP 数据报之间的时序用 `packets` + `offset_time` 表达。
+  普通 UDP 数据报会话见 `udp_session`(flow 的 UDP 会话标记层):一条 flow 加 `messages` 即可表达
+  双向问答,接入 `start_after` 跨流编排;`packets` + `offset_time` 仍是逐包精细控制的手写通道。
 
 ## 静默陷阱
 

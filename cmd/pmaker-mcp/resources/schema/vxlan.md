@@ -43,10 +43,12 @@ GBP 扩展位('G'/'D'/'A'、Group Policy ID)不作为字段开放;构造带 GBP 
   (inner Ethernet 后接 `vlan` → 0x8100、接 `ipv4` → 0x0800、接 `ipv6` → 0x86dd)。
 - 外层 UDP checksum 绑**外层 IP**;内层 TCP/UDP checksum 绑**内层 IP**(就近绑定,与 GRE 内层同机制)。
 - **非 4789 目的端口合法**(如 cilium-overlay 的 8472):VXLAN 层不改写 UDP 端口,照常出包。
-- **flow 用法(整栈模板)**:`flow.stack` 写完整隧道栈(outer → `vxlan` → inner → `tcp` +
-  `tcp_session`),展开器按「写即覆盖、原样落值」把整栈套到每个展开包:反向包(含挥手)outer/inner
-  的 eth/ipv4/ipv6 一并交换 src/dst;VNI 与 outer UDP 端口两向保持声明值;seq/ack/flags 由展开器
-  推导,不写在 tcp 上。约束:只支持一层 vxlan;outer 段禁止 tcp/tcp_session;outer udp `dport`
+- **flow 用法(整栈模板)**:`flow.stack` 写完整隧道栈(outer → `vxlan` → inner → 传输层 +
+  会话层),展开器按「写即覆盖、原样落值」把整栈套到每个展开包:反向包 outer/inner
+  的 eth/ipv4/ipv6 一并交换 src/dst;VNI 与 outer UDP 端口两向保持声明值;TCP 的
+  seq/ack/flags 由展开器推导,不写在 tcp 上。约束:只支持一层 vxlan;outer 段禁止
+  tcp/tcp_session/udp_session(会话层只能在 inner 段,UDP 会话见
+  `pmaker://schema/udp_session`);outer udp `dport`
   为 0 是硬错(VXLAN 没有承载端口就无法分派)。
 - inner `eth` 之后的内容不做进一步校验(`vxlan → eth → eth` 双层 eth 可构造,是字段错位的
   规避流量形态)。

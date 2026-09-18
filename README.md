@@ -79,7 +79,7 @@ seq/ack 推导、三次握手、四次挥手、对端 ACK 全部由 flow 展开�
 |------|------|
 | **声明式 YAML** | 以代码形式描述包/流，可审阅、可 diff |
 | **任意层栈嵌套** | QinQ、GRE 递归封装——无固定 L2/L3/L4 槽位 |
-| **流的状态维护** | 自动握手、seq/ack 推导、MSS 分段、FIN/RST 挥手 |
+| **流的状态维护** | TCP 自动握手、seq/ack 推导、MSS 分段、FIN/RST 挥手；UDP 会话双向数据报 |
 | **畸形与逃逸** | 逐层 `checksum`/`length` 覆盖、`payload`/`payload_hex` 原始字节注入、断链 next-proto |
 | **确定性输出** | 同一 scenario → 逐字节相同的 pcap |
 | **纯 Go 实现** | 通过 `pcapgo` 生成静态跨平台二进制 |
@@ -110,7 +110,7 @@ seq/ack 推导、三次握手、四次挥手、对端 ACK 全部由 flow 展开�
 |------|------|
 | L2 | `eth`、`vlan` |
 | L3 | `ipv4`、`ipv6`、`gre`、`vxlan` |
-| L4 | `tcp`、`udp`、`tcp_session` |
+| L4 | `tcp`、`udp`、`tcp_session`、`udp_session` |
 | 控制 | `icmp`、`icmpv6` |
 | 应用 | `dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data` |
 | 兜底 | `payload`、`payload_hex` |

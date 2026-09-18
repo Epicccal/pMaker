@@ -73,7 +73,7 @@ gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ 
 |------|------|
 | L2 | `eth`、`vlan`(Dot1Q,支持 QinQ 多层) |
 | L3 | `ipv4`、`ipv6`、`gre`、`vxlan` |
-| L4 | `tcp`、`udp`、`tcp_session`(flow 会话开关,非 wire 层) |
+| L4 | `tcp`、`udp`、`tcp_session`(flow 会话开关,非 wire 层)、`udp_session`(flow UDP 会话标记,非 wire 层,必写) |
 | 控制 | `icmp`、`icmpv6` |
 | 应用 | `dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet` |
 | 应用 | `smtp_request`、`smtp_response`、`pop3_request`、`pop3_response` |
@@ -165,8 +165,18 @@ packets:
 
 ## 7. Flow 场景
 
-`flows` 不是新包结构,而是一个有状态展开器:维护 TCP 连接状态,把一段应用层脚本展开成一串 stack 包,
-再喂给现有 builder 与 writer。握手、挥手、多轮请求全部复用同一套底座。
+`flows` 不是新包结构,而是一个有状态展开器:把一段方向性消息脚本展开成一串 stack 包,
+再喂给现有 builder 与 writer。会话分两种形态,由会话层决定:
+
+- **TCP 会话**(`tcp_session`,可省略):维护 TCP 连接状态,握手、挥手、对端 ACK、
+  seq/ack 递推全部自动;多轮请求复用同一套底座。
+- **UDP 会话**(`udp_session`,零字段标记层,**必写**):无握手/挥手/ACK,每条 message
+  恰好展开一个 UDP 数据报,`from: dst` 交换端点后从对端发出。`message.stack` 不按协议
+  收窄(数据报协议随 TFTP/QUIC 等持续进来),TCP 流式层进数据报产软告警
+  `udp.stream-app-layer`(按流式层正向清单判定,清单外默认不告警);`segment` 切段
+  不支持(UDP 无流重组,切出的数据报单独无法解析);端口切换(TFTP TID 式)走两条
+  flow + `start_after`。详见 `cmd/pmaker-mcp/resources/schema/udp_session.md` 与
+  `_why_udp_session.md`。
 
 ### Schema(canonical)
 
@@ -189,8 +199,10 @@ flows:
 ```
 
 `from` 取 `src` 或 `dst`,消息体也是有序 `stack`。`message.stack` 只允许 payload 生产层
-(`http_request` / `payload_hex` / `payload` 等),须至少一个,按声明顺序拼接;
-eth/ipv4/tcp 由 `flow.stack` 提供,不在 message 里重复。反向消息自动反转 eth/ipv4/tcp 端点。
+(`http_request` / `payload_hex` / `payload` 等;UDP 会话不收窄,TCP 流式层产
+`udp.stream-app-layer` 软告警,按流式层正向清单判定),
+须至少一个,按声明顺序拼接;eth/ipv4/tcp 由 `flow.stack` 提供,不在 message 里重复。
+反向消息自动反转 eth/ipv4/tcp 端点。
 VXLAN 单层整栈模板同时反转内外层端点,VNI 与 outer UDP 端口保持声明值。
 
 ### TCP 状态不变式
@@ -215,7 +227,7 @@ VXLAN 单层整栈模板同时反转内外层端点,VNI 与 outer UDP 端口保�
 | `base_time` | `AbsTime` | 场景唯一绝对锚,仅 ISO8601 UTC;缺省 = 确定性 2020 基准 |
 | `packet.offset_time` | `Offset` | 上一包(第一包相对 `base_time`);缺省接续默认游标 +1ms |
 | `flow.offset_time` | `Offset` | 流锚基准 = `base_time`,或 `start_after` 被引时刻;缺省 0 |
-| `message.offset_time` | `Offset` | 上一条消息末尾(第一条相对握手完成后);缺省紧接 |
+| `message.offset_time` | `Offset` | 上一条消息末尾(TCP 第一条相对握手完成,UDP 第一条相对流锚);缺省紧接 |
 | `segment.interval` | `Offset` | 同一消息各数据段之间;缺省 `flow.DefaultStep` = 1ms |
 
 所有 `Offset` 只接受非负时长(如 `+1.5s` / `500ms` / `0s`)。负值在解析阶段即失败 ——
@@ -301,6 +313,8 @@ make quality
 
 1. `internal/builder/` 加构造助手,优先复用 gopacket 现成 layer;新协议单独成文件 `<proto>.go`。
 2. `internal/scenario/` 加 schema 结构体与校验规则,并在 `layerDecoders` 登记层名。
+   若是 TCP 流式应用层(语义为「字节流的一段」),还须登记进 `flow_stack.go` 的
+   `tcpStreamLayers`(UDP 会话的流式层告警清单,漏登记会漏告警)。
 3. builder 接线:scenario 字段到 layer,暴露畸形开关(关闭 fix/checksum、原始字节注入)。
    封装层还须实现 next-proto 与 ethertype 自动推导,并允许逐层覆盖。
 4. `examples/<协议>/` 加一个规范用例与一个畸形用例,单职责、小而聚焦;封装层再加一个嵌套用例。
