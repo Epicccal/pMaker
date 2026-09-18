@@ -335,4 +335,35 @@ func TestFlowChecksumOverrideWarning(t *testing.T) {
 			t.Fatalf("IPv6 underlay 外层 UDP 零校验和应告警(强制校验),得到 %v", ws)
 		}
 	})
+	t.Run("普通 ipv4 UDP checksum=0 豁免(就近判定,不限 VXLAN outer)", func(t *testing.T) {
+		// 就近网络层为 IPv4 时 checksum 0 是 RFC 768 的合法恒定值,不适用
+		// flow.override-static(其前提是"真值逐包变")。单段 UDP 栈(将来 udp_session)
+		// 与 VXLAN outer 同判。
+		s := []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			{Type: "udp", Fields: &scenario.UDPFields{SPort: 51000, DPort: 53, Checksum: hexPtr(0)}},
+		}
+		if ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "u", Stack: s}}}); len(ws) != 0 {
+			t.Fatalf("普通 IPv4 UDP 零校验和应豁免,得到 %v", ws)
+		}
+	})
+	t.Run("双 UDP 栈就近判定:outer 与 inner 各绑其前网络层", func(t *testing.T) {
+		// IPv6 underlay + IPv4 overlay:outer UDP(前为 ipv6)checksum 0 告警;
+		// inner UDP(前为 ipv4)checksum 0 豁免。旧判据取第一个网络层(ipv6),
+		// 会把 inner 误判为告警 —— 本用例锁住逐层就近语义。
+		s := []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+			{Type: "ipv6", Fields: &scenario.IPv6Fields{Src: "2001:db8::10", Dst: "2001:db8::20"}},
+			{Type: "udp", Fields: &scenario.UDPFields{SPort: 51000, DPort: 4789, Checksum: hexPtr(0)}},
+			{Type: "vxlan", Fields: &scenario.VXLANFields{VNI: 200}},
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:03", Dst: "00:00:00:00:00:04"}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "192.168.1.10", Dst: "192.168.1.20"}},
+			{Type: "udp", Fields: &scenario.UDPFields{SPort: 5300, DPort: 53, Checksum: hexPtr(0)}},
+		}
+		ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "mix", Stack: s}}})
+		if len(ws) != 1 || !strings.Contains(ws[0].Message, "stack[2].checksum") {
+			t.Fatalf("期望仅 outer(ipv6 就近)一条告警,inner(ipv4 就近)应豁免,得到 %v", ws)
+		}
+	})
 }

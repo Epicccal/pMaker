@@ -53,7 +53,7 @@ packets:
 
 两态 `checksum` / `length` 覆盖在 `packets` 与 `flows` 中均可用。flow 整栈模板把显式值原样
 写入每个展开包;`length` 覆盖会产「每包同值」软告警(`flow.override-static`),`checksum` 覆盖同样告警(真值逐包变;
-唯一豁免:VXLAN 外层 UDP 在 IPv4 underlay 下写 0,RFC 7348 免校验)。
+唯一豁免:UDP checksum 写 0 且就近网络层为 IPv4,RFC 768 免校验)。
 
 ## flows:有状态会话
 

@@ -129,20 +129,23 @@ func flowSegments(stack []Layer) ([][]Layer, error) {
 	}
 }
 
-// CheckFlowOverrideWarning 扫描 flow.stack 的 length/checksum 覆盖(软告警)。
-// 覆盖值每包同值,而展开包载荷逐包变,真值几乎全不符 —— 笔误提醒,恒定值畸形用例可忽略。
-// checksum 只豁免 VXLAN 外层 UDP 在 IPv4 underlay 下写 0(RFC 7348 §5 免校验);其余照告警。
+// CheckFlowOverrideWarning 扫描 flow.stack 的 length/checksum 覆盖(软告警):
+// 覆盖值每包同值而真值逐包变,几乎必不符 —— 笔误提醒,恒定值畸形用例可忽略。
+// 唯一豁免:就近网络层为 IPv4 的 UDP checksum 写 0(RFC 768:0 表示不校验,
+// 恒定合法;就近判定与 builder 的 netLayer 推进同构;IPv6 下 0 非法,照告警)。
 func CheckFlowOverrideWarning(s *Scenario) []Diagnostic {
 	if s == nil {
 		return nil
 	}
 	var ws []Diagnostic
 	for i, f := range s.Flows {
-		outerV4 := flowUnderlayIPv4(f.Stack)
+		// 记录最近见过的网络层是否 IPv4,随扫描逐层更新,供 UDP checksum=0 的豁免判定
+		nearV4 := false
 		for j, l := range f.Stack {
 			var fields []string
 			switch g := l.Fields.(type) {
 			case *IPv4Fields:
+				nearV4 = true
 				if g.Length != nil {
 					fields = append(fields, "total_length")
 				}
@@ -153,6 +156,7 @@ func CheckFlowOverrideWarning(s *Scenario) []Diagnostic {
 					fields = append(fields, "checksum")
 				}
 			case *IPv6Fields:
+				nearV4 = false
 				if g.PayloadLength != nil {
 					fields = append(fields, "payload_length")
 				}
@@ -167,7 +171,8 @@ func CheckFlowOverrideWarning(s *Scenario) []Diagnostic {
 				if g.Length != nil {
 					fields = append(fields, "total_length")
 				}
-				if g.Checksum != nil && !(outerV4 && *g.Checksum == 0) {
+				// RFC 768 规定 IPv4 下 UDP checksum 为 0 表示 "不校验"，不需要打告警，此处进行豁免判定。
+				if g.Checksum != nil && !(nearV4 && *g.Checksum == 0) {
 					fields = append(fields, "checksum")
 				}
 			}
@@ -179,19 +184,4 @@ func CheckFlowOverrideWarning(s *Scenario) []Diagnostic {
 		}
 	}
 	return ws
-}
-
-// flowUnderlayIPv4 判断 flow.stack 的 underlay 网络层是否 IPv4(外层 UDP checksum=0 的
-// 豁免判据)。按声明序扫,遇到第一个网络层即定;vxlan 之前必有网络层(分段校验保证),
-// 故先到 vxlan 才返回 false 仅在非法栈出现,不影响合法路径。
-func flowUnderlayIPv4(stack []Layer) bool {
-	for _, l := range stack {
-		switch l.Type {
-		case "ipv4":
-			return true
-		case "ipv6":
-			return false
-		}
-	}
-	return false
 }
