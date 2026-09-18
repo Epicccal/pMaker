@@ -1,6 +1,7 @@
 package scenario_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -224,7 +225,89 @@ func TestValidateFlowSegmentAccepts(t *testing.T) {
 	}
 }
 
-// TestFlowStackTCPMessageRequiredOuterDPortZeroTCP: outer 段带 tcp 被拒(need/ban 分派)。
+// plainUDPFlowStack 是无 vxlan 的最小合法 UDP 会话 flow.stack(单段)。
+func plainUDPFlowStack() []scenario.Layer {
+	return []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+		{Type: "udp", Fields: &scenario.UDPFields{SPort: 5300, DPort: 53}},
+		{Type: "udp_session", Fields: &scenario.UDPSessionFields{}},
+	}
+}
+
+// TestFlowStackUDPSessionMatrix:udp_session 的分段校验矩阵 —— 互斥、传输层匹配、
+// 必写(专门文案)、outer 段拒绝、合法形态。
+func TestFlowStackUDPSessionMatrix(t *testing.T) {
+	t.Run("合法:单段 UDP 会话", func(t *testing.T) {
+		if err := validateFlowStack(t, plainUDPFlowStack()); err != nil {
+			t.Fatalf("合法 UDP 会话栈报错: %v", err)
+		}
+	})
+	t.Run("合法:VXLAN inner UDP 会话", func(t *testing.T) {
+		s := vxlanFlowStackValid()
+		s[6] = scenario.Layer{Type: "udp", Fields: &scenario.UDPFields{SPort: 5300, DPort: 53}}
+		s[7] = scenario.Layer{Type: "udp_session", Fields: &scenario.UDPSessionFields{}}
+		if err := validateFlowStack(t, s); err != nil {
+			t.Fatalf("合法 inner UDP 会话栈报错: %v", err)
+		}
+	})
+	t.Run("tcp_session 与 udp_session 并存被拒", func(t *testing.T) {
+		s := plainUDPFlowStack()
+		s = append(s[:3], append([]scenario.Layer{
+			{Type: "tcp_session", Fields: &scenario.TCPSessionFields{}},
+		}, s[3:]...)...)
+		err := validateFlowStack(t, s)
+		if err == nil || !strings.Contains(err.Error(), "会话层(tcp_session 或 udp_session)不可同时出现") {
+			t.Fatalf("双会话层应报互斥错,error=%v", err)
+		}
+	})
+	t.Run("udp_session 配 tcp 被拒(不匹配)", func(t *testing.T) {
+		s := plainUDPFlowStack()
+		s[2] = scenario.Layer{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1234, DPort: 80}}
+		err := validateFlowStack(t, s)
+		if err == nil || !strings.Contains(err.Error(), "udp_session 需配 udp,当前为 tcp") {
+			t.Fatalf("udp_session+tcp 应报不匹配错,error=%v", err)
+		}
+	})
+	t.Run("tcp_session 配 udp 被拒(不匹配)", func(t *testing.T) {
+		s := plainFlowStack()
+		s[2] = scenario.Layer{Type: "udp", Fields: &scenario.UDPFields{SPort: 5300, DPort: 53}}
+		err := validateFlowStack(t, s)
+		if err == nil || !strings.Contains(err.Error(), "tcp_session 需配 tcp,当前为 udp") {
+			t.Fatalf("tcp_session+udp 应报不匹配错,error=%v", err)
+		}
+	})
+	t.Run("含 udp 无 tcp 无会话层给专门文案", func(t *testing.T) {
+		s := plainUDPFlowStack()[:3] // eth/ipv4/udp
+		err := validateFlowStack(t, s)
+		if err == nil || !strings.Contains(err.Error(), "含 udp 无 tcp:UDP 会话需显式声明 udp_session") {
+			t.Fatalf("udp 无会话层应给专门文案,error=%v", err)
+		}
+		// 不能落到误导性的「需要 tcp 层」。
+		if strings.Contains(err.Error(), "需要 tcp 层") {
+			t.Fatalf("udp 无会话层不应报「需要 tcp 层」(误导): %v", err)
+		}
+	})
+	t.Run("udp_session 在 VXLAN outer 段被拒", func(t *testing.T) {
+		vx := vxlanFlowStackValid()
+		// outer 段尾部插入 udp_session;inner 段换成合法 UDP 会话。
+		// 显式逐层构造,避免 append(s[:3], …) 复用底层数组把 vxlan 位置覆盖掉。
+		stack := []scenario.Layer{
+			vx[0], vx[1], vx[2], // outer eth/ipv4/udp
+			{Type: "udp_session", Fields: &scenario.UDPSessionFields{}},
+			vx[3],        // vxlan
+			vx[4], vx[5], // inner eth/ipv4
+			{Type: "udp", Fields: &scenario.UDPFields{SPort: 5300, DPort: 53}},
+			{Type: "udp_session", Fields: &scenario.UDPSessionFields{}},
+		}
+		err := validateFlowStack(t, stack)
+		if err == nil || !strings.Contains(err.Error(), "只能在 vxlan 之后的 inner 段") {
+			t.Fatalf("outer 段 udp_session 应被拒,error=%v", err)
+		}
+	})
+}
+
+// TestFlowStackOuterSegmentBansTCP: outer 段带 tcp 被拒(need/ban 分派)。
 func TestFlowStackOuterSegmentBansTCP(t *testing.T) {
 	s := vxlanFlowStackValid()
 	s[2] = scenario.Layer{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1234, DPort: 80}}
@@ -364,6 +447,120 @@ func TestFlowChecksumOverrideWarning(t *testing.T) {
 		ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{{Name: "mix", Stack: s}}})
 		if len(ws) != 1 || !strings.Contains(ws[0].Message, "stack[2].checksum") {
 			t.Fatalf("期望仅 outer(ipv6 就近)一条告警,inner(ipv4 就近)应豁免,得到 %v", ws)
+		}
+	})
+}
+
+// TestUDPStreamAppLayerWarning:UDP 会话的 message.stack 含 TCP 流式协议层时
+// 照常出包、只产软告警(udp.stream-app-layer,按 tcpStreamLayers 正向判定);
+// payload/payload_hex/dns 与 TCP 会话的流式层均不告警。
+func TestUDPStreamAppLayerWarning(t *testing.T) {
+	t.Run("流式层告警:code 与 path", func(t *testing.T) {
+		f := scenario.FlowSpec{
+			Name:  "u",
+			Stack: plainUDPFlowStack(),
+			Messages: []scenario.Message{{From: "src", Stack: []scenario.Layer{
+				{Type: "http_request", Fields: &scenario.HTTPReqFields{Method: "GET", URL: "/a"}},
+			}}},
+		}
+		ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{f}})
+		if len(ws) != 1 {
+			t.Fatalf("期望恰好一条告警,得到 %v", ws)
+		}
+		if ws[0].Code != scenario.CodeUDPStreamAppLayer {
+			t.Errorf("code 应为 udp.stream-app-layer,得到 %q", ws[0].Code)
+		}
+		if ws[0].Path != "flows[0].messages[0].stack[0]" {
+			t.Errorf("path 应为 flows[0].messages[0].stack[0],得到 %q", ws[0].Path)
+		}
+		if !strings.Contains(ws[0].Message, "http_request") || !strings.Contains(ws[0].Message, "可忽略") {
+			t.Errorf("文案应点名层并提示可忽略,得到 %q", ws[0].Message)
+		}
+	})
+	t.Run("数据报适用层不告警", func(t *testing.T) {
+		for _, l := range []scenario.Layer{
+			{Type: "payload", Fields: &scenario.PayloadFields{Payload: "q"}},
+			{Type: "payload_hex", Fields: scenario.PayloadHex("0x00")},
+			{Type: "dns", Fields: &scenario.DNSFields{ID: 0x1234}},
+		} {
+			f := scenario.FlowSpec{
+				Name:     "u",
+				Stack:    plainUDPFlowStack(),
+				Messages: []scenario.Message{{From: "src", Stack: []scenario.Layer{l}}},
+			}
+			if ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{f}}); len(ws) != 0 {
+				t.Errorf("层 %s 不应告警,得到 %v", l.Type, ws)
+			}
+		}
+	})
+	t.Run("流式层清单全量命中:表内层名皆真实且逐个告警", func(t *testing.T) {
+		// 遍历真实表 tcpStreamLayers(经 TCPStreamLayersForTest 桥接,非测试内另抄副本),
+		// 锁两个漂移方向:层名拼错/层被删(死条目)、表内层实际不告警(判定与表脱钩)。
+		// Fields 留 nil:本检查只看 Type,其余 Check* 对 nil Fields 走 default 分支跳过,
+		// 恰好把被测行为与别的告警隔离开。
+		for _, name := range scenario.TCPStreamLayersForTest() {
+			if !slices.Contains(scenario.LayerTypes(), name) {
+				t.Errorf("%s 不是合法层名(tcpStreamLayers 与 layerDecoders 漂移)", name)
+				continue
+			}
+			f := scenario.FlowSpec{
+				Name:     "u",
+				Stack:    plainUDPFlowStack(),
+				Messages: []scenario.Message{{From: "src", Stack: []scenario.Layer{{Type: name}}}},
+			}
+			ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{f}})
+			if len(ws) != 1 || ws[0].Code != scenario.CodeUDPStreamAppLayer {
+				t.Errorf("流式层 %s 应恰好告警一次,得到 %v", name, ws)
+			}
+		}
+	})
+	t.Run("多层逐层告警", func(t *testing.T) {
+		f := scenario.FlowSpec{
+			Name:  "u",
+			Stack: plainUDPFlowStack(),
+			Messages: []scenario.Message{
+				{From: "src", Stack: []scenario.Layer{
+					{Type: "http_request", Fields: &scenario.HTTPReqFields{Method: "GET", URL: "/a"}},
+					{Type: "payload", Fields: &scenario.PayloadFields{Payload: "tail"}},
+				}},
+				{From: "dst", Stack: []scenario.Layer{
+					{Type: "http_response", Fields: &scenario.HTTPRespFields{Status: 200}},
+				}},
+			},
+		}
+		ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{f}})
+		if len(ws) != 2 ||
+			!strings.Contains(ws[0].Message, "messages[0].stack[0].http_request") ||
+			!strings.Contains(ws[1].Message, "messages[1].stack[0].http_response") {
+			t.Fatalf("期望两条流式层告警(其余层不告警),得到 %v", ws)
+		}
+	})
+	t.Run("TCP 会话的流式层不告警", func(t *testing.T) {
+		f := scenario.FlowSpec{
+			Name:  "t",
+			Stack: plainFlowStack(),
+			Messages: []scenario.Message{{From: "src", Stack: []scenario.Layer{
+				{Type: "http_request", Fields: &scenario.HTTPReqFields{Method: "GET", URL: "/a"}},
+			}}},
+		}
+		if ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{f}}); len(ws) != 0 {
+			t.Fatalf("TCP 会话的流式层是正常用法,不应告警,得到 %v", ws)
+		}
+	})
+	t.Run("VXLAN 内层 UDP 会话同样覆盖", func(t *testing.T) {
+		inner := plainUDPFlowStack()
+		// vxlanFlowStackValid 前 4 层 = eth/ipv4/udp/vxlan,续接内层整栈(自带 eth)。
+		s := slices.Concat(vxlanFlowStackValid()[:4], inner)
+		f := scenario.FlowSpec{
+			Name:  "vx",
+			Stack: s,
+			Messages: []scenario.Message{{From: "src", Stack: []scenario.Layer{
+				{Type: "smtp_request", Fields: &scenario.SMTPRequestFields{Verb: "HELO", Args: "x"}},
+			}}},
+		}
+		ws := scenario.Warnings(&scenario.Scenario{Flows: []scenario.FlowSpec{f}})
+		if len(ws) != 1 || !strings.Contains(ws[0].Message, "smtp_request") {
+			t.Fatalf("隧道内层 UDP 会话的流式层应告警,得到 %v", ws)
 		}
 	})
 }

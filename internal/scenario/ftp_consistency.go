@@ -83,6 +83,10 @@ func CheckFTPDataPortConsistency(s *Scenario) []Diagnostic {
 
 	eps := make([]flowEndpoint, len(s.Flows))
 	for i, f := range s.Flows {
+		// FTP一致性检查不关注 UDP 协议数据。
+		if flowIsUDP(f.Stack) {
+			continue
+		}
 		ep := flowEndpoint{}
 		for _, l := range f.Stack {
 			switch v := l.Fields.(type) {
