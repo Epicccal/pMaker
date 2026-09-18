@@ -31,7 +31,7 @@ func summaryLayerName(layerType string) (string, bool) {
 		return "imap", true
 	case "eml_data":
 		return "eml", true // 协议无关的 RFC 5322 邮件内容
-	case "payload", "payload_hex", "tcp_session":
+	case "payload", "payload_hex", "tcp_session", "udp_session":
 		return "", false
 	default:
 		return layerType, true

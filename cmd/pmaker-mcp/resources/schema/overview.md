@@ -53,13 +53,21 @@ packets:
 
 两态 `checksum` / `length` 覆盖在 `packets` 与 `flows` 中均可用。flow 整栈模板把显式值原样
 写入每个展开包;`length` 覆盖会产「每包同值」软告警(`flow.override-static`),`checksum` 覆盖同样告警(真值逐包变;
-唯一豁免:VXLAN 外层 UDP 在 IPv4 underlay 下写 0,RFC 7348 免校验)。
+唯一豁免:UDP checksum 写 0 且就近网络层为 IPv4,RFC 768 免校验)。
 
 ## flows:有状态会话
 
-展开成握手 + 消息 + 挥手的完整包序列,自动维护 seq/ack 与分段。
-`stack` 里的 `src` = TCP SYN 发起方,`dst` = 接收方;反向消息自动反转所有 eth/IP 端点和
-inner TCP 端口。单层 VXLAN flow 中,VNI 与 outer UDP 端口两向保持声明值。
+flow 分两种会话形态,由**会话层**决定(`tcp_session` / `udp_session`):
+
+- **TCP 会话**(`tcp_session`,可省略):展开成握手 + 消息 + 对端 ACK + 挥手的完整包序列,
+  自动维护 seq/ack 与分段。`stack` 里的 `src` = SYN 发起方,`dst` = 接收方。
+- **UDP 会话**(`udp_session`,**必写**):无握手/挥手/ACK,每条 message 恰好一个数据报;
+  `from: dst` 的消息交换端点后从对端发出。`message.stack` 允许任何 payload 生产层,
+  常用 `payload` / `payload_hex` / `dns`(DNS 问答是头号用例,见 `pmaker://schema/udp_session`);
+  TCP 流式层进数据报产软告警(`udp.stream-app-layer`)。
+
+反向消息自动反转所有 eth/IP 端点和会话传输层端口。单层 VXLAN flow 中,VNI 与
+outer UDP 端口两向保持声明值。
 
 ```yaml
 link_type: ethernet
@@ -83,10 +91,13 @@ flows:
           - http_response: { status: 200, body: "hi" }
 ```
 
-**硬约束**:普通 `flow.stack` 须含 `eth` + `tcp` + 恰好一个网络层(`ipv4` 或 `ipv6`)+
-`tcp_session`,可选多层 `vlan`。VXLAN flow 须为 outer `eth + vlan* + IP + udp + vxlan` 与 inner
-`eth + vlan* + IP + tcp + tcp_session` 两段,只支持一层 `vxlan`,outer UDP `dport` 须非零。
-每条 message 须 ≥1 个 payload 生产层,同段多层按声明顺序拼接(standalone packet 同此规则)。
+**硬约束**:普通 `flow.stack` 须含 `eth` + 恰好一个网络层(`ipv4` 或 `ipv6`)+ 传输层 +
+会话层,可选多层 `vlan`;传输层与会话层须匹配(`tcp`+`tcp_session` 或 `udp`+
+`udp_session`,二选一)。TCP 会话的 `tcp_session` 可省略(缺省 handshake/fin),
+**UDP 会话的 `udp_session` 不可省略**。VXLAN flow 须为 outer `eth + vlan* + IP + udp +
+vxlan` 与 inner `eth + vlan* + IP + 传输层 + 会话层` 两段,只支持一层 `vxlan`,
+outer UDP `dport` 须非零。每条 message 须 ≥1 个 payload 生产层,同段多层按声明顺序拼接
+(standalone packet 同此规则)。
 
 **方向化 VLAN VID(仅 `flow.stack`)**:`vlan` 可写 `src_vid`/`dst_vid` 取代 `vid`,让上行
 (src→dst)与下行(dst→src)带不同标签;单边缺省 = 该方向整层摘除(上行带下行不带 /
@@ -97,7 +108,7 @@ flows:
 - `base_time`:唯一绝对锚。其余全是**非负**时长偏移(`+1.5s` / `500ms` / `0s`),负值解析即失败。
 - `packet.offset_time`:相对**上一包**(第一包相对 base);缺省接续 +1ms。
 - `flow.offset_time`:流锚相对 base_time;缺省 = base,即**多条 flow 默认并发**(想顺序就给递增 offset)。
-- `message.offset_time`:相对**上一条消息末尾**(第一条相对握手完成);缺省紧接。
+- `message.offset_time`:相对**上一条消息末尾**(TCP 第一条相对握手完成,UDP 第一条相对流锚);缺省紧接。
 - `segment.interval`:同消息各数据段间隔,缺省 1ms。
 - `start_after`(flow 级 / message 级):`"flow名"`(整流结束)或 `"flow名.message_id"`(该消息完成)。
   用于跨流依赖(如 FTP 控制通道触发数据通道);禁止同流自引,循环依赖会被拦下。
@@ -107,8 +118,8 @@ flows:
 | 类别 | 层名 |
 |------|------|
 | L2 | `eth`、`vlan` |
-| L3 | `ipv4`、`ipv6`、`gre`、`vxlan`(UDP 承载二层隧道:`udp(4789) → vxlan → eth`;支持 `packets` 与单层 VXLAN TCP flow) |
-| L4 | `tcp`、`udp`、`tcp_session`(仅 `flow.stack`) |
+| L3 | `ipv4`、`ipv6`、`gre`、`vxlan`(UDP 承载二层隧道:`udp(4789) → vxlan → eth`;支持 `packets` 与单层 VXLAN TCP/UDP flow) |
+| L4 | `tcp`、`udp`、`tcp_session`(仅 `flow.stack`,可省略)、`udp_session`(仅 `flow.stack`,UDP 会话必写) |
 | 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data` |
 | 兜底 | `payload`、`payload_hex` |
 

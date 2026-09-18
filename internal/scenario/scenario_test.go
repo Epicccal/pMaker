@@ -573,3 +573,114 @@ func TestStartAfterMessageLevelCycleRejected(t *testing.T) {
 		t.Errorf("错误应提及循环依赖,得到: %v", err)
 	}
 }
+
+// udpFlowStackYAML 是最小合法 UDP 会话 flow.stack(YAML 形式,走 Load 完整解析路径)。
+const udpFlowStackYAML = `      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.53" }
+      - udp:  { sport: 49152, dport: 53 }
+      - udp_session: {}
+`
+
+// TestValidateUDPSessionAccepts:udp_session 的两种等价写法({} 与 null)都过校验;
+// message 从 src/dst 双向、多层 payload 均合法。
+func TestValidateUDPSessionAccepts(t *testing.T) {
+	for name, stack := range map[string]string{
+		"空 map": udpFlowStackYAML,
+		"null":  strings.Replace(udpFlowStackYAML, "udp_session: {}", "udp_session:", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			loadValid(t, "udp-ok.yaml", "link_type: ethernet\nflows:\n  - name: u\n    stack:\n"+stack+`    messages:
+      - from: src
+        stack:
+          - payload: { payload: "query" }
+      - from: dst
+        stack:
+          - payload: { payload: "answer" }
+`)
+		})
+	}
+	// message.stack 含 dns(UDP 会话的头号用例)合法;dns 进 TCP flow 被拒,补一例。
+	loadValid(t, "udp-dns-ok.yaml", "link_type: ethernet\nflows:\n  - name: u\n    stack:\n"+udpFlowStackYAML+`    messages:
+      - from: src
+        stack:
+          - dns: { id: 0x1234, qr: query, questions: [{ name: "example.com", type: A }] }
+      - from: dst
+        stack:
+          - dns: { id: 0x1234, qr: response, answers: [{ name: "example.com", type: A, ttl: 300, data: "1.2.3.4" }] }
+`)
+	// UDP 会话的 message.stack 不按协议收窄:流式层(http_request)照常过校验,
+	// 只产软告警(CheckUDPStreamAppLayer,见 flow_stack_test.go),畸形用例可故意为之。
+	loadValid(t, "udp-http-raw.yaml", "link_type: ethernet\nflows:\n  - name: u\n    stack:\n"+udpFlowStackYAML+`    messages:
+      - from: src
+        stack:
+          - http_request: { method: GET, url: /a }
+`)
+	err := loadValidateErr(t, "tcp-dns-bad.yaml", "link_type: ethernet\nflows:\n  - name: t\n    stack:\n"+flowStackYAML+`    messages:
+      - from: src
+        stack:
+          - dns: { id: 0x1234, qr: query, questions: [{ name: "example.com", type: A }] }
+`)
+	if err == nil || !strings.Contains(err.Error(), "DNS over TCP 暂不支持") {
+		t.Fatalf("TCP flow 的 message.stack 含 dns 应被拒,得到: %v", err)
+	}
+}
+
+// TestValidateUDPSessionRejects:UDP 会话 flow 的 message 级约束(空 messages、
+// segment、非 payload 层)与 udp_session 出现在 standalone packet 的拒绝。
+func TestValidateUDPSessionRejects(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "空 messages",
+			body: "link_type: ethernet\nflows:\n  - name: u\n    stack:\n" + udpFlowStackYAML,
+			want: "UDP flow 的 messages 不能为空",
+		},
+		{
+			name: "segment 被拒",
+			body: "link_type: ethernet\nflows:\n  - name: u\n    stack:\n" + udpFlowStackYAML + `    messages:
+      - from: src
+        segment: { mss: 4 }
+        stack:
+          - payload: { payload: "abcdef" }
+`,
+			want: "UDP 无流重组,不支持 segment 切段",
+		},
+		{
+			name: "udp_session 在 standalone packet 被拒",
+			body: "link_type: ethernet\npackets:\n  - stack:\n" + udpFlowStackYAML + `      - payload: { payload: "hi" }
+`,
+			want: "udp_session 只能用于 flow.stack,不能出现在 standalone packet 的 stack 里",
+		},
+		{
+			name: "udp_session 未知字段被拒",
+			body: strings.Replace(
+				"link_type: ethernet\nflows:\n  - name: u\n    stack:\n"+udpFlowStackYAML,
+				"udp_session: {}", "udp_session: { timeout: 3 }", 1) + `    messages:
+      - from: src
+        stack:
+          - payload: { payload: "hi" }
+`,
+			want: `不支持字段 "timeout"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// 「未知字段」用例在解析层(Load)即报错,不走 Validate;其余走 Validate。
+			path := writeScenario(t, "udp-bad.yaml", tc.body)
+			s, err := scenario.Load(path)
+			if err != nil {
+				if strings.Contains(err.Error(), tc.want) {
+					return // 解析层已拦截且文案匹配,视为通过
+				}
+				t.Fatalf("Load 失败(应可解析): %v", err)
+			}
+			err = scenario.Validate(s)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("期望报错含 %q,得到 %v", tc.want, err)
+			}
+		})
+	}
+}

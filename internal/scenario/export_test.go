@@ -1,5 +1,7 @@
 package scenario
 
+import "slices"
+
 // 本文件仅在测试构建时编译(_test.go 后缀),把仅供测试的导出别名集中于此,
 // 避免污染正式构建产物。scenario_test(外部测试包,package scenario_test)无法直接
 // 访问未导出函数,通过这里的别名桥接。
@@ -13,4 +15,10 @@ const MaxChunkedSize = maxChunkedSize
 // (internal/scenario/imap_consistency_test.go 的 TestIMAPLiteralEMLBytes_EquivToBuilder)。
 func IMAPLiteralEMLBytesForTest(f *EMLDataFields) ([]byte, bool) {
 	return imapLiteralEMLBytes(f)
+}
+
+// TCPStreamLayersForTest 返回 tcpStreamLayers 的副本。
+// 供 flow_stack_test.go 遍历真实表锁漂移,而非在测试里另抄副本。
+func TCPStreamLayersForTest() []string {
+	return slices.Clone(tcpStreamLayers)
 }

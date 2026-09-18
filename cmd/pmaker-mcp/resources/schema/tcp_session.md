@@ -66,7 +66,8 @@ flows:
 |--------|------|
 | `tcp_session.open 只能是 handshake/none` | 只有这两个值。"已建连"写 `none`,不是 `established`/`skip` |
 | `tcp_session.close 只能是 fin/rst/none` | 只有这三个值。半关闭、乱序挥手请用 `packets` 逐包写 |
-| `stack 需要 tcp 层` | `flow.stack` 必须在单段栈或 VXLAN inner 段包含 `tcp` + `tcp_session`。UDP 会话当前不支持 flow,用 `packets` |
+| `stack 需要 tcp 层` | `flow.stack` 必须在单段栈或 VXLAN inner 段包含 `tcp` + `tcp_session`。UDP 会话请用 `udp_session`(见 `pmaker://schema/udp_session`) |
+| `会话层与传输层不匹配` | `tcp_session` 前一层须是 `tcp`;UDP 会话改用 `udp_session`(见 `pmaker://schema/udp_session`) |
 
 ```yaml-bad
 link_type: ethernet
@@ -106,6 +107,20 @@ flows:
       - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
       - ipv4:        { src: "10.0.0.10", dst: "10.0.0.80" }
       - udp:         { sport: 49152, dport: 53 }
+      - tcp_session: { open: handshake }
+    messages:
+      - from: src
+        stack:
+          - payload: { payload: "hi" }
+```
+
+```yaml-bad
+link_type: ethernet
+flows:
+  - name: no-transport
+    stack:
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.80" }
       - tcp_session: { open: handshake }
     messages:
       - from: src

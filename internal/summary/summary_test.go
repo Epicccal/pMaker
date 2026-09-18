@@ -116,6 +116,45 @@ func TestSummarizePlannedWithTime(t *testing.T) {
 	}
 }
 
+// TestSummarizeUDPFlowPackets: UDP flow 展开包(udp_session 会话,端口在反向包被交换)
+// 的摘要端口显示与方向归一 —— 左恒为 base 源端(客户端),箭头随方向翻转。
+func TestSummarizeUDPFlowPackets(t *testing.T) {
+	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	pkt := func(layers ...scenario.Layer) scenario.PlannedPacket {
+		return scenario.PlannedPacket{Packet: scenario.Packet{Stack: layers}, Time: base}
+	}
+	planned := []scenario.PlannedPacket{
+		// [1] 正向查询:client(49152) -> server(53)。base=(client,server)。
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.53"}},
+			scenario.Layer{Type: "udp", Fields: &scenario.UDPFields{SPort: 49152, DPort: 53}},
+			scenario.Layer{Type: "payload_hex", Fields: scenario.PayloadHex("0x71")},
+		),
+		// [2] 反向应答:展开器交换端口,实际 53 -> 49152;归一为 client <- server。
+		pkt(
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.53", Dst: "10.0.0.10"}},
+			scenario.Layer{Type: "udp", Fields: &scenario.UDPFields{SPort: 53, DPort: 49152}},
+			scenario.Layer{Type: "payload_hex", Fields: scenario.PayloadHex("0x61")},
+		),
+	}
+	got := summary.SummarizePlanned(planned)
+	want := []struct{ left, arrow, right, stack string }{
+		{"10.0.0.10:49152", "->", "10.0.0.53:53", "eth/ipv4/udp"},
+		{"10.0.0.10:49152", "<-", "10.0.0.53:53", "eth/ipv4/udp"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("摘要数量=%d,期望 %d", len(got), len(want))
+	}
+	for i, w := range want {
+		s := got[i]
+		if s.Left != w.left || s.Arrow != w.arrow || s.Right != w.right || s.Stack != w.stack {
+			t.Errorf("第%d行=%v,期望 {left:%s arrow:%s right:%s stack:%s}", i+1, s, w.left, w.arrow, w.right, w.stack)
+		}
+	}
+}
+
 // TestSummarizeWithPorts: 摘要端点应带上 TCP/UDP 源目端口;反向包端口随方向归一
 // (左恒为 base 源端端口、右恒为 base 目的端端口,仅箭头翻转);无 TCP/UDP 层的包不显示端口。
 func TestSummarizeWithPorts(t *testing.T) {

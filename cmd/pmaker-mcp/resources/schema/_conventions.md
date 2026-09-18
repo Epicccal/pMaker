@@ -52,8 +52,8 @@
 
 checksum / length 覆盖在 `packets` 与 `flows` 中均可用。flow 展开器把显式值原样写入每个包;
 消息长度不同时,length 仍保持字面值,因此产软告警(`flow.override-static`)。checksum 真值因伪首部 / seq / ack / 方向 /
-payload 逐包变,覆盖值同样逐包不符,照 length 同告警;唯一豁免是 VXLAN 外层 UDP 在 IPv4 underlay
-下写 0(RFC 7348 §5 免校验)。
+payload 逐包变,覆盖值同样逐包不符,照 length 同告警;唯一豁免是 UDP checksum 写 0 且就近网络层为
+IPv4(RFC 768:0 = 不校验,恒定合法值;就近判定逐 UDP 层独立,VXLAN 双 UDP 栈里 outer 与 inner 各自绑定)。
 `vlan.type` / `eth.ethertype` 等 next-proto 覆盖在 `flow.stack` 中也照常生效。
 
 ## next-proto / EtherType 自动串接

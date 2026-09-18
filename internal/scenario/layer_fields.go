@@ -61,7 +61,10 @@ type (
 		Open  string `yaml:"open"`  // handshake(默认)| none
 		Close string `yaml:"close"` // fin(默认)| rst | none
 	}
-	UDPFields struct {
+	// UDPSessionFields 是 flow 的 UDP 会话标记层。UDP 无连接,故无 open/close。
+	// 无需承载任何字段, 字段留空是刻意的 —— 见 _why_udp_session.md。
+	UDPSessionFields struct{}
+	UDPFields        struct {
 		SPort    uint16 `yaml:"sport"`
 		DPort    uint16 `yaml:"dport"`
 		Checksum *Hex   `yaml:"checksum"`     // 两态:nil=自动计算(伪首部照常绑定),非 nil=原样落值

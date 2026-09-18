@@ -3,6 +3,8 @@ package builder
 import (
 	"fmt"
 
+	"github.com/gopacket/gopacket"
+
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
@@ -50,6 +52,21 @@ func PayloadBytes(l scenario.Layer) ([]byte, error) {
 			return nil, fmt.Errorf("eml_data: %w", err)
 		}
 		return b, nil
+	case *scenario.DNSFields:
+		// DNS 是最内层,单层 SerializeTo 即产出完整 DNS 消息字节,形态与 wire 上
+		// UDP payload 一致(buildDNS 可能返回 gopacket layers.DNS 或手写 dnsRawLayer,
+		// 两者都实现 SerializeTo)。FixLengths 必开:段计数与 RDLENGTH 由它补齐,
+		// 关掉会产出全零计数的 12 字节头。供 UDP flow 的 message.stack 产 DNS 问答;
+		// TCP flow 的拦截在校验层(DNS-over-TCP 需 2 字节长度前缀,见 dns.md)。
+		b, err := buildDNS(f)
+		if err != nil {
+			return nil, fmt.Errorf("dns: %w", err)
+		}
+		buf := gopacket.NewSerializeBuffer()
+		if err := b.SerializeTo(buf, gopacket.SerializeOptions{FixLengths: true}); err != nil {
+			return nil, fmt.Errorf("dns: %w", err)
+		}
+		return buf.Bytes(), nil
 	case *scenario.PayloadFields:
 		return payloadBytes(f)
 	case scenario.PayloadHex:

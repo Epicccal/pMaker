@@ -78,6 +78,33 @@ func TestFTPConsistency_PASVMatched(t *testing.T) {
 	}
 }
 
+// TestFTPConsistency_UDPFlowIgnored: FTP 数据通道必为 TCP,UDP flow(即使 dport 恰为
+// 协商端口)不参与端点匹配 —— 混合 TCP 控制流 + UDP flow 不误报、也不误吞告警定位。
+// 这里控制流协商 50000,数据流缺失;UDP flow 的 dport 恰为 50000,不应被当成
+// 「端口一致而 IP 不一致」的匹配对象(端点提取跳过 UDP flow,照常报未找到数据流)。
+func TestFTPConsistency_UDPFlowIgnored(t *testing.T) {
+	body := "link_type: ethernet\nflows:\n" +
+		"  - name: control\n    stack:\n" + ftpConsistencyStack +
+		"    messages:\n      - from: dst\n        stack:\n" +
+		"          - ftp_response: { code: 227, message: \"Entering Passive Mode (10,0,0,21,195,80).\" }\n" +
+		"  - name: noisy-udp\n    stack:\n" +
+		"      - eth:  { src: \"00:11:22:33:44:55\", dst: \"66:77:88:99:aa:bb\" }\n" +
+		"      - ipv4: { src: \"10.0.0.10\", dst: \"10.0.0.21\" }\n" +
+		"      - udp:  { sport: 49156, dport: 50000 }\n" +
+		"      - udp_session: {}\n" +
+		"    messages:\n      - from: src\n        stack:\n          - payload: { payload: \"x\" }\n"
+	warnings := loadWarnings(t, "udp_mixed.yaml", body)
+	// UDP flow 被跳过后,场景里没有匹配的数据流 → 报「未找到」,而不是拿 UDP 端点去顶。
+	if !containsWarning(warnings, "未找到") {
+		t.Fatalf("UDP flow 不应参与匹配;期望仍报未找到数据流,实际: %v", warnings)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w.Message, "noisy-udp") {
+			t.Fatalf("UDP flow 不应出现在 FTP 一致性告警里: %v", w)
+		}
+	}
+}
+
 // TestFTPConsistency_PASVPortMismatch: 227 协商 50000,data 流 dport 49999 → 端口不一致告警。
 func TestFTPConsistency_PASVPortMismatch(t *testing.T) {
 	body := "link_type: ethernet\nflows:\n" +

@@ -1,0 +1,21 @@
+# examples/udp/flow_echo.yaml
+#
+# 最小 UDP 会话:src 请求 / dst 响应,一来一回两个数据报。
+# UDP 无握手/挥手/对端 ACK —— udp_session 是零字段标记层,只声明「本 flow 是 UDP 会话」,
+# 与 tcp_session 不同,它不可省略(stack 含 udp 而不写 udp_session 会硬错)。
+# 反向消息交换 eth/ipv4 端点与 udp sport/dport;sport/dport 是声明值,原样上 wire。
+link_type: ethernet
+flows:
+  - name: echo
+    stack:
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.80", ttl: 64 }
+      - udp:         { sport: 49152, dport: 7 }
+      - udp_session: {}
+    messages:
+      - from: src
+        stack:
+          - payload: { payload: "ping" }
+      - from: dst
+        stack:
+          - payload: { payload: "pong" }

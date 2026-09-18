@@ -106,8 +106,12 @@ func Validate(s *Scenario) error {
 //     多个 chunked 或 chunked 不在末位、1xx/204 带 body、304 在 auto_content_length 时等。
 //  4. IMAP literal 计数一致性(CheckIMAPLiteralConsistency):literal.octets 显式值与
 //     实际字节数不符(计数撒谎)。
-//  5. flow 覆盖告警(CheckFlowOverrideWarning):flow.stack 的 length/checksum 覆盖值每包
-//     同值而真值逐包变(几乎全不符);唯一豁免 VXLAN 外层 UDP 在 IPv4 underlay 下写 0。
+//  5. flow 覆盖告警(CheckFlowOverrideWarning):flow.stack 里硬写的 length/checksum
+//     会被原样复制进该 flow 展开的所有包,而每包的真实值各不相同,几乎每包都是错的;
+//     唯一例外是 UDP checksum 写 0(就近网络层为 IPv4 时),0 表示不校验,恒定合法。
+//  6. UDP 会话流式层告警(CheckUDPStreamAppLayer):UDP 会话的 message.stack 出现
+//     http_request 等 TCP 流式协议层(按 tcpStreamLayers 清单正向判定)—— 放进
+//     单个数据报无帧边界语义,照常出包仅提示;清单外的新数据报层默认不告警。
 func Warnings(s *Scenario) []Diagnostic {
 	var ws []Diagnostic
 	ws = append(ws, CheckFTPDataPortConsistency(s)...)
@@ -115,6 +119,7 @@ func Warnings(s *Scenario) []Diagnostic {
 	ws = append(ws, CheckHTTPConsistency(s)...)
 	ws = append(ws, CheckIMAPLiteralConsistency(s)...)
 	ws = append(ws, CheckFlowOverrideWarning(s)...)
+	ws = append(ws, CheckUDPStreamAppLayer(s)...)
 	return ws
 }
 
@@ -170,8 +175,18 @@ func validateFlow(f FlowSpec) error {
 			return err
 		}
 	}
+	// 传输层按会话层分流:
+	// UDP会话(udp_session)无握手、挥手，空 flow 无意义;
+	// TCP会话(tcp_session)存在握手、挥手，空 flow 仍有价值;
+	// 因此过滤掉空的 UDP Flow，提前告警。
+	isUDP := flowIsUDP(f.Stack)
+	if isUDP && len(f.Messages) == 0 {
+		return fmt.Errorf("UDP flow 的 messages 不能为空(UDP 无握手/挥手,空 flow 一个包也不产,却仍可被 start_after 引用)")
+	}
 	for _, l := range f.Stack {
-		if l.Type == "tcp_session" {
+		// tcp_session / udp_session 是会话指令层,无单层可校验的字段值
+		// (open/close 值校验与段级约束由 validateFlowSegment 承载)。
+		if l.Type == "tcp_session" || l.Type == "udp_session" {
 			continue
 		}
 		if err := validateFlowLayer(l); err != nil {
@@ -186,6 +201,11 @@ func validateFlow(f FlowSpec) error {
 		if len(m.Stack) == 0 {
 			return fmt.Errorf("messages[%d].stack 需至少一个 payload 生产层", j)
 		}
+		// Segment 依赖流重组, UDP 数据报是独立成帧的, UDP Flow 中不应当存在 Segment 层
+		// 确需多个数据报时, 采用 "多条 message + offset_time" 来准确表达。
+		if isUDP && m.Segment != nil {
+			return fmt.Errorf("messages[%d].segment: UDP 无流重组,不支持 segment 切段;需多个数据报请拆成多条 message 并用 offset_time", j)
+		}
 		// message.stack 仍只允许 payload 生产层(白名单语义):eth/ipv4/tcp 等由 flow.stack 提供,
 		// message.stack 不混入非 payload 层。支持一个或多个 payload 生产层,按栈顺序拼接。
 		// 白名单须与 builder.PayloadBytes(internal/builder/payload.go)的 switch 保持一致。
@@ -193,11 +213,12 @@ func validateFlow(f FlowSpec) error {
 			if !isPayloadProducingLayer(l) {
 				return fmt.Errorf("messages[%d].stack[%d] 不支持 %q(只允许 payload 生产层,非标内容走 payload/payload_hex)", j, k, l.Type)
 			}
-			// 逐层字段校验:与 standalone packet 的 validateLayer 等价。此前 message.stack
-			// 恰好一层时也有白名单 type switch 校验,但跳过了 validateLayer 的字段级规则,
-			// 故 payload 同时配 payload+payload_hex(互斥)、ftp_response code 越界、
-			// telnet 二字节命令带 option 等无效配置会静默通过、推迟到 build 才报错。
-			// 多层后同样需要在 Validate 阶段尽早拦截,报错带 messages[%d].stack[%d].<type> 定位。
+			// 当前不支持 dns-over-tcp 构造
+			if !isUDP && l.Type == "dns" {
+				return fmt.Errorf("messages[%d].stack[%d] 不支持 \"dns\"(DNS over TCP 暂不支持,需 2 字节长度前缀,可用 payload_hex 手拼)", j, k)
+			}
+			// 逐层字段校验:与 standalone packet 同一套规则,尽早拦截而非推迟到 build;
+			// 报错带 messages[%d].stack[%d].<type> 定位。
 			if err := validateLayer(l); err != nil {
 				return fmt.Errorf("messages[%d].stack[%d].%s: %w", j, k, l.Type, err)
 			}
@@ -255,6 +276,8 @@ func isPayloadProducingLayer(l Layer) bool {
 		return l.Type == "imap_response"
 	case *EMLDataFields:
 		return l.Type == "eml_data"
+	case *DNSFields:
+		return l.Type == "dns"
 	case *PayloadFields:
 		return l.Type == "payload"
 	case PayloadHex:
@@ -641,6 +664,13 @@ func validateLayerIn(l Layer, inFlow bool) error {
 		// 不能用于 standalone packets[].stack、message.stack 或 quote.stack。
 		if !inFlow {
 			return fmt.Errorf("tcp_session 只能用于 flow.stack,不能出现在 standalone packet 的 stack 里")
+		}
+	case *UDPSessionFields:
+		// udp_session 是 flow 的 UDP 会话标记层(零字段),与 tcp_session 同一位置约束:
+		// 只允许出现在 flow.stack,不能用于 standalone packets[].stack、message.stack 或 quote.stack
+		// (standalone 的普通 UDP 数据报直接写 udp + payload 即可,无需会话标记)。
+		if !inFlow {
+			return fmt.Errorf("udp_session 只能用于 flow.stack,不能出现在 standalone packet 的 stack 里")
 		}
 	case *GREFields:
 		// GRE 无必填字段:protocol 按内层自动推导,key/seq 可选。

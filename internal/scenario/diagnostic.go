@@ -60,6 +60,8 @@ const (
 	CodeIMAPLiteralOctetsMismatch = "imap.literal-octets-mismatch" // literal.octets 显式值与实际字节数不符
 
 	CodeFlowOverrideStatic = "flow.override-static" // flow.stack 的 length/checksum 覆盖值每包同值而真值逐包变
+
+	CodeUDPStreamAppLayer = "udp.stream-app-layer" // UDP 会话的 message.stack 含 TCP 流式协议层
 )
 
 // WarningCodes 返回全部告警 code(与上方常量表同序维护),供 cmd/pmaker-mcp 的 doc-sync 测试锁定
@@ -85,6 +87,7 @@ func WarningCodes() []string {
 		CodeHTTP304AutoCL,
 		CodeIMAPLiteralOctetsMismatch,
 		CodeFlowOverrideStatic,
+		CodeUDPStreamAppLayer,
 	}
 }
 

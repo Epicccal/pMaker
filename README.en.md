@@ -15,7 +15,8 @@
   <p align="center">
     <strong>Generate Pcap Easier Again</strong>
     <br />
-    Build reproducible offline traffic samples with declarative YAML — test traffic as readable, reviewable, and regression-friendly as code.
+    Build reproducible offline traffic samples with declarative YAML 
+    — test traffic as readable, reviewable, and regression-friendly as code.
     <br />
     <a href="examples"><strong>Browse example scenarios »</strong></a>
     <br />
@@ -79,7 +80,7 @@ seq/ack derivation, three-way handshake, four-way teardown, and peer ACKs are al
 |---------|-------------|
 | **Declarative YAML** | Describe packets/flows as code — reviewable, diff-able |
 | **Arbitrary layer nesting** | QinQ, recursive GRE encapsulation — no fixed L2/L3/L4 slots |
-| **Stateful TCP flows** | Auto handshake, seq/ack derivation, MSS segmentation, FIN/RST teardown |
+| **Stateful flows** | TCP: auto handshake, seq/ack derivation, MSS segmentation, FIN/RST teardown; UDP: bidirectional datagram sessions |
 | **Malformed & evasion** | Per-field `checksum`/`length` overrides, raw byte injection, broken next-proto chains |
 | **Deterministic output** | Same scenario → byte-identical pcap |
 | **Pure Go** | Static cross-platform binary via `pcapgo` |
@@ -110,7 +111,7 @@ Layer names are canonical in `internal/scenario/layer_decode.go`; field referenc
 |-------|-------|
 | L2 | `eth`, `vlan` |
 | L3 | `ipv4`, `ipv6`, `gre`, `vxlan` |
-| L4 | `tcp`, `udp`, `tcp_session` |
+| L4 | `tcp`, `udp`, `tcp_session`, `udp_session` |
 | Control | `icmp`, `icmpv6` |
 | Application | `dns`, `http_request`, `http_response`, `ftp_request`, `ftp_response`, `telnet`, `smtp_request`, `smtp_response`, `pop3_request`, `pop3_response`, `imap_request`, `imap_response`, `eml_data` |
 | Fallback | `payload`, `payload_hex` |

@@ -1,0 +1,36 @@
+# examples/udp/flow_vxlan_inner_udp.yaml
+#
+# VXLAN 内层 UDP 会话:outer(VTEP 对)eth → ipv4 → udp(4789) → vxlan(VNI 100)
+# 承载 inner(VM 对)eth → ipv4 → udp(53) 的 DNS 问答。
+# 关键点:outer(隧道)UDP 端口与 VNI 两向不变,只有 inner(会话)UDP 端口随方向交换
+# —— 展开器按「会话层(udp_session)前一层」定位会话传输层,不会误动 outer UDP。
+link_type: ethernet
+flows:
+  - name: vx-dns
+    stack:
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }   # outer(VTEP 对)
+      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.20", ttl: 64 }           # outer underlay
+      - udp:         { sport: 51000, dport: 4789 }
+      - vxlan:       { vni: 100 }
+      - eth:         { src: "00:22:33:44:55:66", dst: "00:33:44:55:66:77" }    # inner(VM 对)
+      - ipv4:        { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 }     # inner overlay
+      - udp:         { sport: 53000, dport: 53 }
+      - udp_session: {}
+    messages:
+      - from: src
+        stack:
+          - dns:
+              id: 0x5678
+              qr: query
+              questions:
+                - { name: "svc.internal", type: A, class: IN }
+      - from: dst
+        stack:
+          - dns:
+              id: 0x5678
+              qr: response
+              rcode: no_error
+              questions:
+                - { name: "svc.internal", type: A, class: IN }
+              answers:
+                - { name: "svc.internal", type: A, class: IN, ttl: 60, data: "192.168.1.20" }

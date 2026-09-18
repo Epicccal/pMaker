@@ -168,3 +168,79 @@ func TestFlowVXLANTemplatePreserved(t *testing.T) {
 		}
 	}
 }
+
+// ---------- VXLAN inner UDP 会话(双 UDP 栈)----------
+
+// vxlanUDPFlowStack 把 inner 段换成 UDP 会话:栈里有两个 udp(outer 隧道 + inner 会话),
+// transportIdx 必须定位到 inner(会话层前一层),不能取首个 udp。
+func vxlanUDPFlowStack() []scenario.Layer {
+	inner := vxlanFlowStack()
+	return []scenario.Layer{
+		inner[0], // outer eth
+		inner[1], // outer ipv4
+		inner[2], // outer udp(隧道)
+		inner[3], // vxlan
+		inner[4], // inner eth
+		inner[5], // inner ipv4
+		{Type: "udp", Fields: &scenario.UDPFields{SPort: 5300, DPort: 53}},
+		{Type: "udp_session", Fields: &scenario.UDPSessionFields{}},
+	}
+}
+
+// expandVXLANUDP 展开 inner UDP 会话两条消息("q"/"a" 互为应答),返回全部展开包。
+func expandVXLANUDP(t *testing.T) []scenario.PlannedPacket {
+	t.Helper()
+	f := scenario.FlowSpec{Name: "vxu", Stack: vxlanUDPFlowStack()}
+	f.Messages = []scenario.Message{
+		{From: "src", Stack: []scenario.Layer{vxlanPayload("q")}},
+		{From: "dst", Stack: []scenario.Layer{vxlanPayload("a")}},
+	}
+	pkts, _, _, err := flow.Expand(f, time.Time{}, nil)
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	return pkts
+}
+
+func vxlanPayload(b string) scenario.Layer {
+	return scenario.Layer{Type: "payload_hex", Fields: scenario.PayloadHex("0x" + hex.EncodeToString([]byte(b)))}
+}
+
+// TestFlowVXLANInnerUDPTransportIdx 双 UDP 栈的反向包:inner(会话)UDP 端口被交换,
+// outer(隧道)UDP 端口与 VNI 两向不变。transportIdx 若取栈中首个 udp(outer),
+// 本测试会以 outer 端口交换 / inner 不动而失败 —— 这正是定位规则的要害。
+func TestFlowVXLANInnerUDPTransportIdx(t *testing.T) {
+	pkts := expandVXLANUDP(t)
+	if len(pkts) != 2 {
+		t.Fatalf("UDP 会话两条消息应恰 2 包,得到 %d", len(pkts))
+	}
+	fwd, rev := pkts[0].Packet, pkts[1].Packet
+
+	fwdOuter := layerAt(fwd, "udp", 0).(*scenario.UDPFields)
+	revOuter := layerAt(rev, "udp", 0).(*scenario.UDPFields)
+	if fwdOuter.SPort != 51000 || revOuter.SPort != 51000 ||
+		fwdOuter.DPort != 4789 || revOuter.DPort != 4789 {
+		t.Errorf("outer(隧道)UDP 端口两向应均为声明值 51000->4789,得到 %d->%d / %d->%d",
+			fwdOuter.SPort, fwdOuter.DPort, revOuter.SPort, revOuter.DPort)
+	}
+	fwdInner := layerAt(fwd, "udp", 1).(*scenario.UDPFields)
+	revInner := layerAt(rev, "udp", 1).(*scenario.UDPFields)
+	if fwdInner.SPort != 5300 || fwdInner.DPort != 53 {
+		t.Errorf("上行 inner(会话)UDP 端口=%d->%d,期望声明值 5300->53", fwdInner.SPort, fwdInner.DPort)
+	}
+	if revInner.SPort != 53 || revInner.DPort != 5300 {
+		t.Errorf("下行 inner(会话)UDP 端口=%d->%d,期望交换为 53->5300", revInner.SPort, revInner.DPort)
+	}
+	// VNI 两向不变。
+	fwdVX := layerAt(fwd, "vxlan", 0).(*scenario.VXLANFields)
+	revVX := layerAt(rev, "vxlan", 0).(*scenario.VXLANFields)
+	if fwdVX.VNI != 100 || revVX.VNI != 100 {
+		t.Errorf("VNI 两向应均为 100,得到 %d/%d", fwdVX.VNI, revVX.VNI)
+	}
+	// inner eth/ip 照常反转。
+	fwdInnerEth := layerAt(fwd, "eth", 1).(*scenario.EthFields)
+	revInnerEth := layerAt(rev, "eth", 1).(*scenario.EthFields)
+	if revInnerEth.Src != fwdInnerEth.Dst || revInnerEth.Dst != fwdInnerEth.Src {
+		t.Errorf("反向 inner eth 未交换")
+	}
+}

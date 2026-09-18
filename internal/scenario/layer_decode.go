@@ -110,6 +110,7 @@ var layerDecoders = map[string]layerDecoder{
 	"tcp":         fieldsDecoder[TCPFields](),
 	"tcp_session": fieldsDecoder[TCPSessionFields](),
 	"udp":         fieldsDecoder[UDPFields](),
+	"udp_session": fieldsDecoder[UDPSessionFields](),
 	// 控制
 	"icmp":   fieldsDecoder[ICMPFields](),
 	"icmpv6": fieldsDecoder[ICMPv6Fields](),

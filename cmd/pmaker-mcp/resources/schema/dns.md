@@ -94,8 +94,10 @@ packets:
 - 数字 `type` 的 RR 必须配 `payload_hex`,否则出包阶段报 `暂不支持 DNS RR 类型 "99"`
   ——工具无从知道该 type 的 RDATA 结构。question 段的数字 `type` 无此限制(question 无 RDATA)。
 - 域名长度在出包阶段校验:单标签 ≤63、编码后整名 ≤255,空标签(`a..b`)报错。
-- **`dns` 不能进 flow 的 `messages`**:`message.stack` 只收 payload 生产层。DNS-over-TCP 的
-  会话时序请用 `packets` + `offset_time`,或整段走 `payload_hex`。
+- **`dns` 可进 UDP flow 的 `messages`**(`message.stack` 允许 `dns`,单层序列化为 DNS 消息字节,
+  问答两个方向用 `from: src` / `from: dst`,见 `pmaker://schema/udp_session`);
+  **TCP flow 的 `message.stack` 不收 `dns`**(缺 2 字节长度前缀,见下)—— DNS-over-TCP
+  的会话时序请用 `packets` + `offset_time`,或整段走 `payload_hex`。
 
 ## 静默陷阱
 
@@ -134,6 +136,7 @@ packets:
 | `answers[0] 需要 name` | RR 的 `name` 必填,三个 RR 段同理 |
 | `payload_hex 与 data 只能配置一个` | 结构化 RDATA 与原始 RDATA 二选一。想在结构化内容后追加字节,把整段 RDATA 拼成 `payload_hex` |
 | `需要 data 或 payload_hex` | RR 必须给 RDATA。未知 type 用 `payload_hex`,已知 type 用 `data` |
+| `DNS over TCP 暂不支持` | TCP flow 的 `message.stack` 不收 `dns`(缺 2 字节长度前缀);需前缀可用 `payload_hex` 手拼,或 UDP flow 里用 `dns` |
 
 ```yaml-bad
 link_type: ethernet
@@ -194,6 +197,22 @@ packets:
             - { name: "example.com", type: A, ttl: 300 }
 ```
 
+```yaml-bad
+link_type: ethernet
+flows:
+  - name: dns-over-tcp
+    stack:
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.53" }
+      - tcp:         { sport: 49152, dport: 53 }
+      - tcp_session: {}
+    messages:
+      - from: src
+        stack:
+          - dns: { id: 0x1234, qr: query, questions: [{ name: "example.com", type: A }] }
+```
+
 ## 相关
 
-`pmaker://schema/udp`、`pmaker://schema/tcp`、`pmaker://schema/payload_hex`、`pmaker://schema/overview`
+`pmaker://schema/udp`、`pmaker://schema/udp_session`、`pmaker://schema/tcp`、
+`pmaker://schema/payload_hex`、`pmaker://schema/overview`
