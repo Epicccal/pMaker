@@ -108,7 +108,7 @@ func messagePlan(m scenario.Message, p Profile) ([][]byte, time.Duration, error)
 	interval := DefaultStep
 	mss := segMSS(m)
 	if p.Transport == TransportUDP {
-		mss, m.Segment = 0, nil
+		mss = 0
 	} else if m.Segment != nil && m.Segment.Interval != nil {
 		interval = m.Segment.Interval.Duration()
 	}
