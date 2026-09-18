@@ -56,8 +56,9 @@ func DefaultBaseTime() time.Time { return time.Date(2020, 1, 1, 0, 0, 0, 0, time
 // 真环(跨流消息级互引)由 Validate 的事件图三色 DFS 拦截,不会走到这里;scheduler 自带
 // in-flight 守卫作为防御纵深,环出现时返回"循环依赖"错误而非无限递归。
 type scheduler struct {
-	flows []scenario.FlowSpec
-	base  time.Time
+	flows    []scenario.FlowSpec
+	base     time.Time
+	profiles []flow.Profile // 每条 flow 一次 ProfileOf,算时统一取时间形状(与 Expand 同源)
 
 	fstart   map[int]time.Time    // flowStart(fi)
 	mend     map[[2]int]time.Time // message(fi,j) 的整组末尾(msgCursor)
@@ -68,9 +69,14 @@ type scheduler struct {
 
 // newScheduler 构造阶段一算时器。base 为场景绝对锚(DefaultBaseTime 或 s.BaseTime)。
 func newScheduler(flows []scenario.FlowSpec, base time.Time) *scheduler {
+	profiles := make([]flow.Profile, len(flows))
+	for i, f := range flows {
+		profiles[i] = flow.ProfileOf(f.Stack)
+	}
 	return &scheduler{
 		flows:    flows,
 		base:     base,
+		profiles: profiles,
 		fstart:   map[int]time.Time{},
 		mend:     map[[2]int]time.Time{},
 		fend:     map[int]time.Time{},
@@ -134,8 +140,7 @@ func (sc *scheduler) msgStart(fi, j int) (time.Time, error) {
 		if err != nil {
 			return time.Time{}, err
 		}
-		open, _ := flow.SessionOf(f.Stack)
-		t = fs.Add(time.Duration(flow.HandshakeSteps(open)) * flow.DefaultStep)
+		t = fs.Add(time.Duration(sc.profiles[fi].HandshakeSteps) * flow.DefaultStep)
 	} else {
 		prev, err := sc.msgEnd(fi, j-1)
 		if err != nil {
@@ -168,7 +173,7 @@ func (sc *scheduler) msgEnd(fi, j int) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	dur, err := flow.MessageDuration(sc.flows[fi].Messages[j])
+	dur, err := flow.MessageDuration(sc.flows[fi].Messages[j], sc.profiles[fi])
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -193,15 +198,13 @@ func (sc *scheduler) flowEnd(fi int) (time.Time, error) {
 	sc.path = append(sc.path, "end:"+sc.flowLabel(fi))
 
 	f := sc.flows[fi]
-	_, close := flow.SessionOf(f.Stack)
 	var lastEnd time.Time
 	if len(f.Messages) == 0 {
 		fs, err := sc.flowStart(fi)
 		if err != nil {
 			return time.Time{}, err
 		}
-		open, _ := flow.SessionOf(f.Stack)
-		lastEnd = fs.Add(time.Duration(flow.HandshakeSteps(open)) * flow.DefaultStep)
+		lastEnd = fs.Add(time.Duration(sc.profiles[fi].HandshakeSteps) * flow.DefaultStep)
 	} else {
 		le, err := sc.msgEnd(fi, len(f.Messages)-1)
 		if err != nil {
@@ -209,7 +212,7 @@ func (sc *scheduler) flowEnd(fi int) (time.Time, error) {
 		}
 		lastEnd = le
 	}
-	fe := lastEnd.Add(time.Duration(flow.CloseSteps(close)) * flow.DefaultStep)
+	fe := lastEnd.Add(time.Duration(sc.profiles[fi].CloseSteps) * flow.DefaultStep)
 	sc.fend[fi] = fe
 	delete(sc.inflight, k)
 	sc.path = sc.path[:len(sc.path)-1]

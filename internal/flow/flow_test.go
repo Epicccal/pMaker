@@ -732,3 +732,93 @@ func TestFlowVLANDirectionalKeepsSharedFields(t *testing.T) {
 		t.Errorf("模板被回写: vid=%d src=%v dst=%v", tmpl.VID, tmpl.SrcVID, tmpl.DstVID)
 	}
 }
+
+// TestFlowParseStackInvalidNoPanic:非法 flow.stack 直接进 flow.Expand(绕过
+// scenario.Validate 的程序化调用路径)须报错而非 panic。钉住 parseFlowStack 的
+// template 坐标系不变式:transportIdx 由「stack 下标 - 1」换算改为循环内记录,
+// 双会话层等越界场景不再触发 index out of range。
+func TestFlowParseStackInvalidNoPanic(t *testing.T) {
+	eth := func() scenario.Layer {
+		return scenario.Layer{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}}
+	}
+	ip := func() scenario.Layer {
+		return scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}}
+	}
+	tcp := func(port uint16) scenario.Layer {
+		return scenario.Layer{Type: "tcp", Fields: &scenario.TCPFields{SPort: port, DPort: 80}}
+	}
+	udp := func(port uint16) scenario.Layer {
+		return scenario.Layer{Type: "udp", Fields: &scenario.UDPFields{SPort: port, DPort: 53}}
+	}
+	cases := []struct {
+		name string
+		f    scenario.FlowSpec
+		want string
+	}{
+		{
+			name: "双会话层(tcp_session 后跟 udp_session)",
+			f: scenario.FlowSpec{Stack: []scenario.Layer{
+				eth(), ip(), tcp(1111),
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{}},
+				{Type: "udp_session", Fields: &scenario.UDPSessionFields{}},
+			}},
+			want: "不可同时出现",
+		},
+		{
+			name: "双会话层(udp_session 后跟 tcp_session)",
+			f: scenario.FlowSpec{Stack: []scenario.Layer{
+				eth(), ip(), udp(1111),
+				{Type: "udp_session", Fields: &scenario.UDPSessionFields{}},
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{}},
+			}},
+			want: "不可同时出现",
+		},
+		{
+			name: "会话层无前邻传输层",
+			f: scenario.FlowSpec{Stack: []scenario.Layer{
+				eth(), ip(),
+				{Type: "tcp_session", Fields: &scenario.TCPSessionFields{}},
+			}},
+			want: "前一层须为",
+		},
+		{
+			name: "会话层与传输层不匹配(udp_session 前是 tcp)",
+			f: scenario.FlowSpec{Stack: []scenario.Layer{
+				eth(), ip(), tcp(1111),
+				{Type: "udp_session", Fields: &scenario.UDPSessionFields{}},
+			}},
+			want: "前一层须为 udp",
+		},
+		{
+			name: "无任何传输层",
+			f: scenario.FlowSpec{Stack: []scenario.Layer{
+				eth(), ip(),
+			}},
+			want: "需要 tcp 层",
+		},
+		{
+			name: "仅 outer udp 残栈且无会话层(旧代码会把隧道外层误当会话传输层)",
+			f: scenario.FlowSpec{Stack: []scenario.Layer{
+				eth(), ip(), udp(4789),
+			}},
+			want: "需要 tcp 层",
+		},
+	}
+	msgs := []scenario.Message{{
+		From:  "src",
+		Stack: []scenario.Layer{{Type: "payload", Fields: &scenario.PayloadFields{Payload: "x"}}},
+	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := tc.f
+			f.Messages = msgs
+			_, _, _, err := flow.Expand(f, time.Time{}, nil) // 直接调用,不经 Validate
+			if err == nil {
+				t.Fatalf("Expand() 期望报错(含 %q),得到 nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Expand() error=%v,期望含 %q", err, tc.want)
+			}
+		})
+	}
+}
