@@ -88,6 +88,7 @@ seq/ack 推导、三次握手、四次挥手、对端 ACK 全部由 flow 展开�
 ### 其他功能
 
 - next-proto 与 EtherType 自动推导，可逐层覆盖以制造解析断链
+- IP 层支持按照 MTU 参数自动分片
 - TCP/UDP checksum 伪首部绑定就近 IP 层，多层 IP 时自动绑定内层
 - 跨流依赖 start_after，锚定流与消息的时序关系
 - 时间锚点 base_time 与 offset_time，锚定包与消息的时序关系
