@@ -1,0 +1,36 @@
+# examples/ip_fragment/udp_flow_dns_mtu.yaml
+#
+# UDP 会话大 DNS 响应触发分片:flow.stack 的 ipv4 写 mtu,对该 flow 展开的每个包
+# 生效。响应带长 TXT 记录撑大数据报;对端后续包不被分片 ID 污染(id 恒 0)。
+link_type: ethernet
+flows:
+  - name: dns-frag
+    stack:
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.53", ttl: 64, mtu: 100 }
+      - udp:         { sport: 40000, dport: 53 }
+      - udp_session: {}
+    messages:
+      - from: src
+        stack:
+          - dns:
+              id: 0x1234
+              qr: query
+              recursion_desired: true
+              questions:
+                - { name: "example.com.", type: TXT, class: IN }
+      - from: dst
+        stack:
+          - dns:
+              id: 0x1234
+              qr: response
+              rcode: no_error
+              recursion_available: true
+              questions:
+                - { name: "example.com.", type: TXT, class: IN }
+              answers:
+                - name: "example.com."
+                  type: TXT
+                  class: IN
+                  ttl: 300
+                  data: "v=spf1 include:_spf.example.com include:_spf2.example.com ~all"

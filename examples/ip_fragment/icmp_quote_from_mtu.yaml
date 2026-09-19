@@ -1,0 +1,24 @@
+# examples/ip_fragment/icmp_quote_from_mtu.yaml
+#
+# IDS 用例:大包分片后,ICMP Fragmentation Needed 的 quote_from 直接复用被引包
+# wire 首片字节(含分片 ID)—— quote 内嵌 IP 头与 pcap 里真实首片逐字节一致。
+# 被引包必须排在引用之前的时刻;前向引用会在出包阶段硬错。
+link_type: ethernet
+packets:
+  - name: big-probe
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.5", ttl: 64, mtu: 44 }
+      - udp:  { sport: 40000, dport: 65004 }
+      - payload:
+          payload: "0123456789012345678901234567890123456789" # 40 字节,数据报 68 > 44
+
+  - name: icmp-frag-needed
+    stack:
+      - eth:  { src: "66:77:88:99:aa:bb", dst: "00:11:22:33:44:55" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.10", ttl: 64 }
+      - icmp:
+          type: destination_unreachable
+          code: fragmentation_needed
+          mtu: 1400
+          quote_from: big-probe

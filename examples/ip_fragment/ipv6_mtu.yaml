@@ -1,0 +1,14 @@
+# examples/ip_fragment/ipv6_mtu.yaml
+#
+# IPv6 MTU 自动分片(规范形态):超限时在主头后插入 Fragment 扩展头(next_header=44),
+# 原上层协议号(UDP=17)移入扩展头。MTU < 1280 触发软告警 ipv6.mtu-below-minimum,
+# 但照常分片 —— 极端小 MTU 是合法测试场景。
+# 本例:8 UDP + 32 载荷 = 40 字节数据报,mtu=64 → 块 (64-40-8)&^7=16 → 3 片。
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv6: { src: "2001:db8::1", dst: "2001:db8::2", hop_limit: 64, mtu: 64 }
+      - udp:  { sport: 40000, dport: 65001 }
+      - payload:
+          payload: "0123456789abcdef0123456789abcdef" # 32 字节,数据报 40 > 16 块
