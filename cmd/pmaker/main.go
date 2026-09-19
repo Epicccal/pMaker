@@ -107,17 +107,17 @@ func cmdGen(args []string) int {
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		return 1
 	}
-	printGenerationSummary(*out, planned, len(pkts))
+	printGenerationSummary(*out, planned, pkts)
 	return 0
 }
 
-func printGenerationSummary(path string, planned []scenario.PlannedPacket, count int) {
+func printGenerationSummary(path string, planned []scenario.PlannedPacket, pkts []builder.OutPacket) {
 	fmt.Printf("生成文件: %s\n", path)
 	fmt.Println("Pcap组成:")
-	for _, line := range summary.FormatPacketSummaries(summary.SummarizePlanned(planned)) {
+	for _, line := range summary.FormatPacketSummaries(summary.SummarizeOut(planned, pkts)) {
 		fmt.Println(line)
 	}
-	fmt.Printf("已生成 %d 个包\n", count)
+	fmt.Printf("已生成 %d 个包\n", len(pkts))
 }
 
 // cmdValidate 串接:Load + 校验。
