@@ -62,6 +62,9 @@ const (
 	CodeFlowOverrideStatic = "flow.override-static" // flow.stack 的 length/checksum 覆盖值每包同值而真值逐包变
 
 	CodeUDPStreamAppLayer = "udp.stream-app-layer" // UDP 会话的 message.stack 含 TCP 流式协议层
+
+	CodeIPv4MTUBelowMinimum = "ipv4.mtu-below-minimum" // ipv4 mtu 低于 RFC 791 最小 MTU 68
+	CodeIPv6MTUBelowMinimum = "ipv6.mtu-below-minimum" // ipv6 mtu 低于 RFC 8200 最小链路 MTU 1280
 )
 
 // WarningCodes 返回全部告警 code(与上方常量表同序维护),供 cmd/pmaker-mcp 的 doc-sync 测试锁定
@@ -88,6 +91,8 @@ func WarningCodes() []string {
 		CodeIMAPLiteralOctetsMismatch,
 		CodeFlowOverrideStatic,
 		CodeUDPStreamAppLayer,
+		CodeIPv4MTUBelowMinimum,
+		CodeIPv6MTUBelowMinimum,
 	}
 }
 

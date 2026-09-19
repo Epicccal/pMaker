@@ -55,6 +55,12 @@ packets:
 - **`port_unreachable` 在 ICMPv6 里是 4,在 ICMPv4 里是 3**。code 名字表两边不通用,
   照抄 ICMPv4 的 YAML 会得到不同的数值,且不会有任何提示。
 - `quote` 不做 RFC 截断(自动截取只在 `quote_from` 路径),与 ICMPv4 同。
+- **`quote_from` 复用被引包的真实 wire 首片字节**(自栈序第一个 `ipv6` 层头起,
+  按 RFC 4443 §2.4(c) 截到 1232 字节上限):与 pcap 里逐字节一致 —— 被引包带
+  `mtu` 分片时,quote 就取自分片首片(含分片 ID)。**被引包必须排在引用之前的
+  时刻**,前向引用在出包阶段硬错;引用环在校验阶段报
+  `quote_from 引用环: a → b → a`。
+- `quote.stack` 内禁写 `mtu`(quote 是载荷提取视图,恒取单片)。
 - Neighbor Discovery(NS/NA/RS/RA,type 133-137)**未实现结构化字段**:能写 `type: 135`,
   但选项(target address、link-layer address)只能用 `payload_hex` 手拼。
 

@@ -54,6 +54,12 @@ time_exceeded 用 `ttl_exceeded`(0)、`fragment_reassembly_time_exceeded`(1)。
   但拼错的名字(`echo-request`)会**报错**而不是静默降级。
 - **`quote` 的内容不被截断**:写多长就带多长,不会按 RFC 792 截到"IP 头 + 8 字节"。
   自动截取只发生在 **`quote_from`** 路径上。要构造超长 quote 就用 `quote`。
+- **`quote_from` 复用被引包的真实 wire 首片字节**(自栈序第一个 `ipv4` 层头起):ID /
+  length / checksum 与 pcap 里逐字节一致 —— 被引包带 `mtu` 分片时,quote 内嵌的
+  IP 头就是分片首片(含计数器分配的分片 ID)。**被引包必须排在引用之前的时刻**,
+  前向引用(被引包排在后面)在出包阶段硬错;`quote_from` 互相引用成环在校验阶段报
+  `quote_from 引用环: a → b → a`。
+- `quote.stack` 内禁写 `mtu`(quote 是载荷提取视图,恒取单片)。
 - `code` 名字表是**跨 type 共用**的一张扁平表:`ttl_exceeded` 与 `net_unreachable` 都是 0,
   写串了不会报错。数字更不会错。
 - ICMPv4 **没有伪首部**(与 ICMPv6 不同),校验和只覆盖 ICMP 报文本身。
