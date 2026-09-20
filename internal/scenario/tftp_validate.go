@@ -35,9 +35,11 @@ var tftpErrorCodes = map[string]uint16{
 }
 
 // ParseTFTPOpcode 解析 opcode 字段:字符串名(大小写不敏感)或数字(≤0xffff)。
-// 未写(Kind==0)或显式空串均为硬错 —— opcode 是 tftp 层唯一必填字段,分派全靠它。
+// 未写(Kind==0)、显式 null(Tag=!!null,含 `opcode:` / `opcode: null` / `opcode: ~`)
+// 或显式空串均为硬错 —— opcode 是 tftp 层唯一必填字段,分派全靠它;
+// !!null 标量必须显式拦截,否则 Decode(&uint64) 会把它当 0 静默透传。
 func ParseTFTPOpcode(node yaml.Node) (uint16, error) {
-	if node.Kind == 0 {
+	if node.Kind == 0 || node.Tag == "!!null" {
 		return 0, fmt.Errorf("opcode 必填(可用 rrq/wrq/data/ack/error/oack 或数字)")
 	}
 	if node.Value == "" {
@@ -62,9 +64,9 @@ func ParseTFTPOpcode(node yaml.Node) (uint16, error) {
 }
 
 // ParseTFTPErrorCode 解析 error 报文的 code 字段:字符串名(大小写不敏感)或数字;
-// 未写缺省 0(not_defined,配合自定义 message)。
+// 未写 / 显式 null / 空串均缺省 0(not_defined,配合自定义 message)。
 func ParseTFTPErrorCode(node yaml.Node) (uint16, error) {
-	if node.Kind == 0 || node.Value == "" {
+	if node.Kind == 0 || node.Tag == "!!null" || node.Value == "" {
 		return 0, nil
 	}
 	var n uint64

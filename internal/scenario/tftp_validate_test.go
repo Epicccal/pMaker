@@ -54,6 +54,32 @@ func TestTFTPValidateRejects(t *testing.T) {
 			want: "opcode 必填",
 		},
 		{
+			// 显式 null 此前会被 Decode(&uint64) 当 0 静默透传,产成 opcode=0 的包;
+			// 必须在校验期硬错。`opcode:`(空值)同为 !!null 标量。
+			name: "显式 null opcode",
+			body: tftpFlowMessages("      - from: src\n        stack:\n" +
+				"          - tftp: { opcode: null }\n"),
+			want: "opcode 必填",
+		},
+		{
+			name: "波浪线 null opcode",
+			body: tftpFlowMessages("      - from: src\n        stack:\n" +
+				"          - tftp: { opcode: ~ }\n"),
+			want: "opcode 必填",
+		},
+		{
+			name: "空值 opcode",
+			body: tftpFlowMessages("      - from: src\n        stack:\n" +
+				"          - tftp:\n              opcode:\n              filename: \"a.txt\"\n"),
+			want: "opcode 必填",
+		},
+		{
+			name: "空串 opcode",
+			body: tftpFlowMessages("      - from: src\n        stack:\n" +
+				"          - tftp: { opcode: \"\", filename: \"a.txt\" }\n"),
+			want: "opcode 不能为空串",
+		},
+		{
 			name: "rrq 缺 filename",
 			body: tftpFlowMessages("      - from: src\n        stack:\n" +
 				"          - tftp: { opcode: rrq, mode: octet }\n"),
@@ -195,6 +221,12 @@ func TestTFTPValidateAccepts(t *testing.T) {
 			name: "error 数字 code 8",
 			body: tftpFlowMessages("      - from: dst\n        stack:\n" +
 				"          - tftp: { opcode: error, code: 8, message: \"bad option\" }\n"),
+		},
+		{
+			// error code 的 null 走缺省 0,与未写同语义,不算硬错。
+			name: "error null code 缺省 0",
+			body: tftpFlowMessages("      - from: dst\n        stack:\n" +
+				"          - tftp: { opcode: error, code: null, message: \"boom\" }\n"),
 		},
 		{
 			name: "ack block 0 确认 OACK",
