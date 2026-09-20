@@ -1,0 +1,53 @@
+# examples/tftp/large_transfer.yaml
+#
+# 大文件分包传输(RFC 1350 + RFC 2347 选项协商):
+# 客户端用 RRQ 请求 5 MB 二进制文件,协商 blksize=8192 以减少往返次数;
+# 服务器 OACK 确认块大小与文件大小,客户端 ACK[0] 后传输开始。
+# 5 MB(5,242,880 字节)÷ 8192 = 640 块整除 → 额外补一个 0 字节末块 = 641 块。
+# tftp_transfer 宏自动切块并展开成 DATA[1..641]/ACK[1..641] 锁步序列,
+# 每块间隔 +1ms(默认),整体传输约 641ms。
+link_type: ethernet
+flows:
+  - name: tftp-req
+    stack:
+      - eth:         { src: "00:11:22:33:44:01", dst: "00:11:22:33:44:02" }
+      - ipv4:        { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - udp:         { sport: 50010, dport: 69 }
+      - udp_session: {}
+    messages:
+      - from: src
+        message_id: rrq
+        stack:
+          - tftp:
+              opcode: rrq
+              filename: "payload_large.bin"
+              mode: octet
+              options:
+                - { name: blksize, value: "8192" }
+                - { name: tsize,   value: "0" }     # 客户端探测文件大小
+
+  - name: tftp-data
+    start_after: tftp-req.rrq          # 服务器在 RRQ 到达后从新 TID 建立传输会话
+    stack:
+      - eth:         { src: "00:11:22:33:44:02", dst: "00:11:22:33:44:01" }
+      - ipv4:        { src: "10.0.0.2", dst: "10.0.0.1", ttl: 64 }
+      - udp:         { sport: 56789, dport: 50010 }  # 服务器 TID:56789
+      - udp_session: {}
+    messages:
+      - from: src                      # 服务器 OACK:确认 blksize 并告知文件大小
+        stack:
+          - tftp:
+              opcode: oack
+              options:
+                - { name: blksize, value: "8192"    }
+                - { name: tsize,   value: "5242880" }
+      - from: dst                      # 客户端 ACK[0] 确认 OACK(RFC 2347 §2)
+        stack:
+          - tftp: { opcode: ack, block: 0 }
+      - from: src                      # 服务器传输 5 MB 文件;宏展开 641 块 DATA/ACK
+        message_id: xfer
+        stack:
+          - tftp_transfer:
+              data: "@file(assets/payload_large.bin)"
+              block_size: 8192
+              interval: "+1ms"
