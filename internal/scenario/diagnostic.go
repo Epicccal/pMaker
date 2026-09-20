@@ -65,6 +65,12 @@ const (
 
 	CodeIPv4MTUBelowMinimum = "ipv4.mtu-below-minimum" // ipv4 mtu 低于 RFC 791 最小 MTU 68
 	CodeIPv6MTUBelowMinimum = "ipv6.mtu-below-minimum" // ipv6 mtu 低于 RFC 8200 最小链路 MTU 1280
+
+	CodeTFTPRQPort       = "tftp.rq-port"       // RRQ/WRQ 目标端口不是 69
+	CodeTFTPModeObsolete = "tftp.mode-obsolete" // mode = mail 已废弃(RFC 1350 Appendix II)
+	CodeTFTPModeUnknown  = "tftp.mode-unknown"  // mode 不在已知集合(octet/netascii/mail)
+	CodeTFTPDataOversize = "tftp.data-oversize" // DATA 超过 block_size/512 上限
+	CodeTFTPFieldIgnored = "tftp.field-ignored" // opcode 无关字段出现在 YAML 里
 )
 
 // WarningCodes 返回全部告警 code(与上方常量表同序维护),供 cmd/pmaker-mcp 的 doc-sync 测试锁定
@@ -93,6 +99,11 @@ func WarningCodes() []string {
 		CodeUDPStreamAppLayer,
 		CodeIPv4MTUBelowMinimum,
 		CodeIPv6MTUBelowMinimum,
+		CodeTFTPRQPort,
+		CodeTFTPModeObsolete,
+		CodeTFTPModeUnknown,
+		CodeTFTPDataOversize,
+		CodeTFTPFieldIgnored,
 	}
 }
 

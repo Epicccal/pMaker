@@ -130,6 +130,11 @@ func Warnings(s *Scenario) []Diagnostic {
 	ws = append(ws, CheckFlowOverrideWarning(s)...)
 	ws = append(ws, CheckUDPStreamAppLayer(s)...)
 	ws = append(ws, CheckMTUBelowMinimum(s)...)
+	ws = append(ws, CheckTFTPRQPort(s)...)
+	ws = append(ws, CheckTFTPModeObsolete(s)...)
+	ws = append(ws, CheckTFTPModeUnknown(s)...)
+	ws = append(ws, CheckTFTPDataSize(s)...)
+	ws = append(ws, CheckTFTPFieldIgnored(s)...)
 	return ws
 }
 
@@ -217,6 +222,21 @@ func validateFlow(f FlowSpec) error {
 		// message.stack 不混入非 payload 层。支持一个或多个 payload 生产层,按栈顺序拼接。
 		// 白名单须与 builder.PayloadBytes(internal/builder/payload.go)的 switch 保持一致。
 		for k, l := range m.Stack {
+			// tftp_transfer 宏标记的唯一合法路径:在 payload 白名单之前先行分流。
+			// 其余一切位置(standalone packets、flow.stack、quote.stack)由
+			// validateLayerIn 的无条件拒绝 case 与 flowLayerRank 白名单兜底拦截。
+			if tf, ok := l.Fields.(*TFTPTransferFields); ok {
+				if !isUDP {
+					return fmt.Errorf("messages[%d].stack[%d]: tftp_transfer 只能用于 UDP flow(TFTP 是 UDP 原生协议,TCP flow 无意义)", j, k)
+				}
+				if len(m.Stack) != 1 {
+					return fmt.Errorf("messages[%d].stack: tftp_transfer 须是该消息唯一的一层(共 %d 层)", j, len(m.Stack))
+				}
+				if err := validateTFTPTransferFields(tf); err != nil {
+					return fmt.Errorf("messages[%d].stack[%d].tftp_transfer: %w", j, k, err)
+				}
+				continue
+			}
 			if !isPayloadProducingLayer(l) {
 				return fmt.Errorf("messages[%d].stack[%d] 不支持 %q(只允许 payload 生产层,非标内容走 payload/payload_hex)", j, k, l.Type)
 			}
@@ -285,6 +305,8 @@ func isPayloadProducingLayer(l Layer) bool {
 		return l.Type == "eml_data"
 	case *DNSFields:
 		return l.Type == "dns"
+	case *TFTPFields:
+		return l.Type == "tftp"
 	case *PayloadFields:
 		return l.Type == "payload"
 	case PayloadHex:
@@ -692,6 +714,14 @@ func validateLayerIn(l Layer, inFlow bool) error {
 				}
 			}
 		}
+	case *TFTPFields:
+		if err := validateTFTPFields(f); err != nil {
+			return err
+		}
+	case *TFTPTransferFields:
+		// 合法位置 messages[].stack 已在 validateFlow 先行分流,到此处均为非法位置
+		// (standalone packets、flow.stack 经 flowLayerRank 白名单、quote.stack 等)。
+		return fmt.Errorf("tftp_transfer 只能作为 UDP flow 的 messages[].stack 的唯一一层")
 	case *TCPSessionFields:
 		// tcp_session 是 flow 的会话指令(open/close 策略),只允许出现在 flow.stack 的末位，
 		// 不能用于 standalone packets[].stack、message.stack 或 quote.stack。
