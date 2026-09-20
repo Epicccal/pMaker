@@ -78,6 +78,7 @@ gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ 
 | 应用 | `dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet` |
 | 应用 | `smtp_request`、`smtp_response`、`pop3_request`、`pop3_response` |
 | 应用 | `imap_request`、`imap_response`、`eml_data` |
+| 应用 | `tftp`(单层五 opcode 分派)、`tftp_transfer`(message 级宏,仅 UDP flow,展开成 DATA/ACK 锁步,非 wire 层) |
 | 兜底 | `payload`、`payload_hex` |
 
 子结构不是层,不能写进 `stack`:`multipart`(嵌在 `http_request` / `http_response` / `eml_data`)、
@@ -100,12 +101,15 @@ gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ 
 - 邮件与文本协议的命令、响应、多行续行
 - RFC 5322 正文层 `eml_data`,成帧由接入层强制
 - RFC 2046 multipart body,含 base64 与 quoted-printable
+- TFTP 全量报文(RFC 1350/2347 五 opcode + OACK + 数字透传);`tftp_transfer` 宏在
+  flow 展开期自动降解成 DATA/ACK 锁步序列(块数超上限硬错)
 - HTTP 内容编码 `content_encoding` ∈ gzip / deflate / deflate_raw / br / zstd / compress
 - HTTP 传输编码 `transfer_encoding` ∈ chunked / gzip / deflate / deflate_raw / compress
   (`br` 与 `zstd` 只是内容编码,`chunked` 只是传输编码,放错一侧硬错)
 - 自动 `Content-Length`(`auto_content_length: true`)
 - 文件占位符 `@file(path)` 注入原始字节
-- 一致性软告警:FTP 端口协商、multipart、HTTP 成帧、IMAP literal、flow 覆盖值逐包同值
+- 一致性软告警:FTP 端口协商、multipart、HTTP 成帧、IMAP literal、flow 覆盖值逐包同值、
+  TFTP(RQ 端口 / mode / DATA 超长 / 无关字段)
 - MCP server:两个工具 + schema/examples resources
 - golden pcap 逐字节比对 + gopacket 回读
 

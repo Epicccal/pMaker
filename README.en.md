@@ -100,6 +100,7 @@ seq/ack derivation, three-way handshake, four-way teardown, and peer ACKs are al
 - DNS records: A / AAAA / CNAME / NS / PTR / MX / TXT / SOA / SRV
 - RFC 5322 Internet Message Format
 - RFC 2045 MIME Content-Transfer-Encoding
+- Full TFTP message construction (RFC 1350/2347); the `tftp_transfer` macro auto-expands into DATA/ACK transfer sequences
 - File placeholder `@file(path)`: inject raw bytes from a file relative to workdir
 
 Field-level semantics and design rationale are in [CLAUDE.md](CLAUDE.md).
@@ -114,7 +115,7 @@ Layer names are canonical in `internal/scenario/layer_decode.go`; field referenc
 | L3 | `ipv4`, `ipv6`, `gre`, `vxlan` |
 | L4 | `tcp`, `udp`, `tcp_session`, `udp_session` |
 | Control | `icmp`, `icmpv6` |
-| Application | `dns`, `http_request`, `http_response`, `ftp_request`, `ftp_response`, `telnet`, `smtp_request`, `smtp_response`, `pop3_request`, `pop3_response`, `imap_request`, `imap_response`, `eml_data` |
+| Application | `dns`, `http_request`, `http_response`, `ftp_request`, `ftp_response`, `telnet`, `smtp_request`, `smtp_response`, `pop3_request`, `pop3_response`, `imap_request`, `imap_response`, `eml_data`, `tftp` |
 | Fallback | `payload`, `payload_hex` |
 
 ## Quick Start
