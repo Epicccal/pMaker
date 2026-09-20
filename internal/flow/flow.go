@@ -205,8 +205,17 @@ type MessageSchedule struct {
 //   - 第三个返回值是 message_id → 该消息整组完成时刻(msgCursor)的映射,仅收录显式设了
 //     message_id 的消息;供 plan 解析其它 flow / message 的 start_after 引用。空(无具名消息)时为 nil。
 func Expand(f scenario.FlowSpec, anchor time.Time, schedule []MessageSchedule) ([]scenario.PlannedPacket, time.Time, map[string]time.Time, error) {
-	if len(schedule) > 0 && len(schedule) != len(f.Messages) {
-		return nil, time.Time{}, nil, fmt.Errorf("schedule 长度 %d 与消息数 %d 不符", len(schedule), len(f.Messages))
+	// tftp_transfer 宏展开:plan 算时前已展开,这里兜底直接调用路径(测试/后续子命令)。
+	msgs, changed, err := expandTFTPTransfer(f.Messages)
+	if err != nil {
+		return nil, time.Time{}, nil, err
+	}
+	// 有宏时不可同时传入 schedule(宏展开后消息数变化)。
+	if changed && len(schedule) > 0 {
+		return nil, time.Time{}, nil, fmt.Errorf("flow 含未展开的 tftp_transfer 宏,请先调用 ExpandTFTPTransfers 再传入 schedule")
+	}
+	if len(schedule) > 0 && len(schedule) != len(msgs) {
+		return nil, time.Time{}, nil, fmt.Errorf("schedule 长度 %d 与消息数 %d 不符", len(schedule), len(msgs))
 	}
 	c, err := parseFlowStack(f.Stack)
 	if err != nil {
@@ -233,7 +242,7 @@ func Expand(f scenario.FlowSpec, anchor time.Time, schedule []MessageSchedule) (
 
 	// 应用层消息:TCP 按 segment.mss 切段发送、对端按 per-message 回一个 ACK;
 	// UDP 不切段(segment 在校验阶段被禁)、无对端 ACK,每条消息恰一个数据报。
-	for mi, m := range f.Messages {
+	for mi, m := range msgs {
 		segs, interval, err := messagePlan(m, c.profile)
 		if err != nil {
 			return nil, time.Time{}, msgids, err
