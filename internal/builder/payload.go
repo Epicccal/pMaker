@@ -67,6 +67,13 @@ func PayloadBytes(l scenario.Layer) ([]byte, error) {
 			return nil, fmt.Errorf("dns: %w", err)
 		}
 		return buf.Bytes(), nil
+	case *scenario.TFTPFields:
+		// *scenario.TFTPTransferFields 不在此处理——宏在 flow 展开后已消失。
+		b, err := serializeTFTP(f)
+		if err != nil {
+			return nil, fmt.Errorf("tftp: %w", err)
+		}
+		return b, nil
 	case *scenario.PayloadFields:
 		return payloadBytes(f)
 	case scenario.PayloadHex:

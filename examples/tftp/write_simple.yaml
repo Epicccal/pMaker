@@ -1,0 +1,37 @@
+# examples/tftp/write_simple.yaml
+#
+# 写入(RFC 1350):WRQ 发往 69 端口,服务器以 ACK[0] 授权写,客户端随后从新 TID 发数据。
+# 上传侧用 tftp_transfer 宏展开成 DATA[1..n]/ACK[1..n];数据方向 src = 客户端,
+# 与读取相反 —— 端口切换后由谁先发数据取决于 WRQ(客户端发)/ RRQ(服务器发)。
+link_type: ethernet
+flows:
+  - name: tftp-wrq
+    stack:
+      - eth:         { src: "00:11:22:33:44:01", dst: "00:11:22:33:44:02" }
+      - ipv4:        { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - udp:         { sport: 50002, dport: 69 }
+      - udp_session: {}
+    messages:
+      - from: src
+        message_id: wrq
+        stack:
+          - tftp: { opcode: wrq, filename: "upload.txt", mode: octet }
+
+  - name: tftp-upload
+    start_after: tftp-wrq.wrq
+    stack:
+      - eth:         { src: "00:11:22:33:44:02", dst: "00:11:22:33:44:01" }
+      - ipv4:        { src: "10.0.0.2", dst: "10.0.0.1", ttl: 64 }
+      - udp:         { sport: 56789, dport: 50002 }   # 服务器 TID:56789
+      - udp_session: {}
+    messages:
+      - from: src                  # 服务器 ACK[0] 确认 WRQ
+        stack:
+          - tftp: { opcode: ack, block: 0 }
+      - from: dst                  # 客户端开始上传
+        message_id: xfer
+        stack:
+          - tftp_transfer:
+              data: "file content here"
+              block_size: 512
+              interval: "+1ms"

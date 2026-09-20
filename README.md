@@ -98,6 +98,7 @@ seq/ack 推导、三次握手、四次挥手、对端 ACK 全部由 flow 展开�
 - DNS Record: A / AAAA / CNAME / NS / PTR / MX / TXT / SOA / SRV 构造
 - RFC 5322: Internet Message Format 构造
 - RFC 2045: MIME Content-Transfer-Encoding 编码
+- TFTP 全量报文构造（RFC 1350/2347），tftp_transfer 宏自动展开 DATA/ACK 传输序列
 - 文件占位符 @file(path): 基于 workdir 中的文件路径注入原始字节
 
 字段级语义与设计取舍见 [CLAUDE.md](CLAUDE.md)。
@@ -132,7 +133,7 @@ seq/ack 推导、三次握手、四次挥手、对端 ACK 全部由 flow 展开�
     </tr>
     <tr>
       <td>应用</td>
-      <td>dns、http_request、http_response、ftp_request、ftp_response、telnet、smtp_request、smtp_response、pop3_request、pop3_response、imap_request、imap_response、eml_data</td>
+      <td>dns、http_request、http_response、ftp_request、ftp_response、telnet、smtp_request、smtp_response、pop3_request、pop3_response、imap_request、imap_response、eml_data、tftp</td>
     </tr>
     <tr>
       <td>兜底</td>

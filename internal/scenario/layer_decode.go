@@ -128,6 +128,8 @@ var layerDecoders = map[string]layerDecoder{
 	"imap_request":  fieldsDecoder[IMAPRequestFields](),
 	"imap_response": fieldsDecoder[IMAPResponseFields](),
 	"eml_data":      fieldsDecoder[EMLDataFields](),
+	"tftp":          fieldsDecoder[TFTPFields](),
+	"tftp_transfer": fieldsDecoder[TFTPTransferFields](),
 	// 兜底
 	"payload": fieldsDecoder[PayloadFields](),
 	// payload_hex 是标量层(`- payload_hex: "0x..."`),值不是 map,故不走 fieldsDecoder。

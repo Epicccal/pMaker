@@ -1,0 +1,51 @@
+# examples/tftp/read_oack.yaml
+#
+# 带选项协商的读取(RFC 2347):RRQ 携带 blksize/tsize,服务器以 OACK 回显协商结果,
+# 客户端 ACK[0] 确认 OACK 后传输开始 —— 块号从 0(OACK)后重新计数。
+# 文件内容用 tftp_transfer 宏:按声明自动展开成 DATA[1..n]/ACK[1..n] 锁步序列,
+# 末块长度 < block_size 表示传输结束(本例 20 字节 < 1024,恰一个 DATA)。
+link_type: ethernet
+flows:
+  - name: tftp-req
+    stack:
+      - eth:         { src: "00:11:22:33:44:01", dst: "00:11:22:33:44:02" }
+      - ipv4:        { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - udp:         { sport: 50001, dport: 69 }
+      - udp_session: {}
+    messages:
+      - from: src
+        message_id: rrq
+        stack:
+          - tftp:
+              opcode: rrq
+              filename: "bigfile.bin"
+              mode: octet
+              options:
+                - { name: blksize, value: "1024" }
+                - { name: tsize, value: "0" }
+
+  - name: tftp-data
+    start_after: tftp-req.rrq
+    stack:
+      - eth:         { src: "00:11:22:33:44:02", dst: "00:11:22:33:44:01" }
+      - ipv4:        { src: "10.0.0.2", dst: "10.0.0.1", ttl: 64 }
+      - udp:         { sport: 55000, dport: 50001 }
+      - udp_session: {}
+    messages:
+      - from: src                  # 服务器从新 TID 发 OACK
+        stack:
+          - tftp:
+              opcode: oack
+              options:
+                - { name: blksize, value: "1024" }
+                - { name: tsize, value: "4096" }
+      - from: dst                  # 客户端 ACK[0] 确认 OACK(RFC 2347 §2)
+        stack:
+          - tftp: { opcode: ack, block: 0 }
+      - from: src                  # 服务器开始传输;宏展开成 DATA/ACK 循环
+        message_id: xfer
+        stack:
+          - tftp_transfer:
+              data: "content of bigfile"
+              block_size: 1024
+              interval: "+2ms"

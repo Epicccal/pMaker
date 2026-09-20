@@ -1,0 +1,33 @@
+# examples/tftp/malformed_data.yaml
+#
+# TFTP 畸形用例(standalone 包,结构合法但语义异常):
+# ① 超长 DATA:载荷 600 字节 > 默认块大小 512(告警 tftp.data-oversize;
+#    真实接收端在 blksize 协商下才可能接受);
+# ② DATA[0]:块号显式 0,DATA 锁步里块号从 1 起,0 只在 ACK(OACK 确认)里有意义;
+# ③ 错误校验和走 udp 层覆盖(checksum 两态语义)。
+# 块号跳变 / 丢 ACK / 重复块等畸形序列须手写普通 tftp 消息(宏不产畸形)。
+link_type: ethernet
+packets:
+  # ① 超长 DATA:> 512 字节,产 tftp.data-oversize 软告警。
+  - name: data-oversize
+    stack:
+      - eth:  { src: "00:11:22:33:44:02", dst: "00:11:22:33:44:01" }
+      - ipv4: { src: "10.0.0.2", dst: "10.0.0.1", ttl: 64 }
+      - udp:  { sport: 54321, dport: 50000 }
+      - tftp: { opcode: data, block: 1, data: "@file(assets/payload.bin)" }
+
+  # ② DATA[0]:块号 0 是合法畸形(显式写 0 才放行,缺省 block 是硬错)。
+  - name: data-block-zero
+    stack:
+      - eth:  { src: "00:11:22:33:44:02", dst: "00:11:22:33:44:01" }
+      - ipv4: { src: "10.0.0.2", dst: "10.0.0.1", ttl: 64 }
+      - udp:  { sport: 54321, dport: 50000 }
+      - tftp: { opcode: data, block: 0, data_hex: 0xdeadbeef }
+
+  # ③ DATA 带错误 UDP checksum(checksum 覆盖,自动计算关闭)。
+  - name: data-bad-checksum
+    stack:
+      - eth:  { src: "00:11:22:33:44:02", dst: "00:11:22:33:44:01" }
+      - ipv4: { src: "10.0.0.2", dst: "10.0.0.1", ttl: 64 }
+      - udp:  { sport: 54321, dport: 50000, checksum: 0xdead }
+      - tftp: { opcode: data, block: 3, data: "stale block" }

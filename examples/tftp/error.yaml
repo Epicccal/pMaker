@@ -1,0 +1,11 @@
+# examples/tftp/error.yaml
+#
+# 错误报文(standalone 包,opcode=error):服务器对客户端 RRQ 回 file_not_found。
+# error 常见于协商/请求阶段,单包即可表达;code 用助记名,数字(0-8)直接透传。
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:02", dst: "00:11:22:33:44:01" }
+      - ipv4: { src: "10.0.0.2", dst: "10.0.0.1", ttl: 64 }
+      - udp:  { sport: 54321, dport: 50000 }
+      - tftp: { opcode: error, code: file_not_found, message: "no such file" }

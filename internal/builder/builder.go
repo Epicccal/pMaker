@@ -352,6 +352,12 @@ func buildSerItems(ctx *buildContext, stack []scenario.Layer) ([]serItem, *fragT
 				return nil, nil, fmt.Errorf("dns: %w", err)
 			}
 			add(d, nil, lengthOverrideInfo{})
+		case *scenario.TFTPFields:
+			b, err := serializeTFTP(f)
+			if err != nil {
+				return nil, nil, fmt.Errorf("tftp: %w", err)
+			}
+			add(gopacket.Payload(b), nil, lengthOverrideInfo{})
 		case *scenario.HTTPReqFields:
 			b, err := serializeHTTPReq(f)
 			if err != nil {

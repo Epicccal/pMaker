@@ -372,6 +372,53 @@ type (
 		RawHex    string         `yaml:"raw_hex"`   // 原始模式（hex）：0x 前缀十六进制内容字节
 	}
 
+	// TFTPFields 是 TFTP 报文层(RFC 1350 + RFC 2347 选项扩展),一个 tftp 层 = 一个 UDP 数据报的载荷。
+	// opcode 决定报文类型与编码路径;各字段按 opcode 使用:
+	//
+	//   rrq / wrq:  filename(必填)、mode(缺省 octet)、options(可选)
+	//   data:       block(必填)、data/data_hex(互斥;均空 = 0 字节末块)
+	//   ack:        block(必填;0 = 确认 WRQ 或 OACK)
+	//   error:      code(数字或字符串名)、message(可空)
+	//   oack:       options(至少一个)
+	//
+	// 字段原样落 wire,不做大小写规范化,保留畸形构造能力。
+	// 与 opcode 无关的字段若出现在 YAML 里产软告警 tftp.field-ignored。
+	TFTPFields struct {
+		// 所有报文类型
+		Opcode yaml.Node `yaml:"opcode"` // 字符串名或 uint16 数字;字符串须在已知集合里;必填
+
+		// RRQ / WRQ 专属
+		Filename string       `yaml:"filename"` // 必填(rrq/wrq);原样落 wire;支持 @file 占位符
+		Mode     string       `yaml:"mode"`     // octet(缺省)|netascii|mail 及其他值原样落 wire
+		Options  []TFTPOption `yaml:"options"`  // RFC 2347 扩展选项;oack 时至少一个(空列表硬错)
+
+		// DATA / ACK 专属
+		Block   *uint16 `yaml:"block"`    // 必填(data/ack);nil = 硬错;0 = DATA[0]畸形 / ACK WRQ / ACK OACK
+		Data    string  `yaml:"data"`     // DATA 载荷(文本);支持 @file(path);与 data_hex 互斥
+		DataHex string  `yaml:"data_hex"` // DATA 载荷(hex);与 data 互斥;均空 = 0 字节末块
+
+		// ERROR 专属
+		Code    yaml.Node `yaml:"code"`    // 数字(uint16)或字符串名;字符串须在 tftpErrorCodes 表中
+		Message string    `yaml:"message"` // 错误消息(NUL 终止);可空
+	}
+
+	// TFTPOption 是 RFC 2347 扩展选项的一个键值对。
+	// 保序列表而非 map:RFC 2347 未规定选项顺序,但确定性 golden 要求输出可复现。
+	TFTPOption struct {
+		Name  string `yaml:"name"`  // 如 blksize/timeout/tsize/windowsize;必填非空
+		Value string `yaml:"value"` // 字符串值,原样落 wire;必填非空
+	}
+
+	// TFTPTransferFields 是文件传输宏标记,只能出现在 flow.messages[].stack 里且须唯一
+	// (UDP flow);展开器把它展开成 DATA[1..n]/ACK[1..n] 若干条普通 tftp 消息后消失,
+	// builder 永远看不到此类型。方向不入结构体:展开时直接读 Message.From。
+	TFTPTransferFields struct {
+		Data      string  `yaml:"data"`       // 文本数据;支持 @file(path);与 data_hex 互斥
+		DataHex   string  `yaml:"data_hex"`   // hex 数据;与 data 互斥;均空 = 单个 0 字节 DATA 块
+		BlockSize *uint16 `yaml:"block_size"` // 块大小字节数;缺省 512;显式 0 硬错(指针区分缺省与 0)
+		Interval  *Offset `yaml:"interval"`   // DATA→ACK 及 ACK→下一DATA 的 offset_time;缺省 1ms;显式 0s = 紧接
+	}
+
 	// ChunkedOptions 是 chunked 成帧的专属参数,仅在 transfer_encoding 含 chunked 时有效。
 	ChunkedOptions struct {
 		Size int `yaml:"size"` // 切块大小;0/缺省=整段一块;>0=按指定大小切分;<0=硬错

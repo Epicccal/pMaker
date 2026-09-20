@@ -286,6 +286,14 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 	cursor := base
 	prevT := base // 第一包的"上一包"= base
 
+	// ⓪ tftp_transfer 宏展开:在算时之前把宏消息降解成普通 tftp 消息,使阶段一与阶段二
+	//   看到同一组消息,start_after 锚点才能对齐。
+	//   宏的字段/位置合法性由 scenario.Validate 提前拦截,这里只做展开与块号上限检查。
+	flows, err := flow.ExpandTFTPTransfers(s.Flows)
+	if err != nil {
+		return nil, err
+	}
+
 	// ① standalone packets(声明序):offset_time 相对上一包——有 offset 则 t=prevT+offset,
 	// 无 offset 则接续 cursor(默认 +1ms);之后 cursor/prevT 始终推进。offset>=0 故天然单调。
 	for _, p := range s.Packets {
@@ -300,12 +308,12 @@ func Plan(s *scenario.Scenario) ([]scenario.PlannedPacket, error) {
 
 	// ② 阶段一(算时):按事件粒度递归算出每条 flow 各 message 的起始时刻与整流结束时刻。
 	//   真环由 Validate 拦截;scheduler 的 in-flight 守卫是防御纵深,环出现时报错而非死循环。
-	sc := newScheduler(s.Flows, base)
+	sc := newScheduler(flows, base)
 
 	// ③ 阶段二(展开):各 flow 拿着已算好的 per-message 起始时刻表独立发包。按声明序展开,
 	//   保证同 Time 的包保持声明/合并顺序(稳定排序确定性);跨流依赖已在阶段一解算为绝对时刻,
 	//   故不再需要"被引 flow 先整流展开"——这正是整流粒度死锁被解开的要害。
-	for fi, f := range s.Flows {
+	for fi, f := range flows {
 		anchor, err := sc.flowStart(fi)
 		if err != nil {
 			return nil, fmt.Errorf("flow[%d](%s): %w", fi, f.Name, err)

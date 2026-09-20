@@ -64,6 +64,7 @@ flow 分两种会话形态,由**会话层**决定(`tcp_session` / `udp_session`)
 - **UDP 会话**(`udp_session`,**必写**):无握手/挥手/ACK,每条 message 恰好一个数据报;
   `from: dst` 的消息交换端点后从对端发出。`message.stack` 允许任何 payload 生产层,
   常用 `payload` / `payload_hex` / `dns`(DNS 问答是头号用例,见 `pmaker://schema/udp_session`);
+  TFTP 用 `tftp`(单条报文)与 `tftp_transfer`(文件传输宏,见 `pmaker://schema/tftp_transfer`);
   TCP 流式层进数据报产软告警(`udp.stream-app-layer`)。
 
 反向消息自动反转所有 eth/IP 端点和会话传输层端口。单层 VXLAN flow 中,VNI 与
@@ -120,7 +121,7 @@ outer UDP `dport` 须非零。每条 message 须 ≥1 个 payload 生产层,同�
 | L2 | `eth`、`vlan` |
 | L3 | `ipv4`、`ipv6`、`gre`、`vxlan`(UDP 承载二层隧道:`udp(4789) → vxlan → eth`;支持 `packets` 与单层 VXLAN TCP/UDP flow) |
 | L4 | `tcp`、`udp`、`tcp_session`(仅 `flow.stack`,可省略)、`udp_session`(仅 `flow.stack`,UDP 会话必写) |
-| 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data` |
+| 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data`、`tftp`、`tftp_transfer`(message 级宏,仅 UDP flow) |
 | 兜底 | `payload`、`payload_hex` |
 
 各层 schema 一律 `pmaker://schema/<层名>`。
