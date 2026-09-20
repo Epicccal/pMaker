@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
@@ -53,16 +54,23 @@ func summarizePacketWithBase(p scenario.Packet, baseSrc, baseDst string, hasBase
 	}
 }
 
-// SummarizePlanned 从已汇流排序的 PlannedPacket 列表生成展示用摘要。
-// 保留 PlannedPacket.Time,FormatPacketSummaries 输出时间列。
-// 方向归一化:以第一个含 IP 的包为基准,反向包显示为 <-。
-func SummarizePlanned(planned []scenario.PlannedPacket) []PacketSummary {
+// SummarizeOut 从 builder 的 OutPacket 列表生成展示用摘要:分片的包按片展开成
+// 多行,Stack 列附 " frag k/N"(k 从 1 计);未分片不附。
+// planned 与 pkts 须来自同一次 plan.Plan(索引对应);方向归一化以第一个含 IP 的包为基准。
+func SummarizeOut(planned []scenario.PlannedPacket, pkts []builder.OutPacket) []PacketSummary {
 	baseSrc, baseDst, hasBase := firstPlannedIPPair(planned)
 
-	out := make([]PacketSummary, 0, len(planned))
-	for _, pp := range planned {
+	out := make([]PacketSummary, 0, len(pkts))
+	for _, op := range pkts {
+		if op.Frag.PlannedIdx < 0 || op.Frag.PlannedIdx >= len(planned) {
+			continue
+		}
+		pp := planned[op.Frag.PlannedIdx]
 		s := summarizePacketWithBase(pp.Packet, baseSrc, baseDst, hasBase)
-		s.Time = pp.Time
+		s.Time = op.Time
+		if op.Frag.N > 1 {
+			s.Stack += fmt.Sprintf(" frag %d/%d", op.Frag.K+1, op.Frag.N)
+		}
 		out = append(out, s)
 	}
 	return out

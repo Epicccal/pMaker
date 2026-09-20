@@ -16,7 +16,7 @@ import (
 // 错误类(typ<128)按 RFC 4443 §3 在 Checksum 与 quote 之间插入 4 字节类型相关
 // 字段(reserved):Type1/3=Unused(0)、Type2=MTU、Type4=Pointer,由调用方作为
 // 独立 Payload 层置于 icmp 之后。
-func buildICMPv6(ctx buildContext, f *scenario.ICMPv6Fields) (*layers.ICMPv6, *layers.ICMPv6Echo, []byte, []byte, error) {
+func buildICMPv6(ctx *buildContext, f *scenario.ICMPv6Fields) (*layers.ICMPv6, *layers.ICMPv6Echo, []byte, []byte, error) {
 	typ, err := icmpv6Type(f.Type)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -75,12 +75,18 @@ func buildICMPv6(ctx buildContext, f *scenario.ICMPv6Fields) (*layers.ICMPv6, *l
 	return icmp, echo, reserved, payload, nil
 }
 
-func icmpv6Payload(ctx buildContext, f *scenario.ICMPv6Fields) ([]byte, error) {
+func icmpv6Payload(ctx *buildContext, f *scenario.ICMPv6Fields) ([]byte, error) {
 	if f.QuoteFrom != "" {
 		return icmpv6QuoteFrom(ctx, f.QuoteFrom)
 	}
 	if f.Quote != nil {
-		return serializeStack(ctx, f.Quote.Stack)
+		// quote 是载荷提取视图,校验层已禁写 mtu,这里恒单片;取首片作防御性兜底。
+		// 该视图不进 ctx.results,快照恒关(嵌套 quote_from 读的是外层包的既有快照)。
+		frames, _, _, err := serializeStack(ctx, f.Quote.Stack, false)
+		if err != nil {
+			return nil, err
+		}
+		return frames[0], nil
 	}
 	if f.PayloadHex != "" {
 		return scenario.ParsePayloadHex(f.PayloadHex)
@@ -92,38 +98,29 @@ func icmpv6Payload(ctx buildContext, f *scenario.ICMPv6Fields) ([]byte, error) {
 // 整个触发包,仅受"整个错误包不超过最小 IPv6 MTU(1280 字节)"限制。外层 IPv6
 // 头(40)+ ICMPv6 头(4)+ 类型相关 4 字节字段共 48 字节开销,故 quote 上限 1232
 // 字节。当前 IPv6 层不带扩展头,从 IPv6 固定头起整段截取。
-func icmpv6QuoteFrom(ctx buildContext, name string) ([]byte, error) {
-	p, ok := ctx.packetsByName[name]
-	if !ok {
+//
+// 字节来自包级快照 ctx.results:取被引包 wire 首片自栈序第一个 ipv6
+// 层头起的切片 —— 与 pcap 里真实首片逐字节一致(含分片 ID),不再二次序列化。
+func icmpv6QuoteFrom(ctx *buildContext, name string) ([]byte, error) {
+	// 先查存在性再查快照:未知包名与前向引用是两类不同错误,分开报。
+	if _, ok := ctx.packetsByName[name]; !ok {
 		return nil, fmt.Errorf("quote_from 引用未知 packet %q", name)
 	}
-	stack, err := ipv6Stack(p)
-	if err != nil {
-		return nil, fmt.Errorf("quote_from %q: %w", name, err)
+	wire, hit := ctx.results[name]
+	if !hit {
+		return nil, fmt.Errorf("quote_from %q: 被引 packet 排在引用包之后(前向引用不支持);请把被引包声明/排到引用包之前的时刻", name)
 	}
-	b, err := serializeStack(ctx, stack)
-	if err != nil {
-		return nil, err
+	if wire.IP6Down == nil {
+		return nil, fmt.Errorf("quote_from %q: 被引用 packet 缺少 ipv6 层", name)
 	}
+	b := wire.IP6Down
 	const headerLen = 40 // IPv6 固定头,无 IHL 概念
 	if len(b) < headerLen {
-		return nil, fmt.Errorf("IPv6 quote 长度不足: %d < %d", len(b), headerLen)
+		return nil, fmt.Errorf("quote_from %q: IPv6 quote 长度不足: %d < %d", name, len(b), headerLen)
 	}
 	const maxQuote = 1280 - 40 - 8 // 1232;最小 IPv6 MTU 减去外层 IPv6 头、ICMPv6 头与类型相关 4 字节开销
-	quoteLen := len(b)
-	if quoteLen > maxQuote {
-		quoteLen = maxQuote
-	}
+	quoteLen := min(len(b), maxQuote)
 	return append([]byte(nil), b[:quoteLen]...), nil
-}
-
-func ipv6Stack(p scenario.Packet) ([]scenario.Layer, error) {
-	for i, l := range p.Stack {
-		if l.Type == "ipv6" {
-			return p.Stack[i:], nil
-		}
-	}
-	return nil, fmt.Errorf("被引用 packet 缺少 ipv6 层")
 }
 
 func icmpv6Type(node yaml.Node) (uint8, error) {

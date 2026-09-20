@@ -1,0 +1,14 @@
+# examples/ip_fragment/gre_inner_mtu.yaml
+#
+# 隧道内层分片:mtu 写在 GRE 内层 IP 上,只分内层数据报;外层 IP 的长度与
+# checksum 逐片自动重算(FixLengths 重序列化),隧道封装免费正确。
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "1.1.1.1", dst: "2.2.2.2", ttl: 64 }
+      - gre:  {}
+      - ipv4: { src: "192.168.1.1", dst: "192.168.1.2", ttl: 64, mtu: 44 }
+      - udp:  { sport: 40000, dport: 65001 }
+      - payload:
+          payload: "0123456789012345678901234567" # 28 字节,内层数据报 56 > 44

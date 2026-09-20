@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Epicccal/pMaker/internal/builder"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/summary"
 )
@@ -60,7 +61,7 @@ func TestSummarizePlanned(t *testing.T) {
 		),
 	}
 
-	got := summary.SummarizePlanned(planned)
+	got := summary.SummarizeOut(planned, outOfPlanned(planned))
 	// 逐行断言端点/方向/协议栈(格式化对齐由 format_test.go 单独覆盖)。
 	want := []struct{ left, arrow, right, stack string }{
 		{"10.0.0.1", "->", "10.0.0.2", "eth/ipv4/tcp/http"},
@@ -100,7 +101,7 @@ func TestSummarizePlannedWithTime(t *testing.T) {
 		}}, Time: base.Add(time.Millisecond)},
 	}
 
-	got := summary.SummarizePlanned(planned)
+	got := summary.SummarizeOut(planned, outOfPlanned(planned))
 	lines := summary.FormatPacketSummaries(got)
 	want := []string{
 		"[1] 2020-01-01T00:00:00.000000Z 10.0.0.10 -> 10.0.0.80  eth/ipv4/tcp",
@@ -139,7 +140,7 @@ func TestSummarizeUDPFlowPackets(t *testing.T) {
 			scenario.Layer{Type: "payload_hex", Fields: scenario.PayloadHex("0x61")},
 		),
 	}
-	got := summary.SummarizePlanned(planned)
+	got := summary.SummarizeOut(planned, outOfPlanned(planned))
 	want := []struct{ left, arrow, right, stack string }{
 		{"10.0.0.10:49152", "->", "10.0.0.53:53", "eth/ipv4/udp"},
 		{"10.0.0.10:49152", "<-", "10.0.0.53:53", "eth/ipv4/udp"},
@@ -194,7 +195,7 @@ func TestSummarizeWithPorts(t *testing.T) {
 			scenario.Layer{Type: "tcp", Fields: &scenario.TCPFields{SPort: 443, DPort: 443}},
 		),
 	}
-	got := summary.SummarizePlanned(planned)
+	got := summary.SummarizeOut(planned, outOfPlanned(planned))
 	// 逐行断言端点(格式化对齐由 format_test.go 单独覆盖):端口随方向归一,左恒为 base 源端。
 	want := []struct{ left, arrow, right string }{
 		{"10.0.0.10:49152", "->", "10.0.0.80:80"},
@@ -211,5 +212,48 @@ func TestSummarizeWithPorts(t *testing.T) {
 		if s.Left != w.left || s.Arrow != w.arrow || s.Right != w.right {
 			t.Errorf("第%d行端点=%q %s %q,期望 %q %s %q", i+1, s.Left, s.Arrow, s.Right, w.left, w.arrow, w.right)
 		}
+	}
+}
+
+// TestSummarizeOutFragments: SummarizeOut 按片展开分片包 —— N 片产 N 行,Stack 列
+// 附 " frag k/N"(k 从 1 计),各片时间与原包同刻;未分片包不附 frag 标记。
+func TestSummarizeOutFragments(t *testing.T) {
+	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	planned := []scenario.PlannedPacket{
+		{Packet: scenario.Packet{Stack: []scenario.Layer{
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			scenario.Layer{Type: "udp"},
+		}}, Time: base},
+		{Packet: scenario.Packet{Stack: []scenario.Layer{
+			scenario.Layer{Type: "eth"},
+			scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.1", Dst: "10.0.0.2"}},
+			scenario.Layer{Type: "udp"},
+		}}, Time: base},
+	}
+	pkts := []builder.OutPacket{
+		{Data: []byte{1}, Time: base, Frag: builder.FragInfo{PlannedIdx: 0, K: 0, N: 3}},
+		{Data: []byte{2}, Time: base, Frag: builder.FragInfo{PlannedIdx: 0, K: 1, N: 3}},
+		{Data: []byte{3}, Time: base, Frag: builder.FragInfo{PlannedIdx: 0, K: 2, N: 3}},
+		{Data: []byte{4}, Time: base, Frag: builder.FragInfo{PlannedIdx: 1, K: 0, N: 1}},
+	}
+
+	got := summary.SummarizeOut(planned, pkts)
+	if len(got) != len(pkts) {
+		t.Fatalf("摘要行数=%d,期望 %d(分片按片展开)", len(got), len(pkts))
+	}
+	wantStack := []string{
+		"eth/ipv4/udp frag 1/3",
+		"eth/ipv4/udp frag 2/3",
+		"eth/ipv4/udp frag 3/3",
+		"eth/ipv4/udp",
+	}
+	for i, w := range wantStack {
+		if got[i].Stack != w {
+			t.Errorf("第%d行 Stack=%q,期望 %q", i+1, got[i].Stack, w)
+		}
+	}
+	if !got[0].Time.Equal(base) {
+		t.Fatalf("分片行时间应取 OutPacket.Time(与原包同刻)")
 	}
 }

@@ -14,7 +14,7 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-func buildICMP(ctx buildContext, f *scenario.ICMPFields) (*layers.ICMPv4, []byte, error) {
+func buildICMP(ctx *buildContext, f *scenario.ICMPFields) (*layers.ICMPv4, []byte, error) {
 	typ, err := icmpType(f.Type)
 	if err != nil {
 		return nil, nil, err
@@ -82,12 +82,18 @@ func buildICMP(ctx buildContext, f *scenario.ICMPFields) (*layers.ICMPv4, []byte
 	return icmp, payload, nil
 }
 
-func icmpPayload(ctx buildContext, f *scenario.ICMPFields) ([]byte, error) {
+func icmpPayload(ctx *buildContext, f *scenario.ICMPFields) ([]byte, error) {
 	if f.QuoteFrom != "" {
 		return icmpQuoteFrom(ctx, f.QuoteFrom)
 	}
 	if f.Quote != nil {
-		return serializeStack(ctx, f.Quote.Stack)
+		// quote 是载荷提取视图,校验层已禁写 mtu,这里恒单片;取首片作防御性兜底。
+		// 该视图不进 ctx.results,快照恒关(嵌套 quote_from 读的是外层包的既有快照)。
+		frames, _, _, err := serializeStack(ctx, f.Quote.Stack, false)
+		if err != nil {
+			return nil, err
+		}
+		return frames[0], nil
 	}
 	if f.PayloadHex != "" {
 		return scenario.ParsePayloadHex(f.PayloadHex)
@@ -96,25 +102,27 @@ func icmpPayload(ctx buildContext, f *scenario.ICMPFields) ([]byte, error) {
 }
 
 // icmpQuoteFrom 按 RFC 792 从触发包提取 quote:internet 头(IPv4 头,IHL×4 字节)
-// + 原始数据报数据的前 64 位(8 字节)。从序列化后的 IPv4 stack 回解析 IHL 以
-// 兼容带选项的头;触发包短于头+8 时截到可用长度。
-func icmpQuoteFrom(ctx buildContext, name string) ([]byte, error) {
-	p, ok := ctx.packetsByName[name]
-	if !ok {
+// + 原始数据报数据的前 64 位(8 字节)。字节来自包级快照 ctx.results:
+// 取被引包 wire 首片自第一个 ipv4 层头起的切片 —— 与 pcap 里真实首片逐字节一致
+// (含分片 ID),不再二次序列化。IHL 回解析以兼容带选项的头;
+// 触发包短于头+8 时截到可用长度。
+func icmpQuoteFrom(ctx *buildContext, name string) ([]byte, error) {
+	// 先查存在性再查快照:未知包名与前向引用是两类不同错误,分开报。
+	if _, ok := ctx.packetsByName[name]; !ok {
 		return nil, fmt.Errorf("quote_from 引用未知 packet %q", name)
 	}
-	stack, err := ipv4Stack(p)
-	if err != nil {
-		return nil, fmt.Errorf("quote_from %q: %w", name, err)
+	wire, hit := ctx.results[name]
+	if !hit {
+		return nil, fmt.Errorf("quote_from %q: 被引 packet 排在引用包之后(前向引用不支持);请把被引包声明/排到引用包之前的时刻", name)
 	}
-	b, err := serializeStack(ctx, stack)
-	if err != nil {
-		return nil, err
+	if wire.IP4Down == nil {
+		return nil, fmt.Errorf("quote_from %q: 被引用 packet 缺少 ipv4 层", name)
 	}
+	b := wire.IP4Down
 	pkt := gopacket.NewPacket(b, layers.LayerTypeIPv4, gopacket.Default)
 	l := pkt.Layer(layers.LayerTypeIPv4)
 	if l == nil {
-		return nil, fmt.Errorf("未解析出 IPv4 quote")
+		return nil, fmt.Errorf("quote_from %q: 未解析出 IPv4 quote", name)
 	}
 	ip := l.(*layers.IPv4)
 	headerLen := int(ip.IHL) * 4
@@ -124,20 +132,8 @@ func icmpQuoteFrom(ctx buildContext, name string) ([]byte, error) {
 	if len(b) < headerLen {
 		return nil, fmt.Errorf("IPv4 quote 长度不足: %d < %d", len(b), headerLen)
 	}
-	quoteLen := headerLen + 8
-	if quoteLen > len(b) {
-		quoteLen = len(b)
-	}
+	quoteLen := min(headerLen+8, len(b))
 	return append([]byte(nil), b[:quoteLen]...), nil
-}
-
-func ipv4Stack(p scenario.Packet) ([]scenario.Layer, error) {
-	for i, l := range p.Stack {
-		if l.Type == "ipv4" {
-			return p.Stack[i:], nil
-		}
-	}
-	return nil, fmt.Errorf("被引用 packet 缺少 ipv4 层")
 }
 
 func icmpType(node yaml.Node) (uint8, error) {

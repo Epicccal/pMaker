@@ -30,6 +30,10 @@ type (
 		Checksum *Hex `yaml:"checksum"`
 		Length   *Hex `yaml:"total_length"`  // 总长度(16 位,上限 0xFFFF);写即覆盖原样上 wire,不写=自动计算
 		IHL      *Hex `yaml:"header_length"` // 头部长度(IHL,4 位,可写 0-15,上限 0xF);写即覆盖,不写=自动计算。5-15 为规范范围,0-4 合法畸形
+		// MTU 是自动分片开关:int(>0) = 整个 IP 数据报(头+载荷)超过该值时自动切片。
+		// 不写(0)= 永不分片。分片 ID 由 builder 的确定性计数器分配,不开放 YAML 字段;
+		// 与 total_length/header_length/checksum 互斥(各片长度与校验和须逐片重算,见校验)。
+		MTU int `yaml:"mtu"`
 	}
 	IPv6Fields struct {
 		Src           string  `yaml:"src"`
@@ -39,6 +43,9 @@ type (
 		FlowLabel     *uint32 `yaml:"flow_label"`
 		NextHeader    *string `yaml:"next_header"`    // 覆盖:tcp/udp/icmpv6/ipv4/ipv6(制造断链)
 		PayloadLength *Hex    `yaml:"payload_length"` // 载荷长度(16 位,上限 0xFFFF,不含 40B 头);写即覆盖,不写=自动计算
+		// MTU 是自动分片开关,语义与 ipv4.mtu 一致:超过时在主头后插入 Fragment 扩展头
+		// (RFC 8200 §4.5,由 builder 构造,不作为独立 YAML 层)。与 payload_length 互斥。
+		MTU int `yaml:"mtu"`
 	}
 	GREFields   struct{}
 	VXLANFields struct {

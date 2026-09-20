@@ -29,7 +29,7 @@ func TestFormatPacketSummariesAlignsColumns(t *testing.T) {
 	planned[9].Packet.Stack[1] = scenario.Layer{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "192.168.100.1", Dst: "192.168.100.80"}}
 	planned[11].Packet.Stack = []scenario.Layer{{Type: "eth"}} // 无 IP → "- -> -"
 
-	summaries := summary.SummarizePlanned(planned)
+	summaries := summary.SummarizeOut(planned, outOfPlanned(planned))
 	lines := summary.FormatPacketSummaries(summaries)
 	if len(lines) != len(planned) {
 		t.Fatalf("行数=%d,期望 %d", len(lines), len(planned))

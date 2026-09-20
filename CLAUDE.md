@@ -86,12 +86,16 @@ gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ 
 已实现特性:
 
 - next-proto 与 EtherType 按层栈自动推导,可逐层显式覆盖
+- IP MTU 自动分片:`ipv4` / `ipv6` 层写 `mtu` 即按 8 字节对齐块逐片切出,
+  IPv6 自动插 Fragment 扩展头(next_header=44);分片 ID 由确定性计数器分配
+  (只在真正分片时消耗),各片与原包同刻;`mtu` 与 length/checksum 覆盖字段同层互斥
 - TCP/UDP checksum 伪首部绑定就近 IP 层,多层 IP 时绑内层
 - `checksum` 与 `length` 两态覆盖:不写=自动算,写=原样落值
 - 确定性时间戳,全程不用 `time.Now()`
 - 隧道递归嵌套:GRE 套报文、VXLAN 承载二层
 - 方向化 VLAN VID(`vlan.src_vid` / `dst_vid`,仅 flow.stack 有效)
-- ICMP echo 与错误报文(`quote` / `quote_from`)
+- ICMP echo 与错误报文(`quote` / `quote_from`;quote_from 复用被引包 wire 首片的
+  ip-down 字节,前向引用硬错、引用环校验期拦截)
 - DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV
 - 邮件与文本协议的命令、响应、多行续行
 - RFC 5322 正文层 `eml_data`,成帧由接入层强制
@@ -105,7 +109,10 @@ gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ 
 - MCP server:两个工具 + schema/examples resources
 - golden pcap 逐字节比对 + gopacket 回读
 
-未实现:随机化与 `seed`(无任何随机源);flow 的乱序 / 重叠 / 重传;IP 分片。
+未实现:随机化与 `seed`(无任何随机源);flow 的乱序 / 重叠 / 重传。
+IP 分片已实现为 `mtu` 自动分片(只此一条通道,畸形分片如 DF 置位、重叠片不在
+范围内,须整段 `payload_hex`);分片包的 gopacket 回读只到 Fragment 层,L4 须
+重组后解码。
 
 `gre` / `vlan` / `icmp` / `icmpv6` 不开放长度字段:协议头本身没有载荷长度字段。
 `eth` 暂不开放 802.3 长度:gopacket 会把显式值 > 0x0600 判为错误,且无条件补齐到 60 字节,造不出 runt 帧。

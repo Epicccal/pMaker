@@ -89,6 +89,7 @@ seq/ack derivation, three-way handshake, four-way teardown, and peer ACKs are al
 ### Additional Features
 
 - next-proto and EtherType auto-derivation; per-layer override to craft broken parse chains
+- The IP layer supports automatic fragmentation based on the MTU parameter
 - TCP/UDP checksum pseudo-header binds to the nearest IP layer; auto-selects inner IP in multi-encap
 - Cross-flow `start_after` to anchor timing dependencies between flows and messages
 - `base_time` and `offset_time` for deterministic absolute and relative timestamps

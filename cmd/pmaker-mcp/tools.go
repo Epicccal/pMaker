@@ -209,7 +209,7 @@ func (c config) handleGeneratePcap(ctx context.Context, req mcp.CallToolRequest)
 
 	out.Path = outPath
 	out.PacketCount = len(pkts)
-	out.Summary = summary.FormatPacketSummaries(summary.SummarizePlanned(planned))
+	out.Summary = summary.FormatPacketSummaries(summary.SummarizeOut(planned, pkts))
 	return marshalResult(out, false)
 }
 

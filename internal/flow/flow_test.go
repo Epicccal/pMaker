@@ -372,7 +372,11 @@ func TestFlowSummaryKeepsApplicationProtocol(t *testing.T) {
 		planned = append(planned, fp...)
 	}
 
-	summaries := summary.SummarizePlanned(planned)
+	pkts, err := builder.BuildPlanned(planned)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	summaries := summary.SummarizeOut(planned, pkts)
 	if len(summaries) < 6 {
 		t.Fatalf("摘要数量=%d,期望至少 6", len(summaries))
 	}

@@ -1,0 +1,22 @@
+# examples/ip_fragment/ipv4_mtu.yaml
+#
+# IPv4 MTU 自动分片(规范形态):数据报超过 mtu 时按 8 字节对齐块逐片切出,
+# 分片 ID 由确定性计数器分配、各片共用,末片 MF=0。
+# 本例:20 头 + 8 UDP + 28 载荷 = 56 字节数据报,mtu=44 → 块 (44-20)&^7=16 → 2 片。
+link_type: ethernet
+packets:
+  - name: big-udp
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64, mtu: 44 }
+      - udp:  { sport: 40000, dport: 65001 }
+      - payload:
+          payload: "0123456789012345678901234567" # 28 字节,数据报 56 > 44
+
+  - name: small-udp
+    stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.1", ttl: 64 }
+      - udp:  { sport: 40000, dport: 65001 }
+      - payload:
+          payload: "small" # 未分片:id 恒 0

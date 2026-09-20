@@ -45,7 +45,7 @@ packets:
 
 | 想构造 | 用 |
 |--------|-----|
-| 结构化层不支持的协议头(GRE Key、TCP option、IP 分片、VLAN PCP…) | 从该层起整段 `payload_hex` |
+| 结构化层不支持的协议头(GRE Key、TCP option、指定 IP ID、VLAN PCP…) | 从该层起整段 `payload_hex`(规范 IP 分片用 IP 层 `mtu`) |
 | 截断的 / 多余字节的报文尾 | 在正常栈末尾追加一层 `payload_hex` |
 | 完全自定义的链路层帧 | 栈首 `payload_hex` + 对应的 `link_type` |
 

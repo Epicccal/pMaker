@@ -25,6 +25,7 @@ packets:
 | `flow_label` | uint32 | 否 | 流标签 |
 | `next_header` | **枚举名** | 否 | 覆盖下一层协议号,**只认名字**:`tcp` `udp` `icmp` `icmpv6` `gre` `ipv4` `ipv6` |
 | `payload_length` | `Hex` | 否 | 两态覆盖(16 位):不写=自动计算(**不含** 40 字节固定头);写值=原样上 wire |
+| `mtu` | int | 否 | 自动分片开关:超过时在主头后插入 Fragment 扩展头(next_header=44),分片 ID 由确定性计数器分配(不可指定)。不写 = 永不分片。与 `payload_length` 互斥 |
 
 next-header 自动推导:后接 `tcp` → 6、`udp` → 17、`icmpv6` → 58、`gre` → 47、`ipv6` → 41;
 其余情况(`payload`/`payload_hex`/无下一层)落 6(TCP) 惯例缺省,**其它值一律报错**,见「静默陷阱」。
@@ -37,13 +38,17 @@ next-header 自动推导:后接 `tcp` → 6、`udp` → 17、`icmpv6` → 58、`
 - 无 `header_length`(IPv6 固定 40 字节头)。
 - `flow.stack` 里不能写 `payload_length`(length 覆盖在 flow 中被拒),这类畸形走 `packets`。
 - `flow.stack` 的网络层 `ipv4` / `ipv6` 二选一,不能同时出现。
+- `mtu` 与 `payload_length` **同层互斥**。下限 56(40 主头 + 8 Fragment 头 + 一片 8 字节
+  对齐载荷),低于即硬错;同一 stack 内两层 IP(隧道内外)同时写 `mtu` 也硬错 ——
+  写在哪层就分哪层,只能写一层。
 
 ## 静默陷阱
 
 - **`next_header` 只认上表那几个名字**。写 `next_header: 43`(Routing 扩展头)或
   `next_header: hopopt` 在 `generate_pcap` 阶段报错(不再静默变 TCP)。
-- 扩展头(Hop-by-Hop、Routing、Fragment、Destination Options)**完全未实现**。IPv6 分片、
-  扩展头链规避等场景只能整段 `payload_hex` 手拼。
+- 扩展头(Hop-by-Hop、Routing、Destination Options)**完全未实现**。`mtu` 自动分片
+  会插入 Fragment 扩展头(next_header=44),ID / M 位 / 偏移由切片器分配,**不可指定**;
+  手工扩展头链、畸形分片只能整段 `payload_hex` 手拼。
 - 覆盖 `payload_length` 会给整包关掉 `FixLengths`,同包其它层的自动长度也随之失效。
 - `payload_length` 的自动值**不含** 40 字节固定头 —— 与 `ipv4.total_length`(含头)相反,
   手写覆盖值时别照搬 IPv4 的算法。
@@ -56,6 +61,12 @@ next-header 自动推导:后接 `tcp` → 6、`udp` → 17、`icmpv6` → 58、`
 | 解析断链 | `next_header: udp` 但下一层实际写 `tcp` |
 | 扩展头链 / IPv6 分片 | 无字段,整段 `payload_hex` |
 | 错误的上层校验和 | 写在 `tcp` / `udp` / `icmpv6` 的 `checksum` 上 |
+
+## 一致性告警(软告警,非硬错)
+
+| code | 触发 | 说明 |
+|------|------|------|
+| `ipv6.mtu-below-minimum` | `mtu` < 1280(RFC 8200 最小链路 MTU) | 照常分片(`mtu` ≥ 结构下限 56 即可),仅提示真实链路通常不出现此值;极端小 MTU 测试场景可忽略 |
 
 ## 报错 → 改法
 

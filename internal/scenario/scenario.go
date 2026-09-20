@@ -70,6 +70,9 @@ func Validate(s *Scenario) error {
 		if err := validateVXLANPosition(p.Stack); err != nil {
 			return fmt.Errorf("packet[%d].vxlan: %w", i, err)
 		}
+		if err := validateMTUIn(p.Stack); err != nil {
+			return fmt.Errorf("packet[%d].%w", i, err)
+		}
 		for _, l := range p.Stack {
 			if err := validateLayer(l); err != nil {
 				return fmt.Errorf("packet[%d].%s: %w", i, l.Type, err)
@@ -78,6 +81,9 @@ func Validate(s *Scenario) error {
 				return fmt.Errorf("packet[%d].%s: %w", i, l.Type, err)
 			}
 		}
+	}
+	if err := CheckQuoteFromCycle(s); err != nil {
+		return err
 	}
 	for i, f := range s.Flows {
 		if err := validateFlow(f); err != nil {
@@ -112,6 +118,9 @@ func Validate(s *Scenario) error {
 //  6. UDP 会话流式层告警(CheckUDPStreamAppLayer):UDP 会话的 message.stack 出现
 //     http_request 等 TCP 流式协议层(按 tcpStreamLayers 清单正向判定)—— 放进
 //     单个数据报无帧边界语义,照常出包仅提示;清单外的新数据报层默认不告警。
+//  7. mtu 低于 RFC 下限(CheckMTUBelowMinimum):ipv4 mtu < 68 / ipv6 mtu < 1280。
+//     照常分片(结构下限之上的小 mtu 是合法的极端测试场景),仅提示真实链路
+//     通常不出现此值。
 func Warnings(s *Scenario) []Diagnostic {
 	var ws []Diagnostic
 	ws = append(ws, CheckFTPDataPortConsistency(s)...)
@@ -120,6 +129,7 @@ func Warnings(s *Scenario) []Diagnostic {
 	ws = append(ws, CheckIMAPLiteralConsistency(s)...)
 	ws = append(ws, CheckFlowOverrideWarning(s)...)
 	ws = append(ws, CheckUDPStreamAppLayer(s)...)
+	ws = append(ws, CheckMTUBelowMinimum(s)...)
 	return ws
 }
 
@@ -133,25 +143,17 @@ func packetNameCounts(pkts []Packet) map[string]int {
 	return out
 }
 
+// validateQuoteFrom 校验一层的 quote_from 引用:被引 packet 须存在且唯一。
+// 经 quoteFromNames 连同 quote.stack 内嵌的引用边一并检查(嵌套引用构建期同样消费)。
 func validateQuoteFrom(l Layer, packetNames map[string]int) error {
-	var name string
-	switch f := l.Fields.(type) {
-	case *ICMPFields:
-		name = f.QuoteFrom
-	case *ICMPv6Fields:
-		name = f.QuoteFrom
-	default:
-		return nil
-	}
-	if name == "" {
-		return nil
-	}
-	count := packetNames[name]
-	if count == 0 {
-		return fmt.Errorf("quote_from 引用未知 packet %q", name)
-	}
-	if count > 1 {
-		return fmt.Errorf("quote_from 引用的 packet %q 不唯一", name)
+	for _, name := range quoteFromNames(l) {
+		count := packetNames[name]
+		if count == 0 {
+			return fmt.Errorf("quote_from 引用未知 packet %q", name)
+		}
+		if count > 1 {
+			return fmt.Errorf("quote_from 引用的 packet %q 不唯一", name)
+		}
 	}
 	return nil
 }
@@ -182,6 +184,11 @@ func validateFlow(f FlowSpec) error {
 	isUDP := flowIsUDP(f.Stack)
 	if isUDP && len(f.Messages) == 0 {
 		return fmt.Errorf("UDP flow 的 messages 不能为空(UDP 无握手/挥手,空 flow 一个包也不产,却仍可被 start_after 引用)")
+	}
+	// 两层 IP 同写 mtu 的 stack 级检查与 standalone packets 同规则:
+	// builder 的分片目标层只认一层,后层会静默覆盖前层,校验期拦下。
+	if err := validateMTUIn(f.Stack); err != nil {
+		return err
 	}
 	for _, l := range f.Stack {
 		// tcp_session / udp_session 是会话指令层,无单层可校验的字段值
@@ -468,11 +475,31 @@ func validateLayerIn(l Layer, inFlow bool) error {
 		if err := validateLengthRange(f.IHL, 4, "ipv4.header_length"); err != nil {
 			return err
 		}
+		var v4Mut []string // mtu 互斥的覆盖字段,固定顺序保证报错文案确定
+		if f.Length != nil {
+			v4Mut = append(v4Mut, "total_length")
+		}
+		if f.IHL != nil {
+			v4Mut = append(v4Mut, "header_length")
+		}
+		if f.Checksum != nil {
+			v4Mut = append(v4Mut, "checksum")
+		}
+		if err := validateMTUFields("ipv4", f.MTU, v4Mut); err != nil {
+			return err
+		}
 	case *IPv6Fields:
 		if f.Src == "" || f.Dst == "" {
 			return fmt.Errorf("需要 src 与 dst")
 		}
 		if err := validateLengthRange(f.PayloadLength, 16, "ipv6.payload_length"); err != nil {
+			return err
+		}
+		var mut []string // mtu 互斥的覆盖字段
+		if f.PayloadLength != nil {
+			mut = append(mut, "payload_length")
+		}
+		if err := validateMTUFields("ipv6", f.MTU, mut); err != nil {
 			return err
 		}
 	case *TCPFields:
@@ -518,11 +545,14 @@ func validateLayerIn(l Layer, inFlow bool) error {
 				return fmt.Errorf("quote.stack 不能为空")
 			}
 			for _, l := range f.Quote.Stack {
+				if err := checkQuoteStackMTU(l); err != nil {
+					return fmt.Errorf("quote.%s: %w", l.Type, err)
+				}
 				if err := validateLayer(l); err != nil {
 					return fmt.Errorf("quote.%s: %w", l.Type, err)
 				}
 			}
-			if len(f.Quote.Stack) == 0 || f.Quote.Stack[0].Type != "ipv4" {
+			if f.Quote.Stack[0].Type != "ipv4" {
 				return fmt.Errorf("quote.stack 目前必须以 ipv4 开头")
 			}
 		}
@@ -549,11 +579,14 @@ func validateLayerIn(l Layer, inFlow bool) error {
 				return fmt.Errorf("quote.stack 不能为空")
 			}
 			for _, l := range f.Quote.Stack {
+				if err := checkQuoteStackMTU(l); err != nil {
+					return fmt.Errorf("quote.%s: %w", l.Type, err)
+				}
 				if err := validateLayer(l); err != nil {
 					return fmt.Errorf("quote.%s: %w", l.Type, err)
 				}
 			}
-			if len(f.Quote.Stack) == 0 || f.Quote.Stack[0].Type != "ipv6" {
+			if f.Quote.Stack[0].Type != "ipv6" {
 				return fmt.Errorf("quote.stack 目前必须以 ipv6 开头")
 			}
 		}
