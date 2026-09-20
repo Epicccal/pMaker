@@ -81,9 +81,9 @@ func TestFTPControlTriggersData(t *testing.T) {
 	}
 }
 
-// TestFTPBidirectionalInterleave 验证消息级双向交错的 start_after(方案 B 核心场景):
+// TestFTPBidirectionalInterleave 验证消息级双向交错的 start_after(两段式展开的核心场景):
 // FTP 控制通道的 150 触发数据通道开始,数据通道整流结束再触发控制通道的 226。
-// 方案 A 已让 Validate 放行(事件粒度无环);方案 B 让 plan.Plan 真正展开它(算时与发包解耦)。
+// 事件粒度判环已让 Validate 放行(事件粒度无环);两段式展开让 plan.Plan 真正实现它(算时与发包解耦)。
 //
 // 关键断言:control.150 的包时刻 < data 的包时刻 < control.226 的包时刻——双向交错成立。
 func TestFTPBidirectionalInterleave(t *testing.T) {

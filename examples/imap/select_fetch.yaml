@@ -1,7 +1,7 @@
 # examples/imap/select_fetch.yaml
 #
 # 一次完整 IMAP 会话(RFC 9051):CAPABILITY → LOGIN → SELECT → FETCH BODY[]
-# (服务器 literal 响应,§6.4.5 原文形态)→ LOGOUT。
+# (服务器 literal 响应,RFC 9051 §6.4.5 FETCH 命令原文形态)→ LOGOUT。
 #
 # 覆盖点:
 #   - imap_request 命令行形式(tag + command + args);

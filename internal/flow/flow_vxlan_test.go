@@ -71,7 +71,7 @@ func layerAt(p any, typ string, occ int) any {
 }
 
 // TestFlowVXLANDirectionReversal 反向包(dst→src)outer eth/ip 与 inner eth/ip 一并交换
-// src/dst;VNI 与 outer UDP 端口两向不变(设计 §4.1:覆写判据是「跟不跟连接状态走」)。
+// src/dst;VNI 与 outer UDP 端口两向不变(覆写判据是「跟不跟连接状态走」,见 flow.go conn 模板注释)。
 func TestFlowVXLANDirectionReversal(t *testing.T) {
 	pkts := expandVXLAN(t)
 	if len(pkts) < 4 {
@@ -112,7 +112,7 @@ func TestFlowVXLANDirectionReversal(t *testing.T) {
 	if fwdVX.VNI != 100 || revVX.VNI != 100 {
 		t.Errorf("VNI 两向应均为 100,得到 %d/%d", fwdVX.VNI, revVX.VNI)
 	}
-	// outer UDP 端口两向不变(dport=4789,sport 保持声明值;§4.1 sport 派生后续再做)。
+	// outer UDP 端口两向不变(dport=4789,sport 保持声明值;sport 派生留待后续)。
 	fwdUDP := layerAt(fwd, "udp", 0).(*scenario.UDPFields)
 	revUDP := layerAt(rev, "udp", 0).(*scenario.UDPFields)
 	if fwdUDP.DPort != 4789 || revUDP.DPort != 4789 {
@@ -138,7 +138,7 @@ func TestFlowVXLANSeqInnerPayloadOnly(t *testing.T) {
 }
 
 // TestFlowVXLANTemplatePreserved 整栈字段原样保留:在模板上写 checksum/total_length/
-// traffic_class 等覆盖,展开后每包逐层等值(§5.1「写即覆盖、原样落值、每包同值」)。
+// traffic_class 等覆盖,展开后每包逐层等值(整栈模板语义:写即覆盖、原样落值、每包同值)。
 func TestFlowVXLANTemplatePreserved(t *testing.T) {
 	stack := vxlanFlowStack()
 	cksum := scenario.Hex(0x1234)

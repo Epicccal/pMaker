@@ -38,7 +38,7 @@ func msg(from, id, sa string) scenario.Message {
 	}
 }
 
-// TestFTPBidirectionalPlan 复现"Validate 过 / Plan 失败"的探针场景(见 plan.md 附录 A):
+// TestFTPBidirectionalPlan 复现"Validate 过 / Plan 失败"的探针场景:
 // 控制通道的末条消息(226)message 级 start_after: data(等数据通道整流结束),
 // 数据通道 flow 级 start_after: control.pasv(150 收完后才开始)。整流粒度会死锁
 // (互相等对方整流先完成),消息粒度两段式展开应打通它。
@@ -55,11 +55,11 @@ func TestFTPBidirectionalPlan(t *testing.T) {
 		Flows: []scenario.FlowSpec{control, data}}
 
 	if err := scenario.Validate(s); err != nil {
-		t.Fatalf("Validate 应通过(方案A 已放行): %v", err)
+		t.Fatalf("Validate 应通过(事件粒度无环,不误判死锁): %v", err)
 	}
 	planned, err := plan.Plan(s)
 	if err != nil {
-		t.Fatalf("Plan 应成功(方案B 目标),实失败: %v", err)
+		t.Fatalf("Plan 应成功(两段式展开),实失败: %v", err)
 	}
 	t.Logf("Plan 成功,共 %d 包", len(planned))
 	// 用 sport 区分两流:control=1111,data=2222。pasv 是 control 第 2 条消息的数据段

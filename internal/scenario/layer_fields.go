@@ -427,7 +427,7 @@ type (
 	// MultipartBody 描述一个 MIME multipart 体(RFC 2046),作 HTTP 或 EML 的 body。
 	// 非「层」:不能独立出现在 stack 里,而是嵌在 http_request/http_response/eml_data 内部作为子字段。
 	// boundary 必须与父层 Content-Type 头里的 boundary= 参数一致(一致性告警覆盖,见 multipart_consistency.go)。
-	// v1 不支持嵌套 multipart 与 preamble/epilogue(见设计文档),需要时走父层原始字节兜底
+	// v1 不支持嵌套 multipart 与 preamble/epilogue,需要时走父层原始字节兜底
 	// (eml_data 的 raw/raw_hex、http 的 payload/payload_hex)手拼。
 	MultipartBody struct {
 		Boundary string          `yaml:"boundary"` // 分界符;空 → 确定性默认 "----=_pMaker_0001"

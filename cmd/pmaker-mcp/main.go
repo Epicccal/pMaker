@@ -8,7 +8,7 @@
 //
 // workdir 下自动创建 yaml/、pcap/ 两个子目录,分别存放 generate_yaml / generate_pcap 的产物。
 // 复用 internal/scenario|plan|builder|writer 现有链路,不改动 CLI 行为。
-// 详见仓库根 CLAUDE.md 与设计文档。
+// 详见仓库根 CLAUDE.md。
 package main
 
 import (

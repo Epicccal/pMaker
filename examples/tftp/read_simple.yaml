@@ -2,7 +2,7 @@
 #
 # 标准读取(RFC 1350,无选项):RRQ 发往服务器 69 端口,服务器从新 TID(54321)发数据。
 # 端口切换用两条 flow 表达:flow 1 只承载 RRQ,flow 2 承载数据交换,
-# start_after 锚到 RRQ 发出后(见 udp_session.md §端口切换)。
+# start_after 锚到 RRQ 发出后(见 udp_session.md「静默陷阱」的端口切换小节)。
 link_type: ethernet
 flows:
   - name: tftp-req

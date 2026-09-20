@@ -30,7 +30,7 @@ func TestIMAPSelectFetchContent(t *testing.T) {
 		[]byte("* 42 EXISTS\r\n"),
 		[]byte("* OK [UIDVALIDITY 3857529045] UIDs valid\r\n"),
 		[]byte("a003 OK [READ-WRITE] SELECT completed\r\n"),
-		// FETCH 命令 + FETCH literal 响应(§6.4.5 形态)
+		// FETCH 命令 + FETCH literal 响应(RFC 9051 §6.4.5 FETCH 命令形态)
 		[]byte("a004 FETCH 1 BODY[]\r\n"),
 		// literal 前缀:{n}\r\n(n = headers + 空行 + body 的字节数);n 由实际内容自动算。
 		// data 文本 "1 FETCH (BODY[] " + "{n}\r\n" + eml 内容 + ")" + "\r\n"
