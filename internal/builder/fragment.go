@@ -32,7 +32,7 @@ type fragTarget struct {
 	nextHeader layers.IPProtocol
 }
 
-// maxDatagramBytes 返回目标层能承载的数据报上限:超了既写不进 16 位长度字段,
+// maxDatagramSize 返回目标层能承载的数据报上限:超了既写不进 16 位长度字段,
 // 也超出片偏移 13 位(0x1FFF×8=65528)的寻址范围,切不出合法分片。
 func maxDatagramSize(family string, headerLen int) int {
 	if family == "ipv6" {

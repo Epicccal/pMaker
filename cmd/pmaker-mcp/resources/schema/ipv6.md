@@ -39,8 +39,8 @@ next-header 自动推导:后接 `tcp` → 6、`udp` → 17、`icmpv6` → 58、`
 - `flow.stack` 里不能写 `payload_length`(length 覆盖在 flow 中被拒),这类畸形走 `packets`。
 - `flow.stack` 的网络层 `ipv4` / `ipv6` 二选一,不能同时出现。
 - `mtu` 与 `payload_length` **同层互斥**。下限 56(40 主头 + 8 Fragment 头 + 一片 8 字节
-  对齐载荷),低于即硬错;同一 stack 内两层 IP 同时写 `mtu` 也硬错。
-- 同一 stack 内两层 IP(隧道内外)同时写 `mtu` 硬错 —— 写在哪层就分哪层,只能写一层。
+  对齐载荷),低于即硬错;同一 stack 内两层 IP(隧道内外)同时写 `mtu` 也硬错 ——
+  写在哪层就分哪层,只能写一层。
 
 ## 静默陷阱
 

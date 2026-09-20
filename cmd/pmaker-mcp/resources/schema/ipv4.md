@@ -57,8 +57,8 @@ next-proto 自动推导:后接 `tcp` → 6、`udp` → 17、`icmp` → 1、`gre`
 - `link_type` 缺省是 `ethernet`。只写 L3 的包(`- ipv4` 打头,无 `eth`)是合法的,但会被写进声明为
   Ethernet 的 pcap,解析端把 IP 头当 MAC 读。这种包须显式 `link_type: raw`。
 - 不开放的头字段:IP ID、DF/MF 标志、分片偏移、Options。`mtu` 自动分片的 ID / MF /
-  偏移由确定性计数器与切片器分配,**不可指定**;`DF` 置位、重叠分片等畸形当前只能走
-  `payload_hex`(IP 分片是**未实现**特性,不是可覆盖字段)。
+  偏移由确定性计数器与切片器分配,**不可指定**;`DF` 置位、重叠分片等畸形分片
+  只能走 `payload_hex`(规范分片用 `mtu`)。
 
 ## 畸形构造
 
@@ -68,7 +68,7 @@ next-proto 自动推导:后接 `tcp` → 6、`udp` → 17、`icmp` → 1、`gre`
 | 撒谎的总长度 | `total_length: 9999` |
 | 非法 IHL(小于 5,声称头比实际短) | `header_length: 0x0` |
 | 解析断链 | `protocol: udp` 但下一层实际写 `tcp` |
-| IP 分片 / 非零 IP ID / 带 Options 的头 | 无字段,整段 `payload_hex` |
+| 指定 IP ID / DF 置位 / 重叠片 / 带 Options 的头 | 无字段,整段 `payload_hex`(规范分片用 `mtu`) |
 
 ## 一致性告警(软告警,非硬错)
 

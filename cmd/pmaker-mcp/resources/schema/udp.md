@@ -38,7 +38,7 @@ packets:
 - **IPv6 下 checksum 为 0 是非法的**(RFC 8200 要求 UDP-over-IPv6 必须校验),但工具照写不误、
   不报错也不告警 —— 这是可用的畸形构造点,也是易误踩点。
 - 覆盖 `total_length` 会给整包关掉 `FixLengths`,同包 IP 层的自动长度也随之失效。
-- UDP 无分片能力:超 MTU 的大 payload 会照常生成一个巨包,工具不做 MTU 检查、不自动分片。
+- UDP 自身不做 MTU 检查:超大 payload 照常出包。要分片在 IP 层写 `mtu`(见 `pmaker://schema/ipv4`)。
 
 ## 畸形构造
 
@@ -47,7 +47,7 @@ packets:
 | 错误校验和 | `checksum: 0xdead` |
 | 声明"不校验"(IPv4 合法 / IPv6 非法) | `checksum: 0x0` |
 | 撒谎的 UDP 长度(小于实际、超长) | `total_length: 0x8` / `total_length: 9999` |
-| 0 端口、IP 分片 | 无字段,整段 `payload_hex` |
+| 0 端口、指定 IP ID / DF / 重叠片 | 无字段,整段 `payload_hex`(规范分片用 IP 层 `mtu`) |
 
 ## 报错 → 改法
 

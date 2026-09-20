@@ -47,8 +47,9 @@ flows:
   只能用 `close: none` + `packets` 补包,或整流手写。
 - 展开器在每条 message 的最后一段后 **+1ms 插一个对端纯 ACK**,这是硬编码行为:延迟 ACK、
   累积 ACK、丢 ACK 都无法配置。
-- 重传 / 乱序 / 重叠段 / IP 分片**均未实现**,写 `segment.order`、`segment.retransmit` 会被
-  未知字段校验拒掉;需要这些就用 `packets` 逐包手写 seq。
+- 重传 / 乱序 / 重叠段**均未实现**,写 `segment.order`、`segment.retransmit` 会被
+  未知字段校验拒掉;需要这些就用 `packets` 逐包手写 seq(IP 分片可在 `stack` 的
+  IP 层写 `mtu`)。
 
 ## 畸形构造
 
