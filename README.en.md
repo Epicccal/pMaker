@@ -167,6 +167,13 @@ or
 }
 ```
 
+Flags (also settable via the `PMAKER_WORKDIR` / `PMAKER_PROMPT` env vars):
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `-workdir` | current directory | scenario working directory; base for `@file` paths, with `yaml/` and `pcap/` subdirectories auto-created for outputs |
+| `-prompt` | built-in default | path to custom server instructions, delivered to the calling model via initialize |
+
 | Tool | Purpose |
 |------|---------|
 | `generate_yaml` | Validate scenario YAML; persist to `workdir/yaml/` on success |

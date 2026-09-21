@@ -195,6 +195,13 @@ or
 }
 ```
 
+启动参数（也可用同名环境变量 `PMAKER_WORKDIR` / `PMAKER_PROMPT`）：
+
+| 参数 | 缺省 | 作用 |
+|------|------|------|
+| `-workdir` | 当前工作目录 | 场景工作目录；`@file` 相对路径的基准，其下自动建 `yaml/`、`pcap/` 子目录存放产物 |
+| `-prompt` | 内嵌默认文案 | 自定义 server instructions 文件路径，经 initialize 下发给调用方模型 |
+
 | 工具 | 作用 |
 |------|------|
 | `generate_yaml` | 校验场景 YAML；通过则落盘到 `workdir/yaml/` |
