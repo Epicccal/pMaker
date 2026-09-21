@@ -3,10 +3,13 @@
 //
 // 用法:
 //
-//	pmaker-mcp -workdir <场景工作目录>
-//	# 或环境变量 PMAKER_WORKDIR(缺省 = 当前工作目录)
+//	pmaker-mcp -workdir <场景工作目录> [-prompt <指引文案.md>]
+//	# 或环境变量 PMAKER_WORKDIR / PMAKER_PROMPT(缺省 workdir = 当前工作目录,
+//	# instructions = 内嵌默认文案)
 //
 // workdir 下自动创建 yaml/、pcap/ 两个子目录,分别存放 generate_yaml / generate_pcap 的产物。
+// -prompt 指定自定义 server instructions(经 initialize 下发给调用方模型),
+// 缺省用内嵌 resources/instructions.md。
 // 复用 internal/scenario|plan|builder|writer 现有链路,不改动 CLI 行为。
 // 详见仓库根 CLAUDE.md。
 package main
@@ -17,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -30,6 +34,13 @@ var version = "dev"
 //
 //go:embed all:resources/schema
 var schemaFS embed.FS
+
+// instructions.md 是 server instructions 的单一真相源(initialize 响应回传给客户端模型,
+// 内容为工作流引导:读 schema → 写 YAML → 按结构化错误修正 → summary 即结果)。
+// 与 schema resources 同走 embed:改文案只动这个文件,重新编译即生效。
+//
+//go:embed resources/instructions.md
+var instructionsFS embed.FS
 
 const schemaMIME = "text/markdown"
 
@@ -49,6 +60,7 @@ func run(args []string, getenv func(string) string, serve func(*server.MCPServer
 	fs := flag.NewFlagSet("pmaker-mcp", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	workdir := fs.String("workdir", envOr("PMAKER_WORKDIR", "", getenv), "场景工作目录(@file 相对路径相对它解析;其下自动建 yaml/ pcap/ 子目录存放生成产物)")
+	instructionsPath := fs.String("prompt", envOr("PMAKER_PROMPT", "", getenv), "自定义 server instructions 文件路径(经 initialize 下发给调用方模型,供定制引导文案);缺省使用内嵌默认文案")
 	if err := fs.Parse(args); err != nil {
 		// -h/-help:flag 打印 usage 后返回 ErrHelp,视为正常退出(与默认 flag 集的
 		// ExitOnError 语义中 help 退出码 0 对齐),供冒烟测试 ./bin/pmaker-mcp -h 通过。
@@ -81,7 +93,13 @@ func run(args []string, getenv func(string) string, serve func(*server.MCPServer
 
 	cfg := config{workdir: absWorkdir, yamlDir: yamlDir, pcapDir: pcapDir}
 
+	instructions, err := loadInstructions(*instructionsPath)
+	if err != nil {
+		return err
+	}
+
 	srv := server.NewMCPServer("pmaker-mcp", version,
+		server.WithInstructions(instructions),
 		server.WithToolCapabilities(true),
 		// subscribe=false(不支持资源订阅);listChanged=false:资源在启动时一次性注册,
 		// 运行期不变,不发送 notifications/resources/list_changed。
@@ -107,4 +125,27 @@ type config struct {
 	workdir string // @file 相对路径的基准目录;其下有 yaml/ pcap/ 子目录
 	yamlDir string // generate_yaml 产物落盘目录(= workdir/yaml,绝对路径)
 	pcapDir string // generate_pcap 产物落盘目录(= workdir/pcap,绝对路径)
+}
+
+// loadInstructions 返回 server instructions:path 非空读该文件(操作者自定义),
+// 空则用内嵌默认文案(resources/instructions.md)。
+// path 来自启动参数 / 环境变量,操作者即进程属主,不在 baseDir 信任边界讨论范围
+// (那是 YAML 场景 @file 的事);但空文件视为配置错误——空指引等于没有指引,
+// 还会让调用方误以为 server 未提供说明。
+func loadInstructions(path string) (string, error) {
+	if path == "" {
+		raw, err := instructionsFS.ReadFile("resources/instructions.md")
+		if err != nil {
+			return "", fmt.Errorf("读取内嵌 instructions: %w", err)
+		}
+		return string(raw), nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("读取 instructions 文件: %w", err)
+	}
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return "", fmt.Errorf("instructions 文件 %s 内容为空", path)
+	}
+	return string(raw), nil
 }

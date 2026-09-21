@@ -190,6 +190,102 @@ func TestRunPropagatesServeError(t *testing.T) {
 	}
 }
 
+// TestRunSetsInstructionsFromEmbed 锁两件事:instructions 从 embed 文件读取
+// (非空、含引导关键词),且 run 走通(读取失败会让 run 提前报错)。
+// 文件被清空或 embed 断链时,这里的断言会先一步报警。
+func TestRunSetsInstructionsFromEmbed(t *testing.T) {
+	wd := t.TempDir()
+	err := run([]string{"-workdir", wd}, func(string) string { return "" },
+		func(_ *server.MCPServer) error { return nil })
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	raw, err := instructionsFS.ReadFile("resources/instructions.md")
+	if err != nil {
+		t.Fatalf("instructions.md 应随 embed 打进二进制: %v", err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		t.Fatal("instructions.md 不应为空")
+	}
+	for _, kw := range []string{"generate_pcap", "generate_yaml", "summary"} {
+		if !bytes.Contains(raw, []byte(kw)) {
+			t.Errorf("instructions.md 应含 %q(工作流引导关键词)", kw)
+		}
+	}
+}
+
+// TestLoadInstructionsCustom 覆盖 loadInstructions 的自定义路径分支:
+// 指定文件原样返回(不做 TrimSpace 之外的加工),便于操作者完全掌控文案。
+func TestLoadInstructionsCustom(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "custom.md")
+	want := "# 自定义指引\n\n只许用 pMaker 出包。\n"
+	if err := os.WriteFile(path, []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadInstructions(path)
+	if err != nil {
+		t.Fatalf("loadInstructions: %v", err)
+	}
+	if got != want {
+		t.Errorf("自定义 instructions 应原样返回,得到:\n%s", got)
+	}
+}
+
+// TestLoadInstructionsErrors 覆盖自定义路径的两个失败分支:
+// 文件不存在与内容为空(空指引等于没有指引,启动期拒绝)。
+func TestLoadInstructionsErrors(t *testing.T) {
+	t.Run("文件不存在", func(t *testing.T) {
+		if _, err := loadInstructions(filepath.Join(t.TempDir(), "nope.md")); err == nil {
+			t.Fatal("文件不存在应报错")
+		}
+	})
+	t.Run("内容为空", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "empty.md")
+		if err := os.WriteFile(path, []byte("   \n\t\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadInstructions(path); err == nil {
+			t.Fatal("空文件应报错")
+		}
+	})
+}
+
+// TestRunFailsOnBadInstructionsPath run 级接线:启动参数指定的 prompt 文件
+// 不可读时,run 在 serve 前失败并报出路径。
+func TestRunFailsOnBadInstructionsPath(t *testing.T) {
+	wd := t.TempDir()
+	bad := filepath.Join(wd, "nope.md")
+	err := run([]string{"-workdir", wd, "-prompt", bad}, func(string) string { return "" },
+		func(_ *server.MCPServer) error { return nil })
+	if err == nil {
+		t.Fatal("prompt 文件不存在时 run 应失败")
+	}
+	if !strings.Contains(err.Error(), bad) {
+		t.Errorf("报错应含文件路径 %q,得到: %v", bad, err)
+	}
+}
+
+// TestRunUsesInstructionsEnv 环境变量分支:PMAKER_PROMPT 指向不可读文件时
+// run 失败,证明 env 取值真正接进了 instructions 加载。
+// 显式传 -workdir 指向临时目录,避免 workdir 回退到 os.Getwd()(包目录)
+// 后 MkdirAll 在源码树里留下 yaml/ pcap/ 空目录。
+func TestRunUsesInstructionsEnv(t *testing.T) {
+	wd := t.TempDir()
+	bad := filepath.Join(wd, "nope.md")
+	err := run([]string{"-workdir", wd},
+		func(k string) string {
+			if k == "PMAKER_PROMPT" {
+				return bad
+			}
+			return ""
+		},
+		func(_ *server.MCPServer) error { return nil })
+	if err == nil {
+		t.Fatal("PMAKER_PROMPT 指向不可读文件时 run 应失败")
+	}
+}
+
 func TestRunFailsOnMkdirAllError(t *testing.T) {
 	// 让 MkdirAll 失败:把 workdir 指向一个已存在文件(在其下建子目录必然失败)。
 	blocker := t.TempDir()

@@ -66,11 +66,12 @@ type generateYAMLOutput struct {
 func generateYAMLTool() mcp.Tool {
 	return mcp.NewTool("generate_yaml",
 		mcp.WithDescription(
-			"校验并归档 pMaker 场景 YAML:校验通过则把 YAML 落盘到 workdir/yaml/(便于归档/复现/给非开发者查看),"+
-				"返回 valid=true 与落盘路径;校验失败不落盘,返回 valid=false + 结构化 errors(每个带字段路径,"+
-				"如 \"packet[2].stack[1].vlan: vid 缺失\"),供调用方据以修正后重试。"+
-				"这是写场景 YAML 的主入口:你(模型)自行编写 YAML,本工具负责校验合法性并归档。"+
-				"如不熟悉 YAML 语法,先读 resource pmaker://schema、pmaker://schema/_conventions 与 pmaker://examples。"),
+			"校验并归档 pMaker 场景 YAML(不生成 pcap):校验通过则落盘到 workdir/yaml/,返回 valid=true 与落盘路径;"+
+				"校验失败不落盘,返回 valid=false + 结构化 errors(每个带字段路径,如 \"packet[2].stack[1].vlan: vid 缺失\"),照改后重试。"+
+				"这是写场景 YAML 的主入口:你(模型)自行编写 YAML,本工具负责校验合法性;"+
+				"最终需要 pcap 产物时直接改用 generate_pcap(它同样会归档 YAML,无需先调本工具)。"+
+				"如不熟悉 YAML 语法,先读 resource pmaker://schema、pmaker://schema/_conventions 与 pmaker://examples。"+
+				"本工具的校验即最终判定:返回 valid=true 就无需再用任何方式复查这份 YAML。"),
 		mcp.WithString("yaml",
 			mcp.Required(),
 			mcp.Description("场景 YAML 文本(完整文件内容,由调用方编写)")),
@@ -130,16 +131,22 @@ type generatePcapOutput struct {
 	Warnings    []scenario.Diagnostic `json:"warnings,omitempty"`
 	// 校验失败时填充(不写文件),供调用方据以修正。
 	Errors []string `json:"errors,omitempty"`
+	// Note 成功时非空:给调用方模型的收尾指引(结果即最终结果,无需外部工具回读校验)。
+	Note string `json:"note,omitempty"`
 }
 
 func generatePcapTool() mcp.Tool {
 	return mcp.NewTool("generate_pcap",
 		mcp.WithDescription(
-			"校验场景 YAML 并生成 pcap 文件(离线、不发包)。"+
+			"校验场景 YAML 并生成 pcap 文件(离线、不发包;要产物就走这个工具)。"+
 				"与 generate_yaml 共用同一套校验逻辑:校验失败不写文件,返回 errors 清单(带字段路径);"+
-				"成功返回 pcap 路径、包数与每包摘要,并在 yaml/ 目录同步归档同名场景 YAML(仅扩展名不同)。"+
+				"成功返回 pcap 路径、包数与每包摘要,并在 yaml/ 目录同步归档同名场景 YAML(仅扩展名不同),"+
+				"因此无需先调 generate_yaml 再调本工具。"+
 				"output_name 仅文件名(不含路径,防路径穿越),文件落到 server 配置的 workdir/pcap/。"+
-				"如不熟悉 YAML 语法,先读 resource pmaker://schema、pmaker://schema/_conventions 与 pmaker://examples。"),
+				"如不熟悉 YAML 语法,先读 resource pmaker://schema、pmaker://schema/_conventions 与 pmaker://examples。"+
+				"产出是确定性的:同一 YAML 逐字节相同。返回的 summary(每包摘要:方向端点 + 层栈 + 时间戳)即最终结果,"+
+				"禁止再用 tshark / Wireshark / scapy / Python 等工具解析生成的 pcap 做事后校验;"+
+				"摘要不符预期时改 YAML 重新调本工具即可。"),
 		mcp.WithString("yaml",
 			mcp.Required(),
 			mcp.Description("场景 YAML 文本(完整文件内容)")),
@@ -210,6 +217,8 @@ func (c config) handleGeneratePcap(ctx context.Context, req mcp.CallToolRequest)
 	out.Path = outPath
 	out.PacketCount = len(pkts)
 	out.Summary = summary.FormatPacketSummaries(summary.SummarizeOut(planned, pkts))
+	out.Note = "以上 summary 即最终结果,无需用 tshark / Python 等工具回读 pcap 校验;" +
+		"与预期不符时修改 YAML 重新生成本次调用即可。"
 	return marshalResult(out, false)
 }
 
