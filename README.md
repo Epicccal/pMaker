@@ -1,7 +1,6 @@
 <p align="center">
   <img alt="Go" src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat&logo=go&logoColor=white">
   <a href="https://github.com/Epicccal/pMaker/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Epicccal/pMaker/ci.yml?branch=main&label=CI&style=flat"></a>
-  <a href="https://goreportcard.com/report/github.com/Epicccal/pMaker"><img alt="Go Report" src="https://goreportcard.com/badge/github.com/Epicccal/pMaker"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-blue?style=flat"></a>
 </p>
 
