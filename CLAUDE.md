@@ -94,6 +94,8 @@ gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ 
 - `checksum` 与 `length` 两态覆盖:不写=自动算,写=原样落值
 - 确定性时间戳,全程不用 `time.Now()`
 - 隧道递归嵌套:GRE 套报文、VXLAN 承载二层
+- GRE 变长头字段(RFC 1701/2784/2890):`key`/`seq`/`ack` 写即置位,checksum 三态,
+  NVGRE(eth→0x6558)与 PPTP 可构造;gre 与 vxlan 并列作为 flow 隧道切点
 - 方向化 VLAN VID(`vlan.src_vid` / `dst_vid`,仅 flow.stack 有效)
 - ICMP echo 与错误报文(`quote` / `quote_from`;quote_from 复用被引包 wire 首片的
   ip-down 字节,前向引用硬错、引用环校验期拦截)
@@ -214,7 +216,9 @@ flows:
 `udp.stream-app-layer` 软告警,按流式层正向清单判定),
 须至少一个,按声明顺序拼接;eth/ipv4/tcp 由 `flow.stack` 提供,不在 message 里重复。
 反向消息自动反转 eth/ipv4/tcp 端点。
-VXLAN 单层整栈模板同时反转内外层端点,VNI 与 outer UDP 端口保持声明值。
+VXLAN 单层整栈模板同时反转内外层端点,VNI 与 outer UDP 端口保持声明值;
+GRE 切点同理,隧道头字段(`key`/`protocol` 等)两向保持声明值(inner 段 eth 仅
+TEB/NVGRE 形态才有)。
 
 ### TCP 状态不变式
 
