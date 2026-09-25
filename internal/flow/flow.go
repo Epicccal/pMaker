@@ -153,7 +153,7 @@ type session struct {
 // conn 维护会话状态:src 是 TCP SYN 发起方,dst 是 SYN 接收方;UDP 会话下 src 即
 // 首条消息可能来自的声明端点,方向语义一致(反向 = 端点互换)。
 //
-// flow.stack 以「整栈模板」保留:字段原样带过(含 vxlan 隧道、多层 eth/ipv4/ipv6、
+// flow.stack 以「整栈模板」保留:字段原样带过(含 vxlan/gre 隧道、多层 eth/ipv4/ipv6、
 // checksum/length 覆盖等),emit 只覆写派生量。覆写判据是「跟不跟连接状态走」:
 // seq/ack/方向/端口逐包变,是派生量;其余是写死的字面量,原样透传。
 type conn struct {
@@ -188,12 +188,12 @@ type MessageSchedule struct {
 //   - 段间按 segment.interval 间隔(缺省 DefaultStep);对端 ACK 是伴生控制包,用 DefaultStep,
 //     不被数据段节奏传染(保持"只让数据慢"的语义纯净)。
 //
-// flow.stack 支持 eth / vlan / ipv4|ipv6 / udp / vxlan / tcp / tcp_session / udp_session 的
-// 有序层栈(层白名单、层序、重复由 scenario.Validate 的分段校验承载):无 vxlan 时是普通
-// eth [vlan*] net transport 会话(TCP 或 UDP);带一层 vxlan 时是隧道内会话(反向包 outer
-// eth/ip 与 inner eth/ip 一并交换 src/dst;VNI 与 outer UDP 端口两向不变)。UDP 会话
-// (udp_session)不补握手/挥手、不插对端 ACK,每条消息恰一个数据报,方向反转只交换
-// 会话 UDP 层端口。
+// flow.stack 支持 eth / vlan / ipv4|ipv6 / udp / vxlan / gre / tcp / tcp_session /
+// udp_session 的有序层栈(层白名单、层序、重复由 scenario.Validate 的分段校验承载):
+// 无隧道切点时是普通 eth [vlan*] net transport 会话(TCP 或 UDP);带一层隧道切点
+// (vxlan/gre)时是隧道内会话(反向包 outer eth/ip 与 inner eth/ip 一并交换 src/dst;
+// VNI/GRE 头字段与 outer UDP 端口两向不变)。UDP 会话(udp_session)不补握手/挥手、
+// 不插对端 ACK,每条消息恰一个数据报,方向反转只交换会话 UDP 层端口。
 //
 // schedule 是该 flow 各消息的起始时刻表(按 message 声明序,一一对应)。由 plan 算时阶段
 // 预先算好(跨流 start_after 已解析为绝对时刻);Expand 只照表把每条消息铺到时间轴,不再运行期
@@ -361,8 +361,8 @@ func parseFlowStack(stack []scenario.Layer) (*conn, error) {
 			return nil, fmt.Errorf("flow.stack 会话层(%s_session)前一层须为 %s 层", want, want)
 		}
 	case c.transportIdx == -1 || c.template[c.transportIdx].Type != "tcp":
-		// 无会话层(仅 TCP 可省):最后一个传输层必须是 tcp。outer-only 的 vxlan 残栈
-		// (只余 udp)在此拦截,不会把隧道外层 UDP 误当会话传输层。
+		// 无会话层(仅 TCP 可省):最后一个传输层必须是 tcp。outer-only 的隧道残栈
+		// (vxlan 只余 udp / gre 无传输层)在此拦截,不会把隧道外层 UDP 误当会话传输层。
 		return nil, fmt.Errorf("flow.stack 需要 tcp 层(UDP 会话须显式声明 udp_session)")
 	}
 	if c.transport == TransportTCP && c.transportIdx >= 0 {

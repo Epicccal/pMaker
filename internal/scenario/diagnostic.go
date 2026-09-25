@@ -59,7 +59,7 @@ const (
 
 	CodeIMAPLiteralOctetsMismatch = "imap.literal-octets-mismatch" // literal.octets 显式值与实际字节数不符
 
-	CodeFlowOverrideStatic = "flow.override-static" // flow.stack 的 length/checksum 覆盖值每包同值而真值逐包变
+	CodeFlowOverrideStatic = "flow.override-static" // flow.stack 的派生量覆盖(length/checksum/gre.seq/gre.ack)每包同值而真值逐包变
 
 	CodeUDPStreamAppLayer = "udp.stream-app-layer" // UDP 会话的 message.stack 含 TCP 流式协议层
 
@@ -71,6 +71,12 @@ const (
 	CodeTFTPModeUnknown  = "tftp.mode-unknown"  // mode 不在已知集合(octet/netascii/mail)
 	CodeTFTPDataOversize = "tftp.data-oversize" // DATA 超过 block_size/512 上限
 	CodeTFTPFieldIgnored = "tftp.field-ignored" // opcode 无关字段出现在 YAML 里
+
+	CodeGREReservedNonzero = "gre.reserved-nonzero"  // 保留位/保留字段非零(recursion/flags/offset)
+	CodeGREVersionUnknown  = "gre.version-unknown"   // version ∈ 2-7(RFC 2784 只认 0,2637 扩展是 1)
+	CodeGREPPTPMissingKey  = "gre.pptp-missing-key"  // version=1(PPTP)未写 key(RFC 2637 §4.1)
+	CodeGREAckOutsideV1    = "gre.ack-outside-v1"    // version≠1 时写 ack(A 位仅 RFC 2637 定义)
+	CodeGRENVGEMissingKey  = "gre.nvgre-missing-key" // 显式 protocol=0x6558(NVGRE)未写 key(RFC 7637)
 )
 
 // WarningCodes 返回全部告警 code(与上方常量表同序维护),供 cmd/pmaker-mcp 的 doc-sync 测试锁定
@@ -104,6 +110,11 @@ func WarningCodes() []string {
 		CodeTFTPModeUnknown,
 		CodeTFTPDataOversize,
 		CodeTFTPFieldIgnored,
+		CodeGREReservedNonzero,
+		CodeGREVersionUnknown,
+		CodeGREPPTPMissingKey,
+		CodeGREAckOutsideV1,
+		CodeGRENVGEMissingKey,
 	}
 }
 

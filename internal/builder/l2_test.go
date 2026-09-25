@@ -53,15 +53,13 @@ func TestVLANToGRERejected(t *testing.T) {
 }
 
 // TestExplicitOverrideStillAllowed 推导报错不拦截显式覆盖:eth.ethertype 写死即可
-// 构造 eth→gre(故意断链合法)。
+// 构造 eth→gre(故意断链合法)。eth→gre 直挂在 scenario 层被 validateGREPosition 拒
+// (GRE 须由 IP 协议 47 承载),这里绕过 Validate 直测 builder 的覆盖语义。
 func TestExplicitOverrideStillAllowed(t *testing.T) {
 	s := derivationStack("gre", "ipv4")
 	eth := s.Packets[0].Stack[0].Fields.(*scenario.EthFields)
 	et := scenario.Hex(0x0800)
 	eth.EtherType = &et
-	if err := scenario.Validate(s); err != nil {
-		t.Fatalf("validate: %v", err)
-	}
 	if _, err := buildPackets(s); err != nil {
 		t.Fatalf("显式 ethertype 覆盖后不应报错: %v", err)
 	}

@@ -1,0 +1,45 @@
+# examples/tunnel/gre_key.yaml
+#
+# 示例场景:GRE 字段线 —— 变长头分档构造(规范 + 畸形)。
+#   ① K=1,8 字节头(现网最常见:tunnel key)
+#   ② K+S,12 字节头(key + 保序序列)
+#   ③ C=1 自动算 checksum(RFC 2784),8 字节头
+#   ④ C=1 但 checksum 落假值 0xdead(畸形:两态覆盖,原样落、不被自动算改回)
+#   ⑤ PPTP 增强 GRE(RFC 2637):Ver=1、K/S/A 全置、protocol 显式 0x880B(PPP,
+#      表外值必须显式写,内层是 payload_hex 兜底会推错)
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "1.1.1.1", dst: "2.2.2.2", ttl: 64 }
+      - gre:  { key: 0x0000a10b }
+      - ipv4: { src: "192.168.1.1", dst: "192.168.1.2", ttl: 64 }
+      - tcp:  { sport: 1234, dport: 443, flags: [SYN] }
+
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "1.1.1.1", dst: "2.2.2.2", ttl: 64 }
+      - gre:  { key: 0x0000a10b, seq: 42 }
+      - ipv4: { src: "192.168.1.1", dst: "192.168.1.2", ttl: 64 }
+      - tcp:  { sport: 1234, dport: 443, flags: [SYN] }
+
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "1.1.1.1", dst: "2.2.2.2", ttl: 64 }
+      - gre:  { checksum_present: true }
+      - ipv4: { src: "192.168.1.1", dst: "192.168.1.2", ttl: 64 }
+      - tcp:  { sport: 1234, dport: 443, flags: [SYN] }
+
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "1.1.1.1", dst: "2.2.2.2", ttl: 64 }
+      - gre:  { checksum: 0xdead }        # 畸形:写即隐含 C=1 且原样落值
+      - ipv4: { src: "192.168.1.1", dst: "192.168.1.2", ttl: 64 }
+      - tcp:  { sport: 1234, dport: 443, flags: [SYN] }
+
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "1.1.1.1", dst: "2.2.2.2", ttl: 64 }
+      # PPTP:key 高 2 字节 = 载荷长度(不含 GRE 头),低 2 字节 = Call ID
+      - gre:  { protocol: 0x880B, version: 1, key: 0x00080042, seq: 7, ack: 6 }
+      - payload_hex: 0xff03002145000008   # 内层 PPP 帧(payload_hex 推导不出 0x880B,故上面显式写)

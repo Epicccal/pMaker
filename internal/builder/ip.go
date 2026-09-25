@@ -126,12 +126,3 @@ func buildIPv6(f *scenario.IPv6Fields, next string) (*layers.IPv6, error) {
 	}
 	return ip, nil
 }
-
-// buildGRE:GRE.Protocol 为其载荷的 EtherType。
-func buildGRE(next string) (*layers.GRE, error) {
-	et, err := ethTypeFor(next)
-	if err != nil {
-		return nil, err
-	}
-	return &layers.GRE{Protocol: et}, nil
-}

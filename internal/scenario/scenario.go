@@ -65,10 +65,13 @@ func Validate(s *Scenario) error {
 		if len(p.Stack) == 0 {
 			return fmt.Errorf("packet[%d] 的 stack 为空", i)
 		}
-		// 跨层位置规则(vxlan 前 udp / 后 inner eth)须在 stack 级校验,
-		// validateLayer 只见单层;与下方逐层校验并列。
+		// 跨层位置规则(vxlan 前 udp / 后 inner eth;gre 前一层 ipv4/ipv6)须在
+		// stack 级校验,validateLayer 只见单层;与下方逐层校验并列。
 		if err := validateVXLANPosition(p.Stack); err != nil {
 			return fmt.Errorf("packet[%d].vxlan: %w", i, err)
+		}
+		if err := validateGREPosition(p.Stack); err != nil {
+			return fmt.Errorf("packet[%d].gre: %w", i, err)
 		}
 		if err := validateMTUIn(p.Stack); err != nil {
 			return fmt.Errorf("packet[%d].%w", i, err)
@@ -121,6 +124,19 @@ func Validate(s *Scenario) error {
 //  7. mtu 低于 RFC 下限(CheckMTUBelowMinimum):ipv4 mtu < 68 / ipv6 mtu < 1280。
 //     照常分片(结构下限之上的小 mtu 是合法的极端测试场景),仅提示真实链路
 //     通常不出现此值。
+//  8. TFTP RQ 端口(CheckTFTPRQPort):RRQ/WRQ 的 UDP dport 非 69(RFC 1350 服务器
+//     监听端口);flow 中 from: dst 的消息端点已交换,不检查。
+//  9. TFTP 废弃 mode(CheckTFTPModeObsolete):mode 为已废弃的 mail
+//     (RFC 1350 Appendix II,后续修订删除)。
+//  10. TFTP 未知 mode(CheckTFTPModeUnknown):mode 不在已知集合
+//     {octet, netascii, mail} 里(大小写折叠后判定)。
+//  11. TFTP DATA 超长(CheckTFTPDataSize):DATA 载荷超过 RFC 1350 默认 block_size
+//     512 字节,接收端无法靠末块长度判断传输结束;恒按 512 基准提示。
+//  12. TFTP 无关字段(CheckTFTPFieldIgnored):写了与 opcode 无关的字段,
+//     序列化时被静默忽略,提前提示省调试。
+//  13. GRE 保留位与形态告警(CheckGREWarnings):保留位/recursion/flags/offset 非零、
+//     version ∈ 2-7、PPTP(v1)缺 key、version≠1 写 ack、显式 NVGRE(protocol=0x6558)
+//     缺 key。全部照常出包,畸形用例可忽略。
 func Warnings(s *Scenario) []Diagnostic {
 	var ws []Diagnostic
 	ws = append(ws, CheckFTPDataPortConsistency(s)...)
@@ -135,6 +151,7 @@ func Warnings(s *Scenario) []Diagnostic {
 	ws = append(ws, CheckTFTPModeUnknown(s)...)
 	ws = append(ws, CheckTFTPDataSize(s)...)
 	ws = append(ws, CheckTFTPFieldIgnored(s)...)
+	ws = append(ws, CheckGREWarnings(s)...)
 	return ws
 }
 
@@ -164,21 +181,21 @@ func validateQuoteFrom(l Layer, packetNames map[string]int) error {
 }
 
 func validateFlow(f FlowSpec) error {
-	// 分段校验:无 vxlan 单段(前缀 stack.*),带 vxlan 切 outer/inner 两段
+	// 分段校验:无切点单段(前缀 stack.*),带隧道切点(vxlan/gre)切 outer/inner 两段
 	// (白名单/层序/重复/必备层/派生量拒写由 flowLayerRank 一张表承载,见 flow_stack.go)。
-	segs, err := flowSegments(f.Stack)
+	segs, rule, err := flowSegments(f.Stack)
 	if err != nil {
 		return err
 	}
 	if len(segs) == 1 {
-		if err := validateFlowSegment(segs[0], segSingle); err != nil {
+		if err := validateFlowSegment(segs[0], segSingle, tunnelRule{}); err != nil {
 			return err
 		}
 	} else {
-		if err := validateFlowSegment(segs[0], segOuter); err != nil {
+		if err := validateFlowSegment(segs[0], segOuter, rule); err != nil {
 			return err
 		}
-		if err := validateFlowSegment(segs[1], segInner); err != nil {
+		if err := validateFlowSegment(segs[1], segInner, rule); err != nil {
 			return err
 		}
 	}
@@ -736,7 +753,9 @@ func validateLayerIn(l Layer, inFlow bool) error {
 			return fmt.Errorf("udp_session 只能用于 flow.stack,不能出现在 standalone packet 的 stack 里")
 		}
 	case *GREFields:
-		// GRE 无必填字段:protocol 按内层自动推导,key/seq 可选。
+		if err := validateGREFields(f); err != nil {
+			return err
+		}
 	default:
 		// validateLayerIn 的 Fields 类型集合须与 layerDecoders(layer_decode.go)保持一致。
 		// 若此处触发,说明某层已在 layerDecoders 注册但未在此 switch 补 case

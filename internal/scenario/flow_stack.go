@@ -6,14 +6,33 @@ import (
 )
 
 // flow.stack 分段校验:层白名单、层序、重复、必备层、派生量拒写,一张 rank 表承载。
-// 无 vxlan 的单段 flow 是主路径,报错前缀仍是 stack.*(与历史文案逐字一致);
-// 带 vxlan 时按 vxlan 下标切成 outer(underlay)/inner(overlay)两段,逐段校验。
+// 无切点的单段 flow 是主路径,报错前缀仍是 stack.*(与历史文案逐字一致);
+// 带隧道切点(vxlan/gre)时按切点下标切成 outer(underlay)/inner(overlay)两段,
+// 逐段套 rank 判定,切点两侧的外形规则由 tunnelCuts 表承载。
 
 // flowLayerRank 是 flow.stack 允许的层及其段内次序。表既是白名单(不在表里=拒),
 // 也是顺序判据(rank 非递减);只有 vlan 允许同 rank 重复(QinQ)。
+// 隧道切点(vxlan/gre)不在此表:切点由 tunnelCuts 单独承载,不参与单调秩判定
+// (gre 后的 ipv4 会让 rank 递减,但那是合法的隧道内层)。
 var flowLayerRank = map[string]int{
 	"eth": 0, "vlan": 1, "ipv4": 2, "ipv6": 2, "udp": 3, "tcp": 3,
 	"tcp_session": 4, "udp_session": 4,
+}
+
+// tunnelCuts 是 flow.stack 的隧道切点表:层名 → 该切点两侧段的外形规则。
+// 切点不在 flowLayerRank 里,切段后逐段套 rank 判定。规则差异:
+//   - vxlan 跑在 UDP 上,outer 段须含 udp 且 dport≠0(隧道身份);gre 直挂 IP
+//     (协议 47),outer 段无传输层要求;
+//   - vxlan 承载二层帧,inner 段须含 eth;gre 的 inner eth 仅 TEB/NVGRE 形态才有。
+type tunnelRule struct {
+	outerUDP   bool   // outer 段须含 udp(dport≠0 由 UDPFields case 承载)
+	innerEth   bool   // inner 段须含 eth
+	sessionDoc string // 会话层只许出现在 inner 段的报错文案
+}
+
+var tunnelCuts = map[string]tunnelRule{
+	"vxlan": {outerUDP: true, innerEth: true, sessionDoc: "只能在 vxlan 之后的 inner 段"},
+	"gre":   {outerUDP: false, innerEth: false, sessionDoc: "只能在 gre 之后的 inner 段"},
 }
 
 // rankGroup 给「rank 相同但层类型不同」的冲突配准确文案:ipv4+ipv6 是网络层二选一、
@@ -25,14 +44,14 @@ var rankGroup = map[int]string{
 	4: "会话层(tcp_session 或 udp_session)",
 }
 
-// segKind 是段身份,决定报错前缀与必备/禁用层。无 vxlan 的单段 flow 是主路径
+// segKind 是段身份,决定报错前缀与必备/禁用层。无切点的单段 flow 是主路径
 // (全部既有示例),前缀不能是隧道口吻的 outer/inner。
 type segKind int
 
 const (
-	segSingle segKind = iota // 无 vxlan 的普通 flow
-	segOuter                 // vxlan 之前的 underlay 段
-	segInner                 // vxlan 之后的 overlay 段
+	segSingle segKind = iota // 无切点的普通 flow
+	segOuter                 // 切点之前的 underlay 段
+	segInner                 // 切点之后的 overlay 段
 )
 
 func (k segKind) label() string {
@@ -46,13 +65,14 @@ func (k segKind) label() string {
 }
 
 // validateFlowSegment 校验一个隧道段:层白名单、层序、重复、必备层、派生量拒写。
-func validateFlowSegment(seg []Layer, k segKind) error {
+// rule 是切点外形规则(vxlan/gre 各一行),单段 flow 传零值(不影响判定)。
+func validateFlowSegment(seg []Layer, k segKind, rule tunnelRule) error {
 	p := k.label()
 	prev, prevType, seen := -1, "", map[string]bool{}
 	for _, l := range seg {
 		r, ok := flowLayerRank[l.Type]
 		if !ok {
-			return fmt.Errorf("%s.%s: flow.stack 不支持该层(可用 eth/vlan/ipv4/ipv6/udp/vxlan/tcp/tcp_session/udp_session);请用 standalone packets", p, l.Type)
+			return fmt.Errorf("%s.%s: flow.stack 不支持该层(可用 eth/vlan/ipv4/ipv6/udp/vxlan/gre/tcp/tcp_session/udp_session);请用 standalone packets", p, l.Type)
 		}
 		if r < prev {
 			return fmt.Errorf("%s.%s: 层序须为 eth → vlan* → ipv4|ipv6 → udp|tcp → tcp_session|udp_session(展开器按声明序成帧,乱序产出的包无法解析)", p, l.Type)
@@ -68,10 +88,16 @@ func validateFlowSegment(seg []Layer, k segKind) error {
 			if err := rejectDerivedTCP(f); err != nil {
 				return fmt.Errorf("%s.tcp: %w", p, err)
 			}
+			// gre 切点的外层段不允许 tcp:GRE 由 IP 协议 47 直挂或 UDP 承载(RFC 8086
+			// GRE-in-UDP),tcp 会让外层 IPv4 protocol=6 却装 GRE 头,静默坏包。
+			if k == segOuter && !rule.outerUDP {
+				return fmt.Errorf("%s.tcp: gre 切点的外层段不允许 tcp(GRE 由 IP 协议 47 直挂或 udp 承载);GRE-in-UDP 请改用 udp,畸形隧道请用 standalone packets", p)
+			}
 		case *UDPFields:
 			// 端口是裸 uint16,漏写与显式 0 不可区分;outer dport 承载隧道身份,零值无语义
-			// (RFC 7348 标准端口 4789)。畸形隧道走 standalone packets。
-			if k == segOuter && f.DPort == 0 {
+			// (VXLAN,RFC 7348 标准端口 4789)。GRE 直挂 IP 无此要求(outer 可无 udp;
+			// 带 udp 的 GRE-in-UDP 形态端口不承载隧道身份)。畸形隧道走 standalone packets。
+			if k == segOuter && rule.outerUDP && f.DPort == 0 {
 				return fmt.Errorf("%s.udp: dport 须非零(VXLAN 标准端口 4789);畸形隧道请用 standalone packets", p)
 			}
 		case *TCPSessionFields:
@@ -89,16 +115,21 @@ func validateFlowSegment(seg []Layer, k segKind) error {
 		seen[l.Type] = true
 	}
 	// 段级检查:必备层、传输层与会话层匹配、会话层不得出现在 outer 段。
-	// 必备传输层按会话层决定:有 udp_session 需 udp,否则需 tcp(outer 段固定 udp)。
+	// 必备传输层按段与切点规则决定:vxlan outer 固定 udp,gre outer 直挂 IP 无传输层;
+	// inner/单段按会话层:有 udp_session 需 udp,否则需 tcp。
 	need := "tcp"
-	if k == segOuter {
-		// vxlan 跑在 udp 上, 外层必须要有 UDP层
+	switch {
+	case k == segOuter && rule.outerUDP:
 		need = "udp"
-	} else if seen["udp_session"] {
+	case k == segOuter:
+		need = ""
+	case seen["udp_session"]:
 		need = "udp"
 	}
+	// eth 必备性:单段与 outer 恒须;inner 按切点规则(vxlan 承载完整二层帧须 eth,
+	// gre 的 inner eth 仅 TEB/NVGRE 形态才有,可省)。
 	switch {
-	case !seen["eth"]:
+	case (k != segInner || rule.innerEth) && !seen["eth"]:
 		return fmt.Errorf("%s 需要 eth 层", p)
 	case !seen["ipv4"] && !seen["ipv6"]:
 		return fmt.Errorf("%s 需要网络层(ipv4 或 ipv6)", p)
@@ -110,12 +141,12 @@ func validateFlowSegment(seg []Layer, k segKind) error {
 		// 「含 udp 无 tcp 且无会话层」是 UDP 用户最易犯的错,须给出专门文案,
 		// 不能落到误导性的「需要 tcp 层」。
 		return fmt.Errorf("%s 含 udp 无 tcp:UDP 会话需显式声明 udp_session(与 tcp_session 不同,不可省略)", p)
-	case !seen[need]:
+	case need != "" && !seen[need]:
 		return fmt.Errorf("%s 需要 %s 层", p, need)
 	case k == segOuter && seen["tcp_session"]:
-		return fmt.Errorf("%s.tcp_session: 只能在 vxlan 之后的 inner 段(会话跑在隧道内层)", p)
+		return fmt.Errorf("%s.tcp_session: %s(会话跑在隧道内层)", p, rule.sessionDoc)
 	case k == segOuter && seen["udp_session"]:
-		return fmt.Errorf("%s.udp_session: 只能在 vxlan 之后的 inner 段(会话跑在隧道内层)", p)
+		return fmt.Errorf("%s.udp_session: %s(会话跑在隧道内层)", p, rule.sessionDoc)
 	}
 	return nil
 }
@@ -190,22 +221,25 @@ func rejectDerivedTCP(t *TCPFields) error {
 	return nil
 }
 
-// flowSegments 按 vxlan 下标切段。0 个 → 单段;1 个 → outer/inner 两段;≥2 → 拒。
-func flowSegments(stack []Layer) ([][]Layer, error) {
-	var at []int
+// flowSegments 按隧道切点下标切段,切点集由 tunnelCuts 承载(vxlan/gre)。
+// 0 个 → 单段;1 个 → outer/inner 两段;≥2 → 拒(两层嵌套的分段规则与端点反转
+// 语义都未定义,走 standalone packets)。返回切段结果与切点规则(单段为零值)。
+func flowSegments(stack []Layer) ([][]Layer, tunnelRule, error) {
+	at, rule := -1, tunnelRule{}
 	for i, l := range stack {
-		if l.Type == "vxlan" {
-			at = append(at, i)
+		r, ok := tunnelCuts[l.Type]
+		if !ok {
+			continue
 		}
+		if at >= 0 {
+			return nil, tunnelRule{}, fmt.Errorf("stack.%s: 暂只支持一层 %s 隧道(多层嵌套请用 standalone packets)", l.Type, l.Type)
+		}
+		at, rule = i, r
 	}
-	switch len(at) {
-	case 0:
-		return [][]Layer{stack}, nil
-	case 1:
-		return [][]Layer{stack[:at[0]], stack[at[0]+1:]}, nil
-	default:
-		return nil, fmt.Errorf("stack.vxlan: 暂只支持一层 vxlan 隧道(多层嵌套请用 standalone packets)")
+	if at < 0 {
+		return [][]Layer{stack}, tunnelRule{}, nil
 	}
+	return [][]Layer{stack[:at], stack[at+1:]}, rule, nil
 }
 
 // CheckFlowOverrideWarning 扫描 flow.stack 的 length/checksum 覆盖(软告警):
@@ -253,6 +287,21 @@ func CheckFlowOverrideWarning(s *Scenario) []Diagnostic {
 				// RFC 768 规定 IPv4 下 UDP checksum 为 0 表示 "不校验"，不需要打告警，此处进行豁免判定。
 				if g.Checksum != nil && !(nearV4 && *g.Checksum == 0) {
 					fields = append(fields, "checksum")
+				}
+			case *GREFields:
+				// GRE 头部形状字段(protocol/version/recursion/flags)与 key 是逐流恒定量
+				// (RFC 2890 §2.2:Key 标识一条流),不告警;checksum/seq/ack 是逐包变量
+				// (覆盖 GRE 头+载荷、按 flow 保序递增、承载对端最高 seq),模板静态值
+				// 会逐包不符。flow 不代算这三个字段(与 tcp.seq 不同),只提醒不硬错,
+				// 需要真实递增序列请用 standalone packets。
+				if g.Checksum != nil {
+					fields = append(fields, "checksum")
+				}
+				if g.Seq != nil {
+					fields = append(fields, "seq")
+				}
+				if g.Ack != nil {
+					fields = append(fields, "ack")
 				}
 			}
 			for _, name := range fields {

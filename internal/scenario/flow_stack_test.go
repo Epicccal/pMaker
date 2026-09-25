@@ -564,3 +564,96 @@ func TestUDPStreamAppLayerWarning(t *testing.T) {
 		}
 	})
 }
+
+// greFlowStack 是带一层 gre 的最小合法 flow.stack(两段,inner 无 eth)。
+func greFlowStack() []scenario.Layer {
+	return []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "1.1.1.1", Dst: "2.2.2.2"}},
+		{Type: "gre", Fields: &scenario.GREFields{}},
+		{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "192.168.1.10", Dst: "192.168.1.20"}},
+		{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1234, DPort: 80}},
+		{Type: "tcp_session", Fields: &scenario.TCPSessionFields{}},
+	}
+}
+
+// TestFlowStackGRECut 切点规则表驱动:gre 与 vxlan 的两处规则差异
+// (outer 传输层、inner eth)各取所需,GRE 两段栈放行、同形 VXLAN 仍拒、多切点拒。
+func TestFlowStackGRECut(t *testing.T) {
+	t.Run("GRE 两段栈(outer 无 udp、inner 无 eth)合法", func(t *testing.T) {
+		if err := validateFlowStack(t, greFlowStack()); err != nil {
+			t.Fatalf("GRE 隧道会话栈应通过,实际报错: %v", err)
+		}
+	})
+	t.Run("GRE outer 直挂 IP,无传输层要求", func(t *testing.T) {
+		// outer 段插 udp(GRE-in-UDP 形态)也放行:端口不承载隧道身份,不套 VXLAN 的
+		// 「dport 须非零承载隧道身份」口径(sport/dport 的常规非零要求照常由单层校验生效)
+		s := slices.Concat(greFlowStack()[:2], []scenario.Layer{
+			{Type: "udp", Fields: &scenario.UDPFields{SPort: 51000, DPort: 4754}},
+			{Type: "gre", Fields: &scenario.GREFields{}},
+		}, greFlowStack()[3:])
+		if err := validateFlowStack(t, s); err != nil {
+			t.Fatalf("GRE-in-UDP 形态应通过,实际报错: %v", err)
+		}
+	})
+	t.Run("GRE outer 段含 tcp 被拒(静默坏包防线)", func(t *testing.T) {
+		// tcp 后跟 gre 会让外层 IPv4 protocol=6 却装 GRE 头;standalone 路径由
+		// validateGREPosition 拦,flow 路径须在此对齐
+		s := slices.Concat(greFlowStack()[:2], []scenario.Layer{
+			{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1234, DPort: 80}},
+			{Type: "gre", Fields: &scenario.GREFields{}},
+		}, greFlowStack()[3:])
+		err := validateFlowStack(t, s)
+		if err == nil || !strings.Contains(err.Error(), "外层段不允许 tcp") {
+			t.Fatalf("GRE outer 段 tcp 应被拒,error=%v", err)
+		}
+	})
+	t.Run("GRE inner 缺 eth 放行,同形 VXLAN 拒(切点规则差异)", func(t *testing.T) {
+		// VXLAN 切点换成 gre 形状(去掉 outer udp、inner eth)须报「需要 eth 层」与「需要 udp 层」
+		s := []scenario.Layer{
+			{Type: "eth", Fields: &scenario.EthFields{Src: "00:00:00:00:00:01", Dst: "00:00:00:00:00:02"}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "10.0.0.10", Dst: "10.0.0.20"}},
+			{Type: "vxlan", Fields: &scenario.VXLANFields{VNI: 100}},
+			{Type: "ipv4", Fields: &scenario.IPv4Fields{Src: "192.168.1.10", Dst: "192.168.1.20"}},
+			{Type: "tcp", Fields: &scenario.TCPFields{SPort: 1234, DPort: 80}},
+			{Type: "tcp_session", Fields: &scenario.TCPSessionFields{}},
+		}
+		err := validateFlowStack(t, s)
+		if err == nil || !strings.Contains(err.Error(), "stack.outer 需要 udp 层") {
+			t.Fatalf("VXLAN outer 仍须 udp,error=%v", err)
+		}
+	})
+	t.Run("GRE 多切点拒(报错点名 gre)", func(t *testing.T) {
+		s := append(greFlowStack(), greFlowStack()[2])
+		err := validateFlowStack(t, s)
+		if err == nil || !strings.Contains(err.Error(), "暂只支持一层 gre 隧道") {
+			t.Fatalf("双层 GRE 应报错,error=%v", err)
+		}
+	})
+	t.Run("GRE 与 VXLAN 混合切点拒", func(t *testing.T) {
+		s := slices.Concat(greFlowStack(), []scenario.Layer{
+			{Type: "vxlan", Fields: &scenario.VXLANFields{VNI: 100}},
+		})
+		err := validateFlowStack(t, s)
+		if err == nil || !strings.Contains(err.Error(), "暂只支持一层 vxlan 隧道") {
+			t.Fatalf("GRE+VXLAN 叠加应报错,error=%v", err)
+		}
+	})
+	t.Run("会话层在 GRE outer 段被拒(文案点名 gre)", func(t *testing.T) {
+		s := greFlowStack()
+		// tcp_session 插到 gre 之前(outer 段)
+		stack := append(slices.Clone(s[:2]), append([]scenario.Layer{s[5]}, s[2:]...)...)
+		err := validateFlowStack(t, stack)
+		if err == nil || !strings.Contains(err.Error(), "只能在 gre 之后的 inner 段") {
+			t.Fatalf("GRE outer 段 tcp_session 应被拒,error=%v", err)
+		}
+	})
+	t.Run("GRE inner UDP 会话合法", func(t *testing.T) {
+		s := greFlowStack()
+		s[4] = scenario.Layer{Type: "udp", Fields: &scenario.UDPFields{SPort: 5300, DPort: 53}}
+		s[5] = scenario.Layer{Type: "udp_session", Fields: &scenario.UDPSessionFields{}}
+		if err := validateFlowStack(t, s); err != nil {
+			t.Fatalf("GRE inner UDP 会话应通过,实际报错: %v", err)
+		}
+	})
+}

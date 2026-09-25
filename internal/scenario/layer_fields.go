@@ -47,7 +47,28 @@ type (
 		// (RFC 8200 §4.5,由 builder 构造,不作为独立 YAML 层)。与 payload_length 互斥。
 		MTU int `yaml:"mtu"`
 	}
-	GREFields   struct{}
+	// GREFields 是 GRE 隧道头(RFC 2784/2890/2637)。头变长:前 4 字节固定,
+	// 可选字段由标志位决定存在与否。语义约定(见 gre.md):
+	//   - key/seq/ack 写即置位(K/S/A):「标志位置位但字段字节缺失」无法表达,归 payload_hex;
+	//   - checksum 三态:未写=C=0 无该字段;checksum_present: true=C=1 自动算;
+	//     checksum 写值=C=1(隐含)且原样落值;checksum_present: false 与 checksum 并存为硬错;
+	//   - offset 是 C=1 时成对出现的 Reserved1(RFC 2784 §2.1 规范值 0);C=0 时非零硬错
+	//     (字节不上 wire,写了会被静默吞掉);
+	//   - flags 值域 0-15(决策依据见 validateGREFields):gopacket 的 Flags<<3 使第 5 位
+	//     撞 Ack 位,≥16 静默写坏字节,须在校验层拦住。
+	// 不开放:routing/SRE 与 s 位(RFC 2784 已废弃 + gopacket 序列化 bug,见 _why_gre_no_routing.md)。
+	GREFields struct {
+		Protocol        *Hex    `yaml:"protocol"`         // 覆盖内层 EtherType 推导;16 位裸值(PPTP 0x880B、ERSPAN 0x88BE 等表外值须显式写)
+		Key             *Hex    `yaml:"key"`              // 写即 K=1(RFC 2890);NVGRE 为 VSID(24)|FlowID(8),PPTP v1 为 PayloadLength(16)|CallID(16)
+		Seq             *uint32 `yaml:"seq"`              // 写即 S=1(RFC 2890)
+		ChecksumPresent *bool   `yaml:"checksum_present"` // C 位:true=自动算(RFC 2784);false=不写该字段
+		Checksum        *Hex    `yaml:"checksum"`         // 两态:写即隐含 C=1 且原样落值(畸形);不写=按 checksum_present 决定
+		Offset          *Hex    `yaml:"offset"`           // Reserved1(16 位,规范值 0);仅 C=1 时上 wire
+		Version         *uint8  `yaml:"version"`          // 0=标准(RFC 2784)/ 1=PPTP(RFC 2637);3 位,0-7
+		Ack             *uint32 `yaml:"ack"`              // 写即 A=1(仅 PPTP v1,RFC 2637 §4.1)
+		Recursion       *uint8  `yaml:"recursion"`        // Recur(3 位,0-7;RFC 1701 规范值 0)
+		Flags           *uint8  `yaml:"flags"`            // 保留位(值域 0-15,见结构体注释)
+	}
 	VXLANFields struct {
 		VNI         uint32 `yaml:"vni"`           // 24 位 VNI(0 合法,边界用;上限 0xFFFFFF 校验拦截)
 		ValidIDFlag *bool  `yaml:"valid_id_flag"` // 'I' 位(RFC 7348);nil=缺省 true(规范头),false=非法头畸形

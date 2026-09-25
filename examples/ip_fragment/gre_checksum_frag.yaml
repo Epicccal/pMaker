@@ -1,0 +1,15 @@
+# examples/ip_fragment/gre_checksum_frag.yaml
+#
+# GRE checksum(C=1 自动算)+ 内层分片的交互:checksum 覆盖「GRE 头 + 本帧
+# 实际载荷」(RFC 2784 §2.1),各片载荷不同,因此逐片 checksum 各不相同是
+# 正确行为 —— 不是同一值。
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "1.1.1.1", dst: "2.2.2.2", ttl: 64 }
+      - gre:  { checksum_present: true }                     # C=1,checksum 逐片自动算
+      - ipv4: { src: "192.168.1.1", dst: "192.168.1.2", ttl: 64, mtu: 44 }
+      - udp:  { sport: 40000, dport: 65001 }
+      - payload:
+          payload: "0123456789012345678901234567" # 28 字节,内层数据报 56 > 44
