@@ -80,6 +80,19 @@ func TestResourceSchemaLayerTCP(t *testing.T) {
 	}
 }
 
+// TestResourceSchemaLayerMDSuffix:调用端模型常按磁盘文件名类推给 {layer} 补 .md 后缀
+// (实测出现的 pmaker://schema/http_request.md);服务端剥掉后缀兼容,两种写法同文档。
+func TestResourceSchemaLayerMDSuffix(t *testing.T) {
+	srv, _ := newTestServer(t)
+	defer srv.Close()
+
+	bare := readResource(t, srv, "pmaker://schema/http_request")
+	suffixed := readResource(t, srv, "pmaker://schema/http_request.md")
+	if suffixed.Text != bare.Text {
+		t.Error("带 .md 后缀与裸层名应返回同一份文档")
+	}
+}
+
 func TestResourceSchemaLayerUnknown(t *testing.T) {
 	srv, _ := newTestServer(t)
 	defer srv.Close()
