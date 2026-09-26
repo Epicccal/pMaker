@@ -44,7 +44,7 @@
 
 这是本工具的立身之本:自动修正绝不能把本应畸形的用例悄悄改成合规包。
 
-覆盖范围:checksum 见 `ipv4`/`tcp`/`udp`/`icmp`/`icmpv6`;length 见 `ipv4`(`total_length` /
+覆盖范围:checksum 见 `ipv4`/`tcp`/`udp`/`icmp`/`icmpv6`/`gre`(`checksum`,隐含 C=1,范围=GRE 头+载荷);length 见 `ipv4`(`total_length` /
 `header_length`)、`ipv6`(`payload_length`)、`tcp`(`header_length`)、`udp`(`total_length`)。
 16 位字段上限 `0xFFFF`;4 位的 `header_length` 取值 0-15(5-15 是规范头长范围,0-4 是合法畸形值)。
 `icmp`/`icmpv6`/`vlan`/`gre`/`eth` **不开放**长度字段(gopacket 这几层不读 `FixLengths`,
@@ -90,6 +90,7 @@ TCP/UDP 的 checksum 伪首部自动绑定**就近**的 IP 层(多层 IP 时绑�
 
 `ethertype` / `type` / `checksum` / 各长度字段接受十进制或 `0x88a8` 形式。
 `payload_hex` 一类**必须**带 `0x` 前缀。
+Hex 字段都是无符号 wire 值:负数或超 0xFFFFFFFF 解析即报错(不会回绕成巨大正数、不会截断)。
 
 ## 换行:哪里归一化,哪里不
 

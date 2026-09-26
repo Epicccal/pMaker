@@ -100,6 +100,7 @@ seq/ack derivation, three-way handshake, four-way teardown, and peer ACKs are al
 - RFC 5322 Internet Message Format
 - RFC 2045 MIME Content-Transfer-Encoding
 - Full TFTP message construction (RFC 1350/2347); the `tftp_transfer` macro auto-expands into DATA/ACK transfer sequences
+- GRE variable-length header fields (RFC 1701/2784/2890): Key/Seq/Ack/Checksum, NVGRE and PPTP, GRE as a flow tunnel cut point
 - File placeholder `@file(path)`: inject raw bytes from a file relative to workdir
 
 Field-level semantics and design rationale are in [CLAUDE.md](CLAUDE.md).

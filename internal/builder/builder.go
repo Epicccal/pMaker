@@ -274,11 +274,13 @@ func buildSerItems(ctx *buildContext, stack []scenario.Layer) ([]serItem, *fragT
 				target = &fragTarget{idx: len(items) - 1, family: "ipv6", mtu: f.MTU, v6: ip, nextHeader: ip.NextHeader}
 			}
 		case *scenario.GREFields:
-			gre, err := buildGRE(next)
+			gre, err := buildGRE(f, next)
 			if err != nil {
 				return nil, nil, fmt.Errorf("gre: %w", err)
 			}
-			add(gre, nil, lengthOverrideInfo{})
+			// checksum 覆盖两态:f.Checksum 非 nil 时闭包关掉该层 ComputeChecksums,
+			// 字面值原样落;nil 时按 opts 自动算(gopacket 覆盖 GRE 头+载荷,字段位清零)。
+			add(gre, f.Checksum, lengthOverrideInfo{})
 		case *scenario.VXLANFields:
 			// VXLAN 不是 IP 网络层,不更新 netLayer:外层 UDP 已绑定外层 IP,
 			// 内层 TCP/UDP 绑定之后遇到的最近内层 IP(与 GRE 内层同机制)。

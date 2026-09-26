@@ -88,9 +88,13 @@ type Layer struct {
 type Hex uint32
 
 // UnmarshalYAML 允许 ethertype/type/checksum 等字段用 0x.. 或十进制书写。
+// 负数与超上限直接拒绝:Hex 字段语义上都是无符号 wire 值
 func (h *Hex) UnmarshalYAML(node *yaml.Node) error {
 	var i int64
 	if err := node.Decode(&i); err == nil {
+		if i < 0 || i > 0xFFFFFFFF {
+			return fmt.Errorf("Hex 字段须为非负整数且不超过 0xFFFFFFFF(可写 0x.. 十六进制),得到 %d", i)
+		}
 		*h = Hex(i)
 		return nil
 	}

@@ -69,10 +69,23 @@ packets:
 	}
 }
 
-// TestLoadRejectsUnknownGREField 验证无字段层(GREFields)拒绝任意子字段
-// (如 gre: { foo: 1 })。
-func TestLoadRejectsUnknownGREField(t *testing.T) {
-	path := writeScenario(t, "gre.yaml", `link_type: ethernet
+// TestGREFieldsStrictDecode 验证 GRE 层的严格解码:登记字段被接受,未登记字段
+// (如 gre: { foo: 1 })仍被拒 —— fieldsDecoder 泛型自动跟随 GREFields 结构体变化。
+func TestGREFieldsStrictDecode(t *testing.T) {
+	path := writeScenario(t, "gre-ok.yaml", `link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.10", dst: "10.0.0.80" }
+      - gre:  { key: 0x1234 }
+      - ipv4: { src: "192.168.1.1", dst: "192.168.1.2" }
+      - tcp:  { sport: 1234, dport: 80, flags: [SYN] }
+`)
+	if _, err := scenario.Load(path); err != nil {
+		t.Fatalf("登记字段 key 应被接受,实际报错: %v", err)
+	}
+
+	bad := writeScenario(t, "gre-bad.yaml", `link_type: ethernet
 packets:
   - stack:
       - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
@@ -81,7 +94,7 @@ packets:
       - ipv4: { src: "192.168.1.1", dst: "192.168.1.2" }
       - tcp:  { sport: 1234, dport: 80, flags: [SYN] }
 `)
-	_, err := scenario.Load(path)
+	_, err := scenario.Load(bad)
 	if err == nil {
 		t.Fatal("期望 Load 拒绝 gre 层未知字段 foo,实际通过")
 	}

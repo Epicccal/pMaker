@@ -106,6 +106,9 @@ func (c config) handleSchemaLayer(ctx context.Context, req mcp.ReadResourceReque
 	if layer == "" {
 		return nil, fmt.Errorf("缺少 {layer} 参数")
 	}
+	// 兼容带 .md 后缀的写法:URI 规范是裸层名(pmaker://schema/http_request),但调用端
+	// 模型常按磁盘文件名类推补上 .md。剥掉后缀再走 isSafeName,校验口径不变。
+	layer = strings.TrimSuffix(layer, ".md")
 	if !isSafeName(layer) {
 		return nil, fmt.Errorf("未知层名 %q", layer)
 	}

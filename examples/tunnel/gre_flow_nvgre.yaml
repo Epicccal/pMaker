@@ -1,0 +1,22 @@
+# examples/tunnel/gre_flow_nvgre.yaml
+#
+# 示例场景:NVGRE flow —— GRE(TEB,内层 eth)承载隧道内 TCP 会话。
+# 两线交汇:flow 切点支持 gre + 内层 eth 自动推导 0x6558。
+# 反向包内外两层 eth/ipv4 端点一并交换(展开器对整栈模板逐层反转),
+# GRE 头(key 与推导出的 0x6558)两向保持声明值。
+link_type: ethernet
+flows:
+  - name: nvgre-http
+    stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }   # outer
+      - ipv4:  { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - gre:   { key: 0x0012340a }                                       # VSID=0x001234 | FlowID=0x0a
+      - eth:   { src: "aa:bb:cc:dd:ee:01", dst: "aa:bb:cc:dd:ee:02" }   # inner(TEB 形态才有)
+      - ipv4:  { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 }
+      - tcp:   { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack: [ { http_request: { method: GET, url: /a } } ]
+      - from: dst
+        stack: [ { http_response: { status: 200, body: "ok" } } ]

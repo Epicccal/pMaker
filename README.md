@@ -98,6 +98,7 @@ seq/ack 推导、三次握手、四次挥手、对端 ACK 全部由 flow 展开�
 - RFC 5322: Internet Message Format 构造
 - RFC 2045: MIME Content-Transfer-Encoding 编码
 - TFTP 全量报文构造（RFC 1350/2347），tftp_transfer 宏自动展开 DATA/ACK 传输序列
+- GRE 变长头字段（RFC 1701/2784/2890）：Key/Seq/Ack/Checksum、NVGRE 与 PPTP，flow 隧道切点
 - 文件占位符 @file(path): 基于 workdir 中的文件路径注入原始字节
 
 字段级语义与设计取舍见 [CLAUDE.md](CLAUDE.md)。

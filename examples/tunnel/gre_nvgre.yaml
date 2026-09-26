@@ -1,0 +1,24 @@
+# examples/tunnel/gre_nvgre.yaml
+#
+# 示例场景:NVGRE(RFC 7637)—— GRE 承载完整二层帧(TEB)。
+# protocol 由内层 eth 自动推导为 0x6558;key = VSID(24 位) | FlowID(8 位)。
+# 同文件对照畸形:保留位非零 + Reserved1 非零(RFC 2784 发送侧 MUST 传零,
+# 只告警不拦截,照常出包)。
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }   # outer
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2", ttl: 64 }
+      - gre:  { key: 0x0012340a }                                       # VSID=0x001234,FlowID=0x0a
+      - eth:  { src: "aa:bb:cc:dd:ee:01", dst: "aa:bb:cc:dd:ee:02" }   # inner,protocol 自动 = 0x6558(TEB)
+      - ipv4: { src: "192.168.1.1", dst: "192.168.1.2", ttl: 64 }
+      - udp:  { sport: 5000, dport: 5001 }
+      - payload: { payload: "nvgre" }
+
+  # 畸形:断链 protocol + C=1 假 checksum + Reserved1 非零 + 保留位非零(各产软告警)
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "1.1.1.1", dst: "2.2.2.2", ttl: 64 }
+      - gre:  { protocol: 0x86dd, checksum: 0xdead, offset: 0x1234, recursion: 3, flags: 5 }  # 声明 IPv6,内层却是 IPv4
+      - ipv4: { src: "192.168.1.1", dst: "192.168.1.2", ttl: 64 }
+      - tcp:  { sport: 1234, dport: 443, flags: [SYN] }

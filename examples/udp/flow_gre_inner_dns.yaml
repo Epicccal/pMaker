@@ -1,0 +1,27 @@
+# examples/udp/flow_gre_inner_dns.yaml
+#
+# 示例场景:GRE 隧道内 UDP 会话(DNS 问答,flow 支持 gre)。
+# outer eth → ipv4 → gre → inner ipv4 → udp,每条 message 恰一个数据报;
+# from: dst 同时反转内外两层 IP 端点(隧道双向流的真实形态)。
+link_type: ethernet
+flows:
+  - name: gre-dns
+    stack:
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:        { src: "1.1.1.1", dst: "2.2.2.2", ttl: 64 }           # protocol 自动 = 47
+      - gre:         { key: 0x0000a10b }
+      - ipv4:        { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 } # inner,无 eth
+      - udp:         { sport: 53000, dport: 53 }
+      - udp_session: {}
+    messages:
+      - from: src
+        stack:
+          - dns: { id: 0x5678, qr: query, questions: [ { name: "a.internal", type: A, class: IN } ] }
+      - from: dst
+        stack:
+          - dns:
+              id: 0x5678
+              qr: response
+              rcode: no_error
+              questions: [ { name: "a.internal", type: A, class: IN } ]
+              answers:  [ { name: "a.internal", type: A, class: IN, ttl: 60, data: "192.168.1.20" } ]

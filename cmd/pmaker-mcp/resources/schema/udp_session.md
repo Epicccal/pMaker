@@ -107,7 +107,7 @@ UDP 数据报,解析端无法还原);要落非标字节用 `payload` / `payload_
 | `含 udp 无 tcp:UDP 会话需显式声明 udp_session` | `flow.stack` 末位补 `- udp_session: {}`。UDP 会话与 TCP 不同,不可省略 |
 | `会话层与传输层不匹配` | `tcp_session` 需配 `tcp`、`udp_session` 需配 `udp`,二选一且须紧邻 |
 | `只能用于 flow.stack,不能出现在 standalone packet 的 stack 里` | 普通数据报直接在 `packets` 里写 `udp` + payload,无需会话标记 |
-| `只能在 vxlan 之后的 inner 段` | 会话跑在隧道内层:`udp_session` 移到 `vxlan` 之后的 inner 段末位 |
+| `只能在 vxlan 之后的 inner 段` | 会话跑在隧道内层:`udp_session` 移到隧道层之后的 inner 段末位(gre 切点同理,报错为「只能在 gre 之后的 inner 段」) |
 | `UDP 无流重组,不支持 segment 切段` | 拆成多条 `message` 并用 `offset_time` 控制间隔 |
 | `UDP flow 的 messages 不能为空` | 要产包就加消息;要空会话请去掉整条 flow |
 | `不支持字段 "timeout"` | 零字段层:任何字段都硬拒,UDP 会话没有可配参数 |

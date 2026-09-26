@@ -68,7 +68,7 @@ flow 分两种会话形态,由**会话层**决定(`tcp_session` / `udp_session`)
   TCP 流式层进数据报产软告警(`udp.stream-app-layer`)。
 
 反向消息自动反转所有 eth/IP 端点和会话传输层端口。单层 VXLAN flow 中,VNI 与
-outer UDP 端口两向保持声明值。
+outer UDP 端口两向保持声明值;GRE 隧道头(`key`/`protocol` 等)两向同样保持声明值。
 
 ```yaml
 link_type: ethernet
@@ -95,10 +95,11 @@ flows:
 **硬约束**:普通 `flow.stack` 须含 `eth` + 恰好一个网络层(`ipv4` 或 `ipv6`)+ 传输层 +
 会话层,可选多层 `vlan`;传输层与会话层须匹配(`tcp`+`tcp_session` 或 `udp`+
 `udp_session`,二选一)。TCP 会话的 `tcp_session` 可省略(缺省 handshake/fin),
-**UDP 会话的 `udp_session` 不可省略**。VXLAN flow 须为 outer `eth + vlan* + IP + udp +
-vxlan` 与 inner `eth + vlan* + IP + 传输层 + 会话层` 两段,只支持一层 `vxlan`,
-outer UDP `dport` 须非零。每条 message 须 ≥1 个 payload 生产层,同段多层按声明顺序拼接
-(standalone packet 同此规则)。
+**UDP 会话的 `udp_session` 不可省略**。隧道切点 flow:VXLAN 须为 outer `eth + vlan* +
+IP + udp + vxlan` 与 inner `eth + vlan* + IP + 传输层 + 会话层` 两段,outer UDP `dport`
+须非零;GRE 须为 outer `eth [+ vlan*] + IP + gre`(直挂 IP,无需 udp)与 inner 两段,
+inner `eth` 可选(TEB/NVGRE 形态才有)。两者各只支持一层切点。每条 message 须 ≥1 个
+payload 生产层,同段多层按声明顺序拼接(standalone packet 同此规则)。
 
 **方向化 VLAN VID(仅 `flow.stack`)**:`vlan` 可写 `src_vid`/`dst_vid` 取代 `vid`,让上行
 (src→dst)与下行(dst→src)带不同标签;单边缺省 = 该方向整层摘除(上行带下行不带 /
@@ -119,7 +120,7 @@ outer UDP `dport` 须非零。每条 message 须 ≥1 个 payload 生产层,同�
 | 类别 | 层名 |
 |------|------|
 | L2 | `eth`、`vlan` |
-| L3 | `ipv4`、`ipv6`、`gre`、`vxlan`(UDP 承载二层隧道:`udp(4789) → vxlan → eth`;支持 `packets` 与单层 VXLAN TCP/UDP flow) |
+| L3 | `ipv4`、`ipv6`、`gre`(IP 协议 47 承载,变长头,支持 `packets` 与单层 GRE flow)、`vxlan`(UDP 承载二层隧道:`udp(4789) → vxlan → eth`;支持 `packets` 与单层 VXLAN TCP/UDP flow) |
 | L4 | `tcp`、`udp`、`tcp_session`(仅 `flow.stack`,可省略)、`udp_session`(仅 `flow.stack`,UDP 会话必写) |
 | 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data`、`tftp`、`tftp_transfer`(message 级宏,仅 UDP flow) |
 | 兜底 | `payload`、`payload_hex` |

@@ -1,0 +1,21 @@
+# examples/tunnel/gre_flow_http.yaml
+#
+# 示例场景:GRE 隧道内 TCP 会话(flow 支持 gre)。
+# outer eth → ipv4 → gre(直挂 IP,协议 47,无传输层)→ inner ipv4 → tcp,
+# 完整握手 + GET/200 + 四次挥手;反向包内外两层 IP 端点一并交换。
+# GRE 头逐包恒定(flow 模板语义);需逐包递增的 GRE seq 请用 standalone packets。
+link_type: ethernet
+flows:
+  - name: gre-http
+    stack:
+      - eth:   { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }   # outer
+      - ipv4:  { src: "1.1.1.1", dst: "2.2.2.2", ttl: 64 }              # outer underlay,protocol 自动 = 47
+      - gre:   { key: 0x0000a10b }                                       # K=1,tunnel key(RFC 2890)
+      - ipv4:  { src: "192.168.1.10", dst: "192.168.1.20", ttl: 64 }    # inner overlay,无 eth(GRE 直承 IP)
+      - tcp:   { sport: 49152, dport: 80, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack: [ { http_request: { method: GET, url: /a } } ]
+      - from: dst
+        stack: [ { http_response: { status: 200, body: "ok" } } ]
