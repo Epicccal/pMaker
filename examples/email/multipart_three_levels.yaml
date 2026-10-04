@@ -1,0 +1,54 @@
+# 三层嵌套 multipart:演示递归序列化深度。
+# 外层 mixed → 中层 alternative → 内层 related(HTML + 内联图片)。
+
+link_type: raw
+
+packets:
+  - stack:
+      - eml_data:
+          headers:
+            From: "complex@example.com"
+            To: "user@example.com"
+            Subject: "Three-Level Nested Multipart"
+            MIME-Version: "1.0"
+            Content-Type: "multipart/mixed; boundary=level1"
+          multipart:
+            boundary: level1
+            parts:
+              # Part 1: 嵌套 multipart/alternative
+              - headers:
+                  Content-Type: "multipart/alternative; boundary=level2"
+                nested:
+                  boundary: level2
+                  parts:
+                    # 纯文本
+                    - headers:
+                        Content-Type: "text/plain; charset=utf-8"
+                      body: "Plain text fallback"
+
+                    # 再嵌套 multipart/related(HTML + 内联资源)
+                    - headers:
+                        Content-Type: "multipart/related; boundary=level3"
+                      nested:
+                        boundary: level3
+                        parts:
+                          # HTML 正文
+                          - headers:
+                              Content-Type: "text/html; charset=utf-8"
+                            body: '<html><body><img src="cid:img1"/></body></html>'
+
+                          # 内联图片(CID 引用)
+                          - headers:
+                              Content-Type: "image/png"
+                              Content-ID: "<img1>"
+                              Content-Transfer-Encoding: "base64"
+                            encoding: base64
+                            body_hex: "0x89504e47"  # PNG 魔术头
+
+              # Part 2: PDF 附件
+              - headers:
+                  Content-Type: "application/pdf"
+                  Content-Disposition: "attachment; filename=\"doc.pdf\""
+                  Content-Transfer-Encoding: "base64"
+                encoding: base64
+                body: "JVBERi0xLjQK"  # %PDF-1.4 header

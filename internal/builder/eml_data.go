@@ -59,7 +59,7 @@ func SerializeEMLData(f *scenario.EMLDataFields) ([]byte, error) {
 		})
 		b.WriteString("\r\n")
 		if f.Multipart != nil {
-			mp, err := serializeMultipart(f.Multipart)
+			mp, err := serializeMultipart(f.Multipart, 0)
 			if err != nil {
 				return nil, fmt.Errorf("multipart: %w", err)
 			}
