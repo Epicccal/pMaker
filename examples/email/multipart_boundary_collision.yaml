@@ -1,0 +1,31 @@
+# Boundary 碰撞触发软告警:part body 内含独占一行的 boundary 分界符。
+# 此场景故意构造碰撞,pMaker 会产 multipart.boundary-collision 软告警,
+# 但仍成功生成 pcap(畸形用例)。
+
+link_type: raw
+
+packets:
+  - stack:
+      - eml_data:
+          headers:
+            From: "test@example.com"
+            To: "admin@example.com"
+            Subject: "Boundary Collision Test"
+            MIME-Version: "1.0"
+            Content-Type: "multipart/mixed; boundary=simple"
+          multipart:
+            boundary: simple
+            parts:
+              # Part 1: 正常 part
+              - headers:
+                  Content-Type: "text/plain"
+                body: "This is normal content."
+
+              # Part 2: 故意在 body 内写 boundary(解析端会误判切分)
+              - headers:
+                  Content-Type: "text/plain"
+                body: |
+                  Start of content
+                  --simple
+                  This line looks like boundary!
+                  End of content

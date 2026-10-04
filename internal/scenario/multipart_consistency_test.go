@@ -258,3 +258,35 @@ func TestMultipartConsistency_BoundaryCollision(t *testing.T) {
 		t.Fatalf("编码后碰撞同样应告警,得到 %v", scenario.Warnings(s))
 	}
 }
+
+// TestMultipartConsistency_NestedBoundaryCollisionNoDup: 嵌套 multipart 的叶 part 与
+// 内层 boundary 碰撞时,只产一条告警。碰撞检查(checkBoundaryCollisionRecursive)整树一次扫完,
+// 不得在每层重复触发(checkMultipartRecursive 只负责 boundary/CTE 一致性)。
+func TestMultipartConsistency_NestedBoundaryCollisionNoDup(t *testing.T) {
+	s := multiStackScenario("http_request", &scenario.HTTPReqFields{
+		Headers: scenario.HeaderMap{
+			{Key: "Content-Type", Value: "multipart/mixed; boundary=outer"},
+		},
+		Multipart: &scenario.MultipartBody{
+			Boundary: "outer",
+			Parts: []scenario.MultipartPart{{
+				Headers: scenario.HeaderMap{{Key: "Content-Type", Value: "multipart/alternative; boundary=inner"}},
+				Nested: &scenario.MultipartBody{
+					Boundary: "inner",
+					Parts: []scenario.MultipartPart{
+						{Body: "前置内容\r\n--inner\r\n后续内容"},
+					},
+				},
+			}},
+		},
+	})
+	count := 0
+	for _, w := range scenario.Warnings(s) {
+		if w.Code == scenario.CodeMultipartBoundaryCollision {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("嵌套碰撞应只产 1 条告警,得到 %d 条: %v", count, scenario.Warnings(s))
+	}
+}

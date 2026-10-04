@@ -60,16 +60,35 @@ func checkLayerMultipartConsistency(label, path string, l Layer) []Diagnostic {
 		return nil
 	}
 	var warnings []Diagnostic
-	warnings = append(warnings, checkBoundaryConsistency(label, path, l.Type, headers, multipart)...)
-	warnings = append(warnings, checkPartCTEConsistency(label, path, l.Type, multipart)...)
-	warnings = append(warnings, checkBoundaryCollision(path, multipart)...)
+	warnings = append(warnings, checkBoundaryCollisionRecursive(path, multipart, 0, nil)...)
+	warnings = append(warnings, checkMultipartRecursive(label, path, l.Type, headers, multipart, 0)...)
+	return warnings
+}
+
+// checkMultipartRecursive 递归检查 multipart 的 boundary/CTE 一致性(逐层)。
+// boundary 碰撞由 checkBoundaryCollisionRecursive 整树一次扫完,此处不重复。
+// depth 从 0 开始按嵌套层级递增。
+func checkMultipartRecursive(label, path, layerType string, headers HeaderMap, m *MultipartBody, depth int) []Diagnostic {
+	var warnings []Diagnostic
+
+	// 当前层检查
+	warnings = append(warnings, checkBoundaryConsistency(label, path, layerType, headers, m, depth)...)
+	warnings = append(warnings, checkPartCTEConsistency(label, path, layerType, m)...)
+
+	// 递归子层
+	for i, p := range m.Parts {
+		if p.Nested != nil {
+			nestedPath := fmt.Sprintf("%s.multipart.parts[%d].nested", path, i)
+			warnings = append(warnings, checkMultipartRecursive(label, nestedPath, layerType, p.Headers, p.Nested, depth+1)...)
+		}
+	}
 	return warnings
 }
 
 // checkBoundaryConsistency 校验父层 Content-Type 头的 boundary= 参数与 multipart 实际 boundary
-// 是否一致;父层缺 Content-Type → 告警。
-func checkBoundaryConsistency(label, path, layerType string, headers HeaderMap, m *MultipartBody) []Diagnostic {
-	actual := MultipartBoundary(m)
+// 是否一致;父层缺 Content-Type → 告警。depth 从 0 开始按嵌套层级递增。
+func checkBoundaryConsistency(label, path, layerType string, headers HeaderMap, m *MultipartBody, depth int) []Diagnostic {
+	actual := MultipartBoundary(m, depth)
 	ct, hasCT := headers.Get("Content-Type")
 	if !hasCT {
 		return []Diagnostic{warnf(CodeMultipartMissingContentType, path,
@@ -157,30 +176,50 @@ func splitKV(s string) (string, string, bool) {
 	return k, v, true
 }
 
-// checkBoundaryCollision 扫描每个 part 的编码后字节,若某行(去尾空白/CRLF)独占 "--"+boundary,
-// 产 boundary 碰撞告警(RFC 2046 §5.1.1:分界符须独占一行,解析端会误判切分 multipart)。
-// 非硬错,畸形/故意的边界碰撞用例可继续。@file 注入附件(内容不可预知)时尤其隐蔽。
-// 按行匹配而非朴素子串包含,避免行内偶现子串误报。
-// 编码后字节经 EncodeMultipartPart 取得 —— 与 builder.serializeMultipart 共享同一实现,
-// 按构造保证扫描的就是实际落盘字节。同一 part 只产一条告警(首个命中行足够定位)。
-func checkBoundaryCollision(path string, m *MultipartBody) []Diagnostic {
-	delim := "--" + MultipartBoundary(m)
+// checkBoundaryCollisionRecursive 递归检查 multipart 树的 boundary 碰撞,
+// 携带祖先 boundary 列表,检查叶 part body 是否与任一祖先碰撞。
+// depth 从 0 开始按嵌套层级递增。
+func checkBoundaryCollisionRecursive(path string, m *MultipartBody, depth int, parentBoundaries []string) []Diagnostic {
+	delim := "--" + MultipartBoundary(m, depth)
+	// 分配新底层数组防止兄弟节点共享:append 在 cap>len 时原地写,多个子节点递归会互相污染
+	allBoundaries := make([]string, len(parentBoundaries)+1)
+	copy(allBoundaries, parentBoundaries)
+	allBoundaries[len(parentBoundaries)] = delim
+
 	var warnings []Diagnostic
-	for i := range m.Parts {
-		encoded, err := EncodeMultipartPart(&m.Parts[i])
-		if err != nil {
-			// 校验已拦截非法 body_hex/encoding,此处不应到达;跳过避免把硬错降级成告警。
-			continue
-		}
-		for line := range strings.SplitSeq(string(encoded), "\n") {
-			if strings.TrimRight(line, " \t\r\n") == delim {
-				partPath := fmt.Sprintf("%s.multipart.parts[%d]", path, i)
-				warnings = append(warnings, warnf(CodeMultipartBoundaryCollision, partPath,
-					"%s 的 multipart.parts[%d] 编码后 body 内出现独占一行的 boundary 分界符 %q,解析端可能误判切分;请更换更长的 boundary(默认 boundary 碰撞概率极低)",
-					partPath, i, delim))
-				break // 同一 part 只产一条告警(首个命中行足够定位),继续扫后续 part。
+	for i, p := range m.Parts {
+		if p.Nested != nil {
+			// 递归扫内层,传递祖先 boundary 列表
+			nestedPath := fmt.Sprintf("%s.multipart.parts[%d].nested", path, i)
+			warnings = append(warnings, checkBoundaryCollisionRecursive(nestedPath, p.Nested, depth+1, allBoundaries)...)
+		} else {
+			// 叶 part:检查 body 是否与所有祖先 boundary 碰撞
+			encoded, err := EncodeMultipartPart(&p)
+			if err != nil {
+				// 校验已拦截非法 body_hex/encoding,此处不应到达;跳过避免把硬错降级成告警。
+				continue
+			}
+
+			for _, ancestorDelim := range allBoundaries {
+				if containsLineBoundary(encoded, ancestorDelim) {
+					partPath := fmt.Sprintf("%s.multipart.parts[%d]", path, i)
+					warnings = append(warnings, warnf(CodeMultipartBoundaryCollision, partPath,
+						"%s 的 part 编码后 body 内出现独占一行的 boundary 分界符 %q,解析端可能误判切分;请更换更长的 boundary",
+						partPath, ancestorDelim))
+					break // 同一 part 只产一条告警,继续扫后续 part
+				}
 			}
 		}
 	}
 	return warnings
+}
+
+// containsLineBoundary 检查字节中是否有某行独占 delim(去尾空白/CRLF 后)。
+func containsLineBoundary(data []byte, delim string) bool {
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if strings.TrimRight(line, " \t\r\n") == delim {
+			return true
+		}
+	}
+	return false
 }

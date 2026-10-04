@@ -1,0 +1,42 @@
+# 嵌套 multipart:外层 multipart/mixed 承载纯文本 + 富文本邮件 + 附件,
+# 内层 multipart/alternative 提供纯文本与 HTML 两种展示格式。
+# RFC 2046 典型邮件结构:收件人看到富文本 + 附件,纯文本客户端降级显示。
+
+link_type: raw
+
+packets:
+  - stack:
+      - eml_data:
+          headers:
+            From: "sender@example.com"
+            To: "recipient@example.com"
+            Subject: "Nested Multipart Example"
+            MIME-Version: "1.0"
+            Content-Type: "multipart/mixed; boundary=outer_boundary"
+          multipart:
+            boundary: outer_boundary
+            parts:
+              # Part 1: 嵌套的 multipart/alternative(纯文本 vs HTML)
+              - headers:
+                  Content-Type: "multipart/alternative; boundary=inner_boundary"
+                nested:
+                  boundary: inner_boundary
+                  parts:
+                    # 纯文本版本
+                    - headers:
+                        Content-Type: "text/plain; charset=utf-8"
+                        Content-Transfer-Encoding: "7bit"
+                      body: "Hello,\n\nThis is the plain text version.\n\nBest regards"
+                    # HTML 版本
+                    - headers:
+                        Content-Type: "text/html; charset=utf-8"
+                        Content-Transfer-Encoding: "7bit"
+                      body: "<html><body><p>Hello,</p><p>This is the <b>HTML</b> version.</p><p>Best regards</p></body></html>"
+
+              # Part 2: 附件(base64 编码)
+              - headers:
+                  Content-Type: "application/octet-stream"
+                  Content-Disposition: "attachment; filename=\"data.bin\""
+                  Content-Transfer-Encoding: "base64"
+                encoding: base64
+                body: "Binary attachment content here"

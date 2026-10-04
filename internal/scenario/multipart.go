@@ -2,6 +2,7 @@ package scenario
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Epicccal/pMaker/internal/util/cte"
 )
@@ -15,16 +16,13 @@ import (
 // 各层的 validateLayer case 调 validateMultipart,父级互斥(eml_data 的 body/raw/raw_hex、
 // http 的 body)也由各层 case 负责。
 
-// multipartDefaultBoundary 是 boundary 为空时使用的确定性默认分界符(RFC 2046 合法 bchars)。
-// 固定常量保证同输入 → 逐字节相同 pcap(确定性),且足够长以降低与 part 内容碰撞的概率。
-const multipartDefaultBoundary = "----=_pMaker_0001"
-
 // validateMultipart 校验 MultipartBody 的合法性:
 //   - parts 至少 1 个;
 //   - boundary 非空时须符合 RFC 2046 §5.1.1(长度 1–70、bchars 字符集、空格不结尾);
 //     空 boundary = 用默认值(合规,跳过校验);
-//   - 每 part:body/body_hex 互斥;body_hex 须合法 0x hex;encoding ∈ RFC 2045 §6 CTE
-//     (none/7bit/8bit/binary 为恒等编码透传,base64/quoted-printable 为真变换)。
+//   - 每 part:body/body_hex/nested 三选一互斥;body_hex 须合法 0x hex;encoding ∈ RFC 2045 §6 CTE;
+//   - 递归校验 nested multipart;
+//   - 全局 boundary 冲突检查:父子 boundary 不能相同。
 func validateMultipart(m *MultipartBody) error {
 	if m == nil {
 		return nil
@@ -42,24 +40,52 @@ func validateMultipart(m *MultipartBody) error {
 			return err
 		}
 	}
+
+	// 全局 boundary 冲突检查
+	if err := validateBoundaryConflict(m); err != nil {
+		return err
+	}
+
 	return nil
 }
 
-// validateMultipartPart 校验单个 part:body/body_hex 互斥、body_hex 合法、encoding 枚举。
+// validateMultipartPart 校验单个 part:body/body_hex/nested 三选一互斥、body_hex 合法、encoding 枚举、递归校验 nested。
 func validateMultipartPart(i int, p *MultipartPart) error {
+	// 1. body/body_hex/nested 三选一互斥
+	hasBody := p.Body != "" || p.BodyHex != ""
+	if hasBody && p.Nested != nil {
+		return fmt.Errorf("multipart.parts[%d]: body/body_hex 与 nested 不可同设(nested 本身即 part body)", i)
+	}
+	if !hasBody && p.Nested == nil {
+		return fmt.Errorf("multipart.parts[%d]: body/body_hex/nested 至少一个(空 part 无意义)", i)
+	}
+
+	// 2. body/body_hex 原有互斥逻辑
 	if p.Body != "" && p.BodyHex != "" {
 		return fmt.Errorf("multipart.parts[%d]: body 与 body_hex 只能配置一个", i)
 	}
+
+	// 3. body_hex 合法性
 	if p.BodyHex != "" {
 		if _, err := ParsePayloadHex(p.BodyHex); err != nil {
 			return fmt.Errorf("multipart.parts[%d].body_hex: %w", i, err)
 		}
 	}
+
+	// 4. encoding 枚举校验
 	switch p.Encoding {
 	case "", "none", "7bit", "8bit", "binary", "base64", "quoted-printable":
 	default:
 		return fmt.Errorf("multipart.parts[%d].encoding 只能是 none/7bit/8bit/binary/base64/quoted-printable,得到 %q", i, p.Encoding)
 	}
+
+	// 5. 递归校验嵌套 multipart
+	if p.Nested != nil {
+		if err := validateMultipart(p.Nested); err != nil {
+			return fmt.Errorf("multipart.parts[%d].nested: %w", i, err)
+		}
+	}
+
 	return nil
 }
 
@@ -100,22 +126,38 @@ func isBchar(c byte, isLast bool) bool {
 	return false
 }
 
-// MultipartBoundary 返回 multipart 使用的实际 boundary(空则取确定性默认值)。
+// MultipartBoundary 返回 multipart 使用的实际 boundary(空则按深度取确定性默认值)。
+// depth 从 0 开始递增,保证嵌套层级的默认 boundary 互不相同(父子同值会导致解析端无法区分层级)。
 // builder 与一致性告警共用,确保「Content-Type 头里的 boundary」与「实际分界符」比对一致。
-func MultipartBoundary(m *MultipartBody) string {
+func MultipartBoundary(m *MultipartBody, depth int) string {
 	if m.Boundary != "" {
 		return m.Boundary
 	}
-	return multipartDefaultBoundary
+	return fmt.Sprintf("----=_pMaker_%04d", depth+1)
+}
+
+// ApplyTransferEncoding 对任意字节应用 CTE 编码(RFC 2045 §6)。
+// builder 与 scenario 共享,对叶 part body 与嵌套 multipart 整体统一编码。
+//   - ""/none 与 7bit/8bit/binary:恒等透传(仅声明字节性质);
+//   - base64:RFC 2045 每 76 字符折行(\r\n 分隔),见 util/cte;
+//   - quoted-printable:RFC 2045 QP 编码,见 util/cte。
+func ApplyTransferEncoding(data []byte, encoding string) ([]byte, error) {
+	switch encoding {
+	case "", "none", "7bit", "8bit", "binary":
+		return data, nil
+	case "base64":
+		return cte.Base64Fold(data), nil
+	case "quoted-printable":
+		return cte.QPEncode(data)
+	}
+	// 校验已拦截非法 encoding,兜底原样返回。
+	return data, nil
 }
 
 // EncodeMultipartPart 取单个 part 的编码后字节:body(或 ParsePayloadHex(body_hex))
 // 按 encoding 做传输编码。builder.serializeMultipart 与 CheckMultipartConsistency 的
 // boundary 碰撞检查共用本函数,按构造保证「检查看到的字节」与「实际落盘字节」一致,
 // 消除两处实现漂移的可能。纯函数。
-//   - ""/none 与 7bit/8bit/binary:恒等透传(RFC 2045 §6,仅声明字节性质);
-//   - base64:RFC 2045 每 76 字符折行(\r\n 分隔),见 util/cte;
-//   - quoted-printable:RFC 2045 QP 编码,见 util/cte。
 func EncodeMultipartPart(p *MultipartPart) ([]byte, error) {
 	var body []byte
 	if p.Body != "" {
@@ -127,14 +169,36 @@ func EncodeMultipartPart(p *MultipartPart) ([]byte, error) {
 		}
 		body = b
 	}
-	switch p.Encoding {
-	case "", "none", "7bit", "8bit", "binary":
-		return body, nil
-	case "base64":
-		return cte.Base64Fold(body), nil
-	case "quoted-printable":
-		return cte.QPEncode(body)
+	return ApplyTransferEncoding(body, p.Encoding)
+}
+
+// validateBoundaryConflict 检查整个 multipart 树的 boundary 冲突:
+// 每层 boundary 须互不相同,父子 boundary 重复会导致解析端无法区分层级。
+func validateBoundaryConflict(m *MultipartBody) error {
+	boundaries := make(map[string][]string) // boundary -> paths
+	collectBoundaries(m, "", 0, boundaries)
+
+	for b, paths := range boundaries {
+		if len(paths) > 1 {
+			return fmt.Errorf("boundary %q 在多个层级重复使用(%s);父子 multipart 的 boundary 须互不相同,请更换",
+				b, strings.Join(paths, ", "))
+		}
 	}
-	// 校验已拦截非法 encoding,兜底原样返回。
-	return body, nil
+	return nil
+}
+
+// collectBoundaries 递归收集 multipart 树中所有 boundary 及其路径。
+func collectBoundaries(m *MultipartBody, path string, depth int, acc map[string][]string) {
+	b := MultipartBoundary(m, depth)
+	if path == "" {
+		path = "multipart"
+	}
+	acc[b] = append(acc[b], path)
+
+	for i, p := range m.Parts {
+		if p.Nested != nil {
+			nestedPath := fmt.Sprintf("%s.parts[%d].nested", path, i)
+			collectBoundaries(p.Nested, nestedPath, depth+1, acc)
+		}
+	}
 }

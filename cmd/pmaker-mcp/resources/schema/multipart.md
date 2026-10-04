@@ -32,9 +32,21 @@ flows:
                   - headers:
                       Content-Disposition: 'form-data; name="field1"'
                     body: "value1"
+                  - headers:
+                      Content-Disposition: 'form-data; name="email"'
+                      Content-Type: "multipart/alternative; boundary=alt-boundary"
+                    nested:
+                      boundary: "alt-boundary"
+                      parts:
+                        - headers:
+                            Content-Type: "text/plain"
+                          body: "Plain text version"
+                        - headers:
+                            Content-Type: "text/html"
+                          body: "<p>HTML version</p>"
 ```
 
-`auto_content_length: true` 原位覆盖占位 `Content-Length: 0` 为 multipart 实际字节长度。
+`auto_content_length: true` 原位覆盖占位 `Content-Length: 0` 为 multipart 实际字节长度。嵌套示例展示 `multipart/alternative`(多格式备选)嵌在外层 `multipart/form-data` part 内,父子 boundary 须不同。
 
 ## 字段
 
@@ -48,8 +60,9 @@ flows:
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `headers` | map | 否 | part 头(`Content-Disposition`/`Content-Type`/`Content-Transfer-Encoding`…),保留声明顺序、支持重复头 |
-| `body` | string | 否 | part 体;可用 `@file(...)` 注入文件内容(文本或二进制附件);与 `body_hex` 互斥 |
-| `body_hex` | string | 否 | part 体(`0x` 前缀十六进制,二进制附件);与 `body` 互斥;**不可用 `@file`** |
+| `body` | string | 否 | part 体;可用 `@file(...)` 注入文件内容(文本或二进制附件);与 `body_hex`/`nested` 互斥 |
+| `body_hex` | string | 否 | part 体(`0x` 前缀十六进制,二进制附件);与 `body`/`nested` 互斥;**不可用 `@file`** |
+| `nested` | MultipartBody | 否 | 嵌套 multipart(`multipart/mixed` 套 `multipart/alternative` 等);递归结构,与 `body`/`body_hex` 互斥 |
 | `encoding` | string | 否 | 传输编码(RFC 2045 §6 CTE):`none`(缺省)/`7bit`/`8bit`/`binary`/`base64`/`quoted-printable` |
 
 `encoding` 的 `none`/`7bit`/`8bit`/`binary` 为**恒等编码**(透传,仅声明 body 字节性质、不做变换);
@@ -81,7 +94,8 @@ flows:
 
 - `parts` 至少 1 个(空报错)。
 - `boundary` 非空时符合 RFC 2046 §5.1.1(长度 1-70、bchars 字符集、空格不结尾);空则用默认值。
-- 每 part:`body` 与 `body_hex` 互斥;`body_hex` 须合法 `0x` hex;`encoding` ∈ 六值枚举。
+- 每 part:`body`/`body_hex`/`nested` 三选一互斥;`body_hex` 须合法 `0x` hex;`encoding` ∈ 六值枚举。
+- `nested` 递归校验,父子 boundary 须不同(相同硬错);嵌套深度无限制。
 - 父层互斥(由父层校验,非本子结构):`multipart` 与 `body` 互斥、与 `raw`/`raw_hex`(EML)互斥。
 
 ## 一致性告警(软告警,非硬错)
@@ -110,13 +124,12 @@ flows:
   以为设了 `8bit` 会做什么处理是误解。
 - **boundary 碰撞只告警不拦**:part body 里独占一行的 `--<boundary>` 会让解析端误切分,但包照出
   (默认 boundary 碰撞概率极低;自定义短 boundary 易踩)。
+- **嵌套 multipart 的 boundary 须不同**:父子 multipart 用同一 boundary 会硬错(父分界符会被解析器误判为子边界)。
 - **HTTP `auto_content_length` 是 CL 唯一入口**:头里写 `Content-Length` 不会触发自动计算,须显式
   `auto_content_length: true`(原位覆盖占位值或末尾追加)。
 
 ## v1 限制(走父层原始字节兜底)
 
-- **不支持嵌套 multipart**(`multipart/mixed` 内嵌 `multipart/alternative`):走父层 `raw`/`raw_hex`(EML)
-  或 `payload`/`payload_hex`(HTTP)手拼。
 - **不支持 preamble / epilogue**(RFC 2046:首 boundary 前、尾 boundary 后的可选文本):需加时走 `raw` 手拼。
 - 缺终止符、非标换行等成帧畸形统一走 `raw`/`raw_hex`/`payload_hex`。
 
@@ -127,7 +140,9 @@ flows:
 | `multipart.parts 至少需要 1 个 part` | 至少给 1 个 part。空 multipart / 缺终止符等畸形走父层 `raw`/`raw_hex` 或 `payload`/`payload_hex` |
 | `multipart.boundary 长度须 1-70` | boundary 限 1-70 字符。非标 boundary 走父层 `raw`/`raw_hex` 或 `payload`/`payload_hex` 手拼 |
 | `multipart.boundary "bad;b" 含非法字符` | bchars 限 `0-9A-Za-z'()+_,.-/:=?` 与空格(空格不结尾)。非标 boundary 走父层原始字节兜底 |
-| `body 与 body_hex 只能配置一个` | part 体二选一;二进制附件用 `body`+`@file` 或 `body_hex` |
+| `body/body_hex/nested 至少一个` | part 体三选一,至少给一个 |
+| `body/body_hex 与 nested 不可同设` | part 体三选一,只能给一个 |
+| `父子 multipart 的 boundary 须互不相同` | 父子 boundary 须不同(解析器会误判边界) |
 | `encoding 只能是 none/7bit/8bit/binary/base64/quoted-printable` | encoding 六值之一。非标 CTE 走父层 `raw`/`raw_hex` 或 `payload`/`payload_hex` |
 
 ```yaml-bad
@@ -198,6 +213,56 @@ packets:
             parts:
               - body: "x"
                 encoding: uuencode
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1, dport: 80, flags: [PSH, ACK] }
+      - http_request:
+          headers: { Content-Type: "multipart/mixed; boundary=b" }
+          multipart:
+            boundary: "b"
+            parts:
+              - headers: { Content-Type: "text/plain" }
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1, dport: 80, flags: [PSH, ACK] }
+      - http_request:
+          headers: { Content-Type: "multipart/mixed; boundary=b" }
+          multipart:
+            boundary: "b"
+            parts:
+              - body: "x"
+                nested:
+                  boundary: "inner"
+                  parts: [{ body: "y" }]
+```
+
+```yaml-bad
+link_type: ethernet
+packets:
+  - stack:
+      - eth:  { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4: { src: "10.0.0.1", dst: "10.0.0.2" }
+      - tcp:  { sport: 1, dport: 80, flags: [PSH, ACK] }
+      - http_request:
+          headers: { Content-Type: "multipart/mixed; boundary=same" }
+          multipart:
+            boundary: "same"
+            parts:
+              - nested:
+                  boundary: "same"
+                  parts: [{ body: "collision" }]
 ```
 
 ## 相关

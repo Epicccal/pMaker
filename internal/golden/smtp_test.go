@@ -99,3 +99,96 @@ func TestSMTPEmlFileContent(t *testing.T) {
 		}
 	}
 }
+
+// TestEmailNestedMultipartWireFormat 验证嵌套 multipart 的 RFC 2046 线格式:
+//   - 外层 boundary(outer_boundary)分隔符出现;
+//   - 内层 boundary(inner_boundary)分隔符出现;
+//   - 两层终止符(--boundary--)都存在;
+//   - 纯文本 part 内容出现;
+//   - HTML part 内容出现;
+//   - base64 编码的附件出现;
+//   - 所有 boundary 前后正确使用 CRLF。
+func TestEmailNestedMultipartWireFormat(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/email/multipart_nested_mixed_alternative.yaml")
+	for _, want := range [][]byte{
+		// 外层 multipart/mixed boundary
+		[]byte("Content-Type: multipart/mixed; boundary=outer_boundary"),
+		[]byte("--outer_boundary\r\n"),
+		[]byte("--outer_boundary--\r\n"),
+		// 内层 multipart/alternative boundary
+		[]byte("Content-Type: multipart/alternative; boundary=inner_boundary"),
+		[]byte("--inner_boundary\r\n"),
+		[]byte("--inner_boundary--\r\n"),
+		// 纯文本 part
+		[]byte("Content-Type: text/plain; charset=utf-8"),
+		[]byte("This is the plain text version."),
+		// HTML part
+		[]byte("Content-Type: text/html; charset=utf-8"),
+		[]byte("This is the <b>HTML</b> version."),
+		// 附件 part(base64 编码后)
+		[]byte("Content-Type: application/octet-stream"),
+		[]byte("Content-Disposition: attachment; filename=\"data.bin\""),
+		[]byte("Content-Transfer-Encoding: base64"),
+	} {
+		if !bytes.Contains(pcap, want) {
+			t.Errorf("pcap 不含 %q", want)
+		}
+	}
+}
+
+// TestEmailThreeLevelNestedMultipart 验证三层嵌套 multipart 的递归序列化:
+//   - 最外层 level1 boundary;
+//   - 中层 level2 boundary;
+//   - 最内层 level3 boundary;
+//   - 所有三层都有对应终止符;
+//   - HTML 正文与 PNG 内联图片(CID 引用)出现;
+//   - PDF 附件 base64 编码出现。
+func TestEmailThreeLevelNestedMultipart(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/email/multipart_three_levels.yaml")
+	for _, want := range [][]byte{
+		// 三层 boundary 分界符
+		[]byte("--level1\r\n"),
+		[]byte("--level2\r\n"),
+		[]byte("--level3\r\n"),
+		// 三层终止符
+		[]byte("--level1--\r\n"),
+		[]byte("--level2--\r\n"),
+		[]byte("--level3--\r\n"),
+		// HTML 正文
+		[]byte("<html><body><img src=\"cid:img1\"/>"),
+		// 内联图片 CID
+		[]byte("Content-ID: <img1>"),
+		// PNG 魔术头(0x89504e47 hex → base64 encoded)
+		[]byte("iVBORw=="),
+		// PDF 附件("JVBERi0xLjQK" plain text → base64 encoded)
+		[]byte("Content-Disposition: attachment; filename=\"doc.pdf\""),
+		[]byte("SlZCRVJpMHhMalFL"),
+	} {
+		if !bytes.Contains(pcap, want) {
+			t.Errorf("pcap 不含 %q", want)
+		}
+	}
+}
+
+// TestEmailBoundaryCollisionWarning 验证 boundary 碰撞软告警机制:
+// pcap 正常生成,但 part body 内含独占一行的 boundary 分界符会触发软告警。
+// 此测试只验证 pcap 字节正确,软告警由 CLI 输出验证(已在 gen 测试确认)。
+func TestEmailBoundaryCollisionWarning(t *testing.T) {
+	pcap := generatePcap(t, "../../examples/email/multipart_boundary_collision.yaml")
+	for _, want := range [][]byte{
+		// boundary 分界符
+		[]byte("--simple\r\n"),
+		[]byte("--simple--\r\n"),
+		// 正常 part
+		[]byte("This is normal content."),
+		// 碰撞 part:body 内也出现 --simple(解析端会误切)
+		[]byte("Start of content"),
+		[]byte("--simple"),
+		[]byte("This line looks like boundary!"),
+		[]byte("End of content"),
+	} {
+		if !bytes.Contains(pcap, want) {
+			t.Errorf("pcap 不含 %q", want)
+		}
+	}
+}

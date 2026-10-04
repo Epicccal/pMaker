@@ -89,7 +89,7 @@ func chunkedOpts(c *scenario.ChunkedOptions) scenario.ChunkedOptions {
 // 否则用字面 body。校验已保证二者互斥。
 func httpBody(body string, m *scenario.MultipartBody) ([]byte, error) {
 	if m != nil {
-		return serializeMultipart(m)
+		return serializeMultipart(m, 0)
 	}
 	return []byte(body), nil
 }

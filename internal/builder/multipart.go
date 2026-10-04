@@ -35,9 +35,9 @@ import (
 // scenario.Warnings 回流 CLI stderr / MCP 结构化 warnings。
 
 // serializeMultipart 把 MultipartBody 序列化为整段 multipart 字节(含终止 boundary 行)。
-// 纯函数:无副作用。
-func serializeMultipart(m *scenario.MultipartBody) ([]byte, error) {
-	boundary := scenario.MultipartBoundary(m)
+// 纯函数:无副作用。支持递归嵌套 multipart。depth 从 0 开始,按嵌套层级递增。
+func serializeMultipart(m *scenario.MultipartBody, depth int) ([]byte, error) {
+	boundary := scenario.MultipartBoundary(m, depth)
 	delim := "--" + boundary
 
 	var b bytes.Buffer
@@ -55,11 +55,29 @@ func serializeMultipart(m *scenario.MultipartBody) ([]byte, error) {
 		})
 		// 头体分隔空行。
 		b.WriteString("\r\n")
-		// part body:取字节 → 编码(与 scenario 碰撞检查共享同一实现)。
-		encoded, err := scenario.EncodeMultipartPart(p)
-		if err != nil {
-			return nil, fmt.Errorf("multipart.parts[%d]: %w", i, err)
+
+		// Part body 生产:递归 or 编码叶 part
+		var encoded []byte
+		var err error
+		if p.Nested != nil {
+			// 递归序列化嵌套 multipart
+			nested, err := serializeMultipart(p.Nested, depth+1)
+			if err != nil {
+				return nil, fmt.Errorf("multipart.parts[%d].nested: %w", i, err)
+			}
+			// 应用外层 part 的 encoding(整体编码)
+			encoded, err = scenario.ApplyTransferEncoding(nested, p.Encoding)
+			if err != nil {
+				return nil, fmt.Errorf("multipart.parts[%d].encoding: %w", i, err)
+			}
+		} else {
+			// 叶 part:取字节 + CTE 编码(与 scenario 碰撞检查共享同一实现)。
+			encoded, err = scenario.EncodeMultipartPart(p)
+			if err != nil {
+				return nil, fmt.Errorf("multipart.parts[%d]: %w", i, err)
+			}
 		}
+
 		b.Write(encoded)
 		// part body 末尾补 \r\n 再写下一个分界符(RFC 2046:boundary 前须有 CRLF)。
 		b.WriteString("\r\n")

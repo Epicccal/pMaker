@@ -458,9 +458,10 @@ type (
 	// MultipartPart 是 multipart 体的一个 part(RFC 2046)。
 	// part 头复用 HeaderMap(保序、可重复键,如多个 Content-Disposition 参数)。
 	MultipartPart struct {
-		Headers  HeaderMap `yaml:"headers"`  // part 头(Content-Disposition/Content-Type/Content-Transfer-Encoding…),保序、可重复
-		Body     string    `yaml:"body"`     // part 体;支持 @file 注入(文本或二进制附件);与 body_hex 互斥
-		BodyHex  string    `yaml:"body_hex"` // part 体(hex,二进制附件);与 body 互斥;不可用 @file(hex 字段注入原始字节会破坏 hex 语义,二进制附件请用 body + @file)
-		Encoding string    `yaml:"encoding"` // none(缺省)/base64/quoted-printable:对 body/body_hex 做传输编码
+		Headers  HeaderMap      `yaml:"headers"`  // part 头(Content-Disposition/Content-Type/Content-Transfer-Encoding…),保序、可重复
+		Body     string         `yaml:"body"`     // part 体;支持 @file 注入(文本或二进制附件);与 body_hex/nested 互斥
+		BodyHex  string         `yaml:"body_hex"` // part 体(hex,二进制附件);与 body/nested 互斥;不可用 @file(hex 字段注入原始字节会破坏 hex 语义,二进制附件请用 body + @file)
+		Encoding string         `yaml:"encoding"` // none(缺省)/base64/quoted-printable:对 body/body_hex/nested 序列化结果做传输编码
+		Nested   *MultipartBody `yaml:"nested"`   // 嵌套 multipart;与 body/body_hex 互斥;该 part 的 body 为递归序列化的 nested 字节
 	}
 )
