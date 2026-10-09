@@ -65,6 +65,33 @@ func TestExplicitOverrideStillAllowed(t *testing.T) {
 	}
 }
 
+// 自动推导:eth→arp 得 0x0806(ARP 直挂以太头,不经 IP)。
+func TestEthToARPEtherType(t *testing.T) {
+	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{Stack: []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "ff:ff:ff:ff:ff:ff"}},
+		{Type: "arp", Fields: &scenario.ARPLayer{Operation: u16ptr(1), TargetProtoAddr: "10.0.0.2"}},
+	}}}}
+	pkts := readPackets(t, buildScenarioPcap(t, s))
+	eth := pkts[0].Layer(layers.LayerTypeEthernet).(*layers.Ethernet)
+	if eth.EthernetType != layers.EthernetTypeARP {
+		t.Fatalf("eth 后接 arp,EthernetType = %#x,期望 0x0806", eth.EthernetType)
+	}
+}
+
+// vlan→arp 同走 ethTypeFor,漏登记 arp 会在此报硬错。
+func TestVLANToARPEtherType(t *testing.T) {
+	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{Stack: []scenario.Layer{
+		{Type: "eth", Fields: &scenario.EthFields{Src: "00:11:22:33:44:55", Dst: "ff:ff:ff:ff:ff:ff"}},
+		{Type: "vlan", Fields: &scenario.VLANFields{VID: 100}},
+		{Type: "arp", Fields: &scenario.ARPLayer{Operation: u16ptr(1), TargetProtoAddr: "10.0.0.2"}},
+	}}}}
+	pkts := readPackets(t, buildScenarioPcap(t, s))
+	vlan := pkts[0].Layer(layers.LayerTypeDot1Q).(*layers.Dot1Q)
+	if vlan.Type != layers.EthernetTypeARP {
+		t.Fatalf("vlan 后接 arp,Type = %#x,期望 0x0806", vlan.Type)
+	}
+}
+
 // 自动推导:eth→vlan 得 0x8100,vlan→ipv4 得 0x0800。
 func TestEthEtherTypeAuto(t *testing.T) {
 	s := &scenario.Scenario{LinkType: "ethernet", Packets: []scenario.Packet{{Stack: []scenario.Layer{
