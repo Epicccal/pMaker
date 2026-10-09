@@ -5,9 +5,10 @@ import (
 	"net"
 )
 
-// CheckARPWarnings 扫描 packets 的 ARP 层,产出软告警:
+// CheckARPWarnings 扫描 packets 的 ARP 层,产出软告警。判断一律用字段缺省填充后的
+// 线上值:省略 sender_proto_addr 与显式写 0.0.0.0 落线逐位相同,按文本比较会漏告警。
 //   - arp.gratuitous:sender_proto_addr == target_proto_addr(Gratuitous ARP,RFC 5227)
-//   - arp.probe:sender_proto_addr == "0.0.0.0"(ARP Probe,RFC 5227 冲突检测)
+//   - arp.probe:sender_proto_addr == 0.0.0.0(ARP Probe,RFC 5227 冲突检测)
 //   - arp.request-non-zero-target-hw:request(op=1)但 target_hw_addr 非全零
 //   - arp.length-mismatch:hardware_length/protocol_length 与地址字段实际长度不符
 func CheckARPWarnings(s *Scenario) []Diagnostic {
@@ -32,13 +33,19 @@ func CheckARPWarnings(s *Scenario) []Diagnostic {
 func checkARPLayer(f *ARPLayer, path, label string) []Diagnostic {
 	var ws []Diagnostic
 
-	if f.SenderProtoAddr != "" && f.TargetProtoAddr != "" &&
-		f.SenderProtoAddr == f.TargetProtoAddr {
-		ws = append(ws, warnf(CodeARPGratuitous, path+".sender_proto_addr",
-			"%s: sender_proto_addr == target_proto_addr(%s),这是 Gratuitous ARP(RFC 5227);若属故意可忽略", label, f.SenderProtoAddr))
+	// 省略字段由 builder 落全零,线上值与显式写 0.0.0.0 逐位相同:
+	// 两处比较都归一后再判,否则省略写法静默逃过检查(告警只看声明文本 = 看错对象)。
+	sender := f.SenderProtoAddr
+	if sender == "" {
+		sender = "0.0.0.0"
 	}
 
-	if f.SenderProtoAddr == "0.0.0.0" {
+	if f.TargetProtoAddr != "" && sender == f.TargetProtoAddr {
+		ws = append(ws, warnf(CodeARPGratuitous, path+".sender_proto_addr",
+			"%s: sender_proto_addr == target_proto_addr(%s),这是 Gratuitous ARP(RFC 5227);若属故意可忽略", label, f.TargetProtoAddr))
+	}
+
+	if sender == "0.0.0.0" {
 		ws = append(ws, warnf(CodeARPProbe, path+".sender_proto_addr",
 			"%s: sender_proto_addr=0.0.0.0,这是 ARP Probe(RFC 5227 §2.1 冲突检测);若属故意可忽略", label))
 	}

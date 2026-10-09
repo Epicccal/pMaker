@@ -45,9 +45,12 @@ packets:
 | Code | 触发条件 |
 |------|---------|
 | `arp.gratuitous` | `sender_proto_addr == target_proto_addr` |
-| `arp.probe` | `sender_proto_addr == "0.0.0.0"`(RFC 5227 冲突检测) |
+| `arp.probe` | `sender_proto_addr == 0.0.0.0`(RFC 5227 冲突检测);省略该字段同样按 `0.0.0.0` 判定 |
 | `arp.request-non-zero-target-hw` | `operation=1` 但 `target_hw_addr` 非全零 |
 | `arp.length-mismatch` | `hardware_length`/`protocol_length` 与地址字段实际长度不符 |
+
+告警按字段缺省填充后的线上值判定,不按声明文本:省略 `sender_proto_addr` 与显式写
+`0.0.0.0` 落线逐位相同,告警也相同。
 
 ## 示例
 

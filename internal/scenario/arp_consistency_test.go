@@ -30,6 +30,15 @@ func TestARPWarnings(t *testing.T) {
 			SenderProtoAddr: "0.0.0.0",
 			TargetProtoAddr: "192.168.1.1",
 		}, "arp.probe", ".sender_proto_addr"},
+		// 省略 sender_proto_addr 与显式 0.0.0.0 落线逐位相同,告警须一致(按文本判会漏)
+		{"省略 sender_proto_addr 的 Probe", &scenario.ARPLayer{
+			Operation:       arpU16(1),
+			TargetProtoAddr: "192.168.1.1",
+		}, "arp.probe", ".sender_proto_addr"},
+		{"省略 sender_proto_addr 且 target 也全零", &scenario.ARPLayer{
+			Operation:       arpU16(2),
+			TargetProtoAddr: "0.0.0.0",
+		}, "arp.gratuitous", ".sender_proto_addr"},
 		{"Request 带非零目标 MAC", func() *scenario.ARPLayer {
 			f := baseARP()
 			f.TargetHWAddr = "00:0c:29:12:34:56"
