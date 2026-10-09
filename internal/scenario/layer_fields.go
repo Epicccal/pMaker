@@ -73,6 +73,21 @@ type (
 		VNI         uint32 `yaml:"vni"`           // 24 位 VNI(0 合法,边界用;上限 0xFFFFFF 校验拦截)
 		ValidIDFlag *bool  `yaml:"valid_id_flag"` // 'I' 位(RFC 7348);nil=缺省 true(规范头),false=非法头畸形
 	}
+	// ARPLayer 是 ARP 包头(RFC 826)。标准形态:IPv4 over Ethernet,28 字节。
+	// hardware_type/protocol_type/hardware_length/protocol_length 可显式覆盖构造畸形。
+	// 不提供 _raw 地址字段:长度不匹配畸形走 hardware_length/protocol_length 覆盖;
+	// 非标字节内容省去 arp 层,整段用 payload_hex 手拼(与 eth 畸形模式一致)。
+	ARPLayer struct {
+		HardwareType    *uint16 `yaml:"hardware_type"`     // 默认 1(Ethernet,RFC 826);覆盖以构造非标硬件类型
+		ProtocolType    *uint16 `yaml:"protocol_type"`     // 默认 0x0800(IPv4);覆盖以构造非 IP ARP
+		HardwareLength  *uint8  `yaml:"hardware_length"`   // 默认 6(Ethernet MAC);畸形可写不匹配值产 arp.length-mismatch
+		ProtocolLength  *uint8  `yaml:"protocol_length"`   // 默认 4(IPv4 addr);畸形可写不匹配值产 arp.length-mismatch
+		Operation       *uint16 `yaml:"operation"`         // 必填:1=Request, 2=Reply, 3=RARP Request, 4=RARP Reply
+		SenderHWAddr    string  `yaml:"sender_hw_addr"`    // 发送方 MAC;缺省 00:00:00:00:00:00,须显式填写
+		SenderProtoAddr string  `yaml:"sender_proto_addr"` // 发送方 IPv4;须显式填写
+		TargetHWAddr    string  `yaml:"target_hw_addr"`    // 目标 MAC;缺省 00:00:00:00:00:00(request 场景)
+		TargetProtoAddr string  `yaml:"target_proto_addr"` // 目标 IPv4;必填
+	}
 	TCPFields struct {
 		SPort      uint16   `yaml:"sport"`
 		DPort      uint16   `yaml:"dport"`

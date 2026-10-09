@@ -152,6 +152,7 @@ func Warnings(s *Scenario) []Diagnostic {
 	ws = append(ws, CheckTFTPDataSize(s)...)
 	ws = append(ws, CheckTFTPFieldIgnored(s)...)
 	ws = append(ws, CheckGREWarnings(s)...)
+	ws = append(ws, CheckARPWarnings(s)...)
 	return ws
 }
 
@@ -751,6 +752,10 @@ func validateLayerIn(l Layer, inFlow bool) error {
 		// (standalone 的普通 UDP 数据报直接写 udp + payload 即可,无需会话标记)。
 		if !inFlow {
 			return fmt.Errorf("udp_session 只能用于 flow.stack,不能出现在 standalone packet 的 stack 里")
+		}
+	case *ARPLayer:
+		if err := validateARPFields(f); err != nil {
+			return err
 		}
 	case *GREFields:
 		if err := validateGREFields(f); err != nil {
