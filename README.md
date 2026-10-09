@@ -95,6 +95,7 @@ seq/ack 推导、三次握手、四次挥手、对端 ACK 全部由 flow 展开�
 - HTTP Transfer-Encoding: chunked / gzip / deflate / deflate_raw / compress 编码
 - ICMP echo/reply 与错误响应推导
 - DNS Record: A / AAAA / CNAME / NS / PTR / MX / TXT / SOA / SRV 构造
+- ARP Request / Reply / Gratuitous ARP / ARP Probe（RFC 826/5227），支持硬件与协议长度覆盖构造畸形
 - RFC 5322: Internet Message Format 构造
 - RFC 2045: MIME Content-Transfer-Encoding 编码
 - TFTP 全量报文构造（RFC 1350/2347），tftp_transfer 宏自动展开 DATA/ACK 传输序列
@@ -117,7 +118,7 @@ seq/ack 推导、三次握手、四次挥手、对端 ACK 全部由 flow 展开�
   <tbody>
     <tr>
       <td>L2</td>
-      <td>eth、vlan</td>
+      <td>eth、vlan、arp</td>
     </tr>
     <tr>
       <td>L3</td>

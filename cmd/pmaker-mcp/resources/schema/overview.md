@@ -119,7 +119,7 @@ payload 生产层,同段多层按声明顺序拼接(standalone packet 同此规�
 
 | 类别 | 层名 |
 |------|------|
-| L2 | `eth`、`vlan` |
+| L2 | `eth`、`vlan`、`arp`(RFC 826,直挂 `eth`/`vlan`,终结层) |
 | L3 | `ipv4`、`ipv6`、`gre`(IP 协议 47 承载,变长头,支持 `packets` 与单层 GRE flow)、`vxlan`(UDP 承载二层隧道:`udp(4789) → vxlan → eth`;支持 `packets` 与单层 VXLAN TCP/UDP flow) |
 | L4 | `tcp`、`udp`、`tcp_session`(仅 `flow.stack`,可省略)、`udp_session`(仅 `flow.stack`,UDP 会话必写) |
 | 控制/应用 | `icmp`、`icmpv6`、`dns`、`http_request`、`http_response`、`ftp_request`、`ftp_response`、`telnet`、`smtp_request`、`smtp_response`、`pop3_request`、`pop3_response`、`imap_request`、`imap_response`、`eml_data`、`tftp`、`tftp_transfer`(message 级宏,仅 UDP flow) |

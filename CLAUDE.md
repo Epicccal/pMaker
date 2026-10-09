@@ -71,7 +71,7 @@ gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ 
 
 | 分层 | 层名 |
 |------|------|
-| L2 | `eth`、`vlan`(Dot1Q,支持 QinQ 多层) |
+| L2 | `eth`、`vlan`(Dot1Q,支持 QinQ 多层)、`arp`(RFC 826,直挂 `eth`/`vlan`) |
 | L3 | `ipv4`、`ipv6`、`gre`、`vxlan` |
 | L4 | `tcp`、`udp`、`tcp_session`(flow 会话开关,非 wire 层)、`udp_session`(flow UDP 会话标记,非 wire 层,必写) |
 | 控制 | `icmp`、`icmpv6` |
@@ -100,6 +100,10 @@ gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ 
 - ICMP echo 与错误报文(`quote` / `quote_from`;quote_from 复用被引包 wire 首片的
   ip-down 字节,前向引用硬错、引用环校验期拦截)
 - DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV
+- ARP Request/Reply/Gratuitous ARP/ARP Probe(RFC 826/5227);
+  `hardware_length`/`protocol_length` 覆盖时地址字段同步补齐或截断 ——
+  gopacket 的 `ARP.SerializeTo` 在 `FixLengths` 下用 `len(地址切片)` 反写那两个字节,
+  不联动畸形值就落不到 wire
 - 邮件与文本协议的命令、响应、多行续行
 - RFC 5322 正文层 `eml_data`,成帧由接入层强制
 - RFC 2046 multipart body,含 base64 与 quoted-printable
@@ -111,7 +115,8 @@ gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ 
 - 自动 `Content-Length`(`auto_content_length: true`)
 - 文件占位符 `@file(path)` 注入原始字节
 - 一致性软告警:FTP 端口协商、multipart、HTTP 成帧、IMAP literal、flow 覆盖值逐包同值、
-  TFTP(RQ 端口 / mode / DATA 超长 / 无关字段)
+  TFTP(RQ 端口 / mode / DATA 超长 / 无关字段)、ARP(Gratuitous / Probe /
+  Request 带非零目标 MAC / 长度字段不匹配)
 - MCP server:两个工具 + schema/examples resources
 - golden pcap 逐字节比对 + gopacket 回读
 

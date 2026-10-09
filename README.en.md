@@ -97,6 +97,7 @@ seq/ack derivation, three-way handshake, four-way teardown, and peer ACKs are al
 - HTTP Transfer-Encoding: chunked / gzip / deflate / deflate_raw / compress
 - ICMP echo/reply and error message derivation
 - DNS records: A / AAAA / CNAME / NS / PTR / MX / TXT / SOA / SRV
+- ARP Request / Reply / Gratuitous ARP / ARP Probe (RFC 826/5227), with hardware and protocol length overrides for malformed packets
 - RFC 5322 Internet Message Format
 - RFC 2045 MIME Content-Transfer-Encoding
 - Full TFTP message construction (RFC 1350/2347); the `tftp_transfer` macro auto-expands into DATA/ACK transfer sequences
@@ -111,7 +112,7 @@ Layer names are canonical in `internal/scenario/layer_decode.go`; field referenc
 
 | Layer | Names |
 |-------|-------|
-| L2 | `eth`, `vlan` |
+| L2 | `eth`, `vlan`, `arp` |
 | L3 | `ipv4`, `ipv6`, `gre`, `vxlan` |
 | L4 | `tcp`, `udp`, `tcp_session`, `udp_session` |
 | Control | `icmp`, `icmpv6` |
