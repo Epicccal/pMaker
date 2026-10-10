@@ -9,7 +9,7 @@ import (
 	"os"
 
 	"github.com/Epicccal/pMaker/internal/builder"
-	"github.com/Epicccal/pMaker/internal/plan"
+	"github.com/Epicccal/pMaker/internal/pipeline"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/summary"
 	"github.com/Epicccal/pMaker/internal/writer"
@@ -65,7 +65,7 @@ func parseFlags(fs *flag.FlagSet, args []string) (int, bool) {
 	return 0, true
 }
 
-// cmdGen 串接:Load -> Validate -> plan.Plan(汇流+排序)-> BuildPlanned -> Write。
+// cmdGen 串接:Load -> pipeline.Build(校验+告警+时间编排+构包)-> Write -> 摘要。
 func cmdGen(args []string) int {
 	fs := flag.NewFlagSet("gen", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -85,29 +85,20 @@ func cmdGen(args []string) int {
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		return 1
 	}
-	if err := scenario.Validate(s); err != nil {
-		fmt.Fprintln(os.Stderr, "gen:", err)
-		return 1
-	}
-	for _, w := range scenario.Warnings(s) {
+	res, err := pipeline.Build(s)
+	for _, w := range res.Warnings {
+		// 软告警在校验通过后即有,后续阶段失败也照打(校验结论不受执行故障影响)。
 		fmt.Fprintf(os.Stderr, "warn: [%s] %s\n", w.Code, w.Message)
 	}
-	// packets 与 flows 汇流成带显式时间戳的 PlannedPacket,按时间排序后再构建。
-	planned, err := plan.Plan(s)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		return 1
 	}
-	pkts, err := builder.BuildPlanned(planned)
-	if err != nil {
+	if err := writer.Write(*out, s.LinkType, res.Packets); err != nil {
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		return 1
 	}
-	if err := writer.Write(*out, s.LinkType, pkts); err != nil {
-		fmt.Fprintln(os.Stderr, "gen:", err)
-		return 1
-	}
-	printGenerationSummary(*out, planned, pkts)
+	printGenerationSummary(*out, res.Planned, res.Packets)
 	return 0
 }
 
@@ -120,7 +111,7 @@ func printGenerationSummary(path string, planned []scenario.PlannedPacket, pkts 
 	fmt.Printf("已生成 %d 个包\n", len(pkts))
 }
 
-// cmdValidate 串接:Load + 校验。
+// cmdValidate 串接:Load + pipeline.Check(只校验)。
 func cmdValidate(args []string) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -139,11 +130,12 @@ func cmdValidate(args []string) int {
 		fmt.Fprintln(os.Stderr, "validate:", err)
 		return 1
 	}
-	if err := scenario.Validate(s); err != nil {
+	ws, err := pipeline.Check(s)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "validate:", err)
 		return 1
 	}
-	for _, w := range scenario.Warnings(s) {
+	for _, w := range ws {
 		fmt.Fprintf(os.Stderr, "warn: [%s] %s\n", w.Code, w.Message)
 	}
 	fmt.Printf("OK: %s,%d 个包,%d 条 flow\n", *in, len(s.Packets), len(s.Flows))

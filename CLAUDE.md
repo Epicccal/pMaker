@@ -37,6 +37,7 @@ internal/
   builder/             # scenario 模型 -> gopacket layers -> 字节
   flow/                # 有状态流:TCP 握手、seq/ack 递推,只产 stack 包不含时间
   plan/                # 时间编排:packets 与 flows 汇流成 PlannedPacket,按 Time 排序
+  pipeline/            # 共享链路:校验 + 告警 + 时间编排 + 构包,CLI/MCP 唯一入口
   writer/              # pcap 输出、LinkType 选择
   summary/             # 包摘要展示模型与终端排版
   util/                # 协议无关原语:chunked / compress / crlf / cte / dotframe
@@ -64,6 +65,16 @@ Scenario(Packets + Flows,每个 packet = 有序 layer 栈)
    ▼
 gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ out.pcap
 ```
+
+上图的 flow / plan / builder 是构造主链;编排这一层由 `internal/pipeline` 提供,
+它是 CLI 与 MCP 调主链的唯一入口,自身不参与构包:
+
+| 入口 | 调用 | 用途 |
+|------|------|------|
+| `pipeline.Check` | Validate + Warnings | 只校验(`validate` / `generate_yaml`) |
+| `pipeline.Build` | Check + plan.Plan + builder.BuildPlanned | 出包(`gen` / `generate_pcap`) |
+
+落盘不在 pipeline 内(各入口输出路径策略不同),由调用方接 `writer`。
 
 ## 5. 已实现层与特性
 
