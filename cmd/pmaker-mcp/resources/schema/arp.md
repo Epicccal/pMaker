@@ -38,7 +38,9 @@ packets:
 
 - **前置层**:`eth`(EtherType 自动设为 `0x0806`)或 `vlan`(内层同理)
 - **后续层**:通常无(终结层);允许 `payload` / `payload_hex` 用于构造非标包
-- ARP 不包含 IP 层,stack 顺序应为 `eth → arp`,不能是 `eth → ipv4 → arp`(校验报硬错)
+- ARP 不包含 IP 层,stack 顺序应为 `eth → arp`。写成 `eth → ipv4 → arp` 时 IP 层无法
+  从下一层名推导协议号,须在 `ipv4` 上显式写 `protocol`(如 `protocol: udp`)才出包 ——
+  这是手工断链畸形,不是合法 ARP
 
 ## 软告警
 
