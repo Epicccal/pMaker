@@ -10,8 +10,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Epicccal/pMaker/internal/builder"
-	"github.com/Epicccal/pMaker/internal/plan"
+	"github.com/Epicccal/pMaker/internal/pipeline"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/summary"
 	"github.com/Epicccal/pMaker/internal/writer"
@@ -97,12 +96,13 @@ func (c config) handleGenerateYAML(ctx context.Context, req mcp.CallToolRequest)
 		out.Errors = []string{err.Error()}
 		return marshalResult(out, true)
 	}
-	if verr := scenario.Validate(s); verr != nil {
+	ws, err := pipeline.Check(s)
+	if err != nil {
 		out.Valid = false
-		out.Errors = []string{verr.Error()}
+		out.Errors = []string{err.Error()}
 		return marshalResult(out, true)
 	}
-	out.Warnings = scenario.Warnings(s)
+	out.Warnings = ws
 
 	// 校验通过才落盘到 workdir/yaml/(原样写入入参 YAML,不做规范化改写)。
 	outPath := filepath.Join(c.yamlDir, in.OutputName)
@@ -175,28 +175,18 @@ func (c config) handleGeneratePcap(ctx context.Context, req mcp.CallToolRequest)
 		out.Errors = []string{err.Error()}
 		return marshalResult(out, true) // 校验失败:Valid=false, isError=true
 	}
-	if verr := scenario.Validate(s); verr != nil {
-		out.Errors = []string{verr.Error()}
-		return marshalResult(out, true) // 校验失败:Valid=false, isError=true
-	}
-	out.Valid = true
-	out.Warnings = scenario.Warnings(s)
-
-	// 时间编排 -> 构包 -> 写盘。以下任一失败:Valid 仍为 true(校验已过),isError=true。
-	planned, err := plan.Plan(s)
+	// 校验 + 告警 + 时间编排 + 构包走共享链路(与 CLI gen 同一份实现)。
+	res, err := pipeline.Build(s)
+	out.Valid = res.Valid
+	out.Warnings = res.Warnings
 	if err != nil {
-		out.Errors = []string{fmt.Sprintf("时间编排: %v", err)}
-		return marshalResult(out, true) // 执行层故障:Valid=true, isError=true
-	}
-	pkts, err := builder.BuildPlanned(planned)
-	if err != nil {
-		out.Errors = []string{fmt.Sprintf("构包: %v", err)}
-		return marshalResult(out, true) // 执行层故障:Valid=true, isError=true
+		out.Errors = []string{err.Error()}
+		return marshalResult(out, true)
 	}
 
 	// 写盘:pcap 落 pcap/,同名 YAML 落 yaml/(便于对照复现)。
 	outPath := filepath.Join(c.pcapDir, in.OutputName)
-	if err := writer.Write(outPath, s.LinkType, pkts); err != nil {
+	if err := writer.Write(outPath, s.LinkType, res.Packets); err != nil {
 		out.Errors = []string{fmt.Sprintf("写盘: %v", err)}
 		return marshalResult(out, true) // 执行层故障:Valid=true, isError=true
 	}
@@ -215,8 +205,8 @@ func (c config) handleGeneratePcap(ctx context.Context, req mcp.CallToolRequest)
 	}
 
 	out.Path = outPath
-	out.PacketCount = len(pkts)
-	out.Summary = summary.FormatPacketSummaries(summary.SummarizeOut(planned, pkts))
+	out.PacketCount = len(res.Packets)
+	out.Summary = summary.FormatPacketSummaries(summary.SummarizeOut(res.Planned, res.Packets))
 	out.Note = "以上 summary 即最终结果,无需用 tshark / Python 等工具回读 pcap 校验;" +
 		"与预期不符时修改 YAML 重新生成本次调用即可。"
 	return marshalResult(out, false)
