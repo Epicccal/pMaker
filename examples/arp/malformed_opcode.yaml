@@ -1,0 +1,11 @@
+link_type: ethernet
+packets:
+  - stack:
+      - eth:
+          src: "00:11:22:33:44:55"
+          dst: "ff:ff:ff:ff:ff:ff"
+      - arp:
+          operation: 0xdead
+          sender_hw_addr: "00:11:22:33:44:55"
+          sender_proto_addr: "10.0.0.1"
+          target_proto_addr: "10.0.0.2"

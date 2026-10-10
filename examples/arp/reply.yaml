@@ -1,0 +1,12 @@
+link_type: ethernet
+packets:
+  - stack:
+      - eth:
+          src: "00:0c:29:aa:bb:cc"
+          dst: "00:0c:29:12:34:56"
+      - arp:
+          operation: 2
+          sender_hw_addr: "00:0c:29:aa:bb:cc"
+          sender_proto_addr: "192.168.1.1"
+          target_hw_addr: "00:0c:29:12:34:56"
+          target_proto_addr: "192.168.1.10"

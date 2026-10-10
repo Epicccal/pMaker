@@ -101,5 +101,8 @@ func buildScenarioPcap(t *testing.T, s *scenario.Scenario) []byte {
 
 func u8ptr(v uint8) *uint8 { return &v }
 
+// u16ptr 取 uint16 指针,供可选字段构造。
+func u16ptr(v uint16) *uint16 { return &v }
+
 // u32ptr 取 uint32 指针,供可选字段构造。
 func u32ptr(v uint32) *uint32 { return &v }

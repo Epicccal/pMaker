@@ -289,6 +289,12 @@ func buildSerItems(ctx *buildContext, stack []scenario.Layer) ([]serItem, *fragT
 				return nil, nil, fmt.Errorf("vxlan: %w", err)
 			}
 			add(vxlan, nil, lengthOverrideInfo{})
+		case *scenario.ARPLayer:
+			arp, err := buildARP(f)
+			if err != nil {
+				return nil, nil, fmt.Errorf("arp: %w", err)
+			}
+			add(arp, nil, lengthOverrideInfo{})
 		case *scenario.TCPFields:
 			t, err := buildTCP(f)
 			if err != nil {

@@ -1,0 +1,42 @@
+link_type: ethernet
+packets:
+  # 1. 合法方广播 Gratuitous ARP：IPA(192.168.1.1) 宣告自己的 MAC 是 MACA
+  - name: legitimate-garp
+    stack:
+      - eth:
+          src: "aa:aa:aa:aa:aa:aa"
+          dst: "ff:ff:ff:ff:ff:ff"
+      - arp:
+          operation: 2
+          sender_hw_addr: "aa:aa:aa:aa:aa:aa"
+          sender_proto_addr: "192.168.1.1"
+          target_hw_addr: "00:00:00:00:00:00"
+          target_proto_addr: "192.168.1.1"
+
+  # 2. 攻击者伪造 Reply：声称 IPA 对应 MACB，覆盖受害者 ARP 缓存
+  - name: poison-reply
+    stack:
+      - eth:
+          src: "bb:bb:bb:bb:bb:bb"
+          dst: "ff:ff:ff:ff:ff:ff"
+      - arp:
+          operation: 2
+          sender_hw_addr: "bb:bb:bb:bb:bb:bb"   # 攻击者 MAC 伪装成 IPA 的拥有者
+          sender_proto_addr: "192.168.1.1"       # 声称持有 IPA
+          target_hw_addr: "00:00:00:00:00:00"
+          target_proto_addr: "192.168.1.1"
+
+  # 3. 受害者 ARP 缓存已中毒：发往 IPA 的帧 eth.dst 变成了 MACB
+  - name: victim-traffic-hijacked
+    stack:
+      - eth:
+          src: "cc:cc:cc:cc:cc:cc"
+          dst: "bb:bb:bb:bb:bb:bb"              # 中毒后 IPA→MACB
+      - ipv4:
+          src: "192.168.1.100"
+          dst: "192.168.1.1"
+          ttl: 64
+      - tcp:
+          sport: 54321
+          dport: 80
+          flags: [SYN]

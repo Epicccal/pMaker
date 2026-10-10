@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 
 	"github.com/Epicccal/pMaker/internal/scenario"
@@ -195,6 +196,37 @@ func TestIPv6NextHeaderOverrideError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "请显式写") {
 		t.Fatalf("覆盖路径报错不应再指引「请显式写」(循环指引),得到: %v", err)
+	}
+}
+
+// TestIPProtoOverrideSkipsDerivation 下一层在推导表外(arp)时,显式覆盖须照常生效:
+// 覆盖优先于推导才能手工断链(ipv4→arp 声称 UDP)。两个 IP 家族口径一致。
+func TestIPProtoOverrideSkipsDerivation(t *testing.T) {
+	for _, c := range []struct {
+		ipLayer string
+		proto   string
+		want    layers.IPProtocol
+		layer   gopacket.LayerType
+	}{
+		{"ipv4", "udp", layers.IPProtocolUDP, layers.LayerTypeIPv4},
+		{"ipv6", "udp", layers.IPProtocolUDP, layers.LayerTypeIPv6},
+	} {
+		t.Run(c.ipLayer, func(t *testing.T) {
+			proto := c.proto
+			s := ipNextScenario(c.ipLayer, &proto, "arp", &scenario.ARPLayer{
+				Operation: u16ptr(1), SenderProtoAddr: "10.0.0.1", TargetProtoAddr: "10.0.0.2"})
+			pkts := readPackets(t, buildScenarioPcap(t, s))
+			switch ip := pkts[0].Layer(c.layer).(type) {
+			case *layers.IPv4:
+				if ip.Protocol != c.want {
+					t.Fatalf("protocol = %v,期望 %v(覆盖未生效)", ip.Protocol, c.want)
+				}
+			case *layers.IPv6:
+				if ip.NextHeader != c.want {
+					t.Fatalf("next_header = %v,期望 %v(覆盖未生效)", ip.NextHeader, c.want)
+				}
+			}
+		})
 	}
 }
 

@@ -63,25 +63,26 @@ func buildIPv4(f *scenario.IPv4Fields, next string) (*layers.IPv4, error) {
 	if dst == nil || dst.To4() == nil {
 		return nil, fmt.Errorf("dst ip %q 不是合法 IPv4", f.Dst)
 	}
-	proto, err := ipProtoFor(next)
+	// 覆盖优先,跳过推导 —— 与 buildEth/buildVLAN 同口径。推导只看下一层名字,
+	// 显式 protocol 才是用户意图:后接推导表外的层(如手工断链的 ipv4→arp)
+	// 由覆盖值决定,不该被推导报错拦下。
+	ip := &layers.IPv4{
+		Version: 4,
+		TTL:     64,
+		SrcIP:   src.To4(),
+		DstIP:   dst.To4(),
+	}
+	var err error
+	if f.Protocol != nil {
+		ip.Protocol, err = ipProtoOverride("protocol", *f.Protocol)
+	} else {
+		ip.Protocol, err = ipProtoFor(next)
+	}
 	if err != nil {
 		return nil, err
 	}
-	ip := &layers.IPv4{
-		Version:  4,
-		TTL:      64,
-		SrcIP:    src.To4(),
-		DstIP:    dst.To4(),
-		Protocol: proto,
-	}
 	if f.TTL != nil {
 		ip.TTL = *f.TTL
-	}
-	if f.Protocol != nil {
-		ip.Protocol, err = ipProtoOverride("protocol", *f.Protocol)
-		if err != nil {
-			return nil, err
-		}
 	}
 	if f.Checksum != nil {
 		ip.Checksum = uint16(*f.Checksum)
@@ -98,16 +99,21 @@ func buildIPv6(f *scenario.IPv6Fields, next string) (*layers.IPv6, error) {
 	if dst == nil || dst.To4() != nil {
 		return nil, fmt.Errorf("dst ip %q 不是合法 IPv6", f.Dst)
 	}
-	proto, err := ipProtoFor(next)
+	// 覆盖优先,跳过推导(口径同 buildIPv4)。
+	ip := &layers.IPv6{
+		Version:  6,
+		HopLimit: 64,
+		SrcIP:    src.To16(),
+		DstIP:    dst.To16(),
+	}
+	var err error
+	if f.NextHeader != nil {
+		ip.NextHeader, err = ipProtoOverride("next_header", *f.NextHeader)
+	} else {
+		ip.NextHeader, err = ipProtoFor(next)
+	}
 	if err != nil {
 		return nil, err
-	}
-	ip := &layers.IPv6{
-		Version:    6,
-		HopLimit:   64,
-		SrcIP:      src.To16(),
-		DstIP:      dst.To16(),
-		NextHeader: proto,
 	}
 	if f.HopLimit != nil {
 		ip.HopLimit = *f.HopLimit
@@ -117,12 +123,6 @@ func buildIPv6(f *scenario.IPv6Fields, next string) (*layers.IPv6, error) {
 	}
 	if f.FlowLabel != nil {
 		ip.FlowLabel = *f.FlowLabel
-	}
-	if f.NextHeader != nil {
-		ip.NextHeader, err = ipProtoOverride("next_header", *f.NextHeader)
-		if err != nil {
-			return nil, err
-		}
 	}
 	return ip, nil
 }

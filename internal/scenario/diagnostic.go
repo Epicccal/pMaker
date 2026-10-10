@@ -77,6 +77,11 @@ const (
 	CodeGREPPTPMissingKey  = "gre.pptp-missing-key"  // version=1(PPTP)未写 key(RFC 2637 §4.1)
 	CodeGREAckOutsideV1    = "gre.ack-outside-v1"    // version≠1 时写 ack(A 位仅 RFC 2637 定义)
 	CodeGRENVGEMissingKey  = "gre.nvgre-missing-key" // 显式 protocol=0x6558(NVGRE)未写 key(RFC 7637)
+
+	CodeARPGratuitous          = "arp.gratuitous"                 // sender_proto_addr == target_proto_addr
+	CodeARPProbe               = "arp.probe"                      // sender_proto_addr == 0.0.0.0(RFC 5227 冲突检测)
+	CodeARPRequestNonZeroTgtHW = "arp.request-non-zero-target-hw" // request(op=1)但 target_hw_addr 非全零
+	CodeARPLengthMismatch      = "arp.length-mismatch"            // hardware_length/protocol_length 与地址字段实际长度不符
 )
 
 // WarningCodes 返回全部告警 code(与上方常量表同序维护),供 cmd/pmaker-mcp 的 doc-sync 测试锁定
@@ -115,6 +120,10 @@ func WarningCodes() []string {
 		CodeGREPPTPMissingKey,
 		CodeGREAckOutsideV1,
 		CodeGRENVGEMissingKey,
+		CodeARPGratuitous,
+		CodeARPProbe,
+		CodeARPRequestNonZeroTgtHW,
+		CodeARPLengthMismatch,
 	}
 }
 

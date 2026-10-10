@@ -15,6 +15,8 @@ func ethTypeFor(next string) (layers.EthernetType, error) {
 	switch next {
 	case "vlan":
 		return layers.EthernetTypeDot1Q, nil
+	case "arp":
+		return layers.EthernetTypeARP, nil
 	case "ipv4":
 		return layers.EthernetTypeIPv4, nil
 	case "ipv6":
@@ -22,7 +24,7 @@ func ethTypeFor(next string) (layers.EthernetType, error) {
 	case "", "payload", "payload_hex":
 		return layers.EthernetTypeIPv4, nil
 	default:
-		return 0, fmt.Errorf("无法从下一层 %q 推导 EtherType:只可推导 vlan/ipv4/ipv6(兜底层 payload/payload_hex 与末层缺省 0x0800);非标 TPID/EtherType 请显式写 ethertype/type,不支持的后接内容走 payload_hex 整段手拼", next)
+		return 0, fmt.Errorf("无法从下一层 %q 推导 EtherType:只可推导 vlan/arp/ipv4/ipv6(兜底层 payload/payload_hex 与末层缺省 0x0800);非标 TPID/EtherType 请显式写 ethertype/type,不支持的后接内容走 payload_hex 整段手拼", next)
 	}
 }
 
