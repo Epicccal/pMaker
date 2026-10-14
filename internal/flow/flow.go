@@ -101,7 +101,7 @@ func sessionOf(stack []scenario.Layer) (open, close string) {
 // Expand(阶段二发包)与 MessageDuration(plan 阶段一算时)共用此函数,保证两端对
 // "一条消息占多久"的认知一致——这是跨流 start_after 锚点能精确对齐的前提。
 func messagePlan(m scenario.Message, p Profile) ([][]byte, time.Duration, error) {
-	b, err := messagePayload(m)
+	b, err := messagePayload(m, p.Transport)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -491,7 +491,7 @@ func (c *conn) seqAck(from side, flags []string, payloadLen int) (seq, ack *uint
 	return &s, &a
 }
 
-func messagePayload(m scenario.Message) ([]byte, error) {
+func messagePayload(m scenario.Message, t Transport) ([]byte, error) {
 	if len(m.Stack) == 0 {
 		return nil, fmt.Errorf("message.stack 需至少一个 payload 生产层")
 	}
@@ -499,7 +499,7 @@ func messagePayload(m scenario.Message) ([]byte, error) {
 	// packet 多 payload 层的拼接语义一致;拼接后的总字节照常按 segment.mss 切段。
 	var out []byte
 	for k, l := range m.Stack {
-		b, err := builder.PayloadBytes(l)
+		b, err := builder.PayloadBytesIn(l, t == TransportTCP)
 		if err != nil {
 			return nil, fmt.Errorf("message.stack[%d]: %w", k, err)
 		}

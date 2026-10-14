@@ -1,0 +1,53 @@
+# examples/dns/tcp_keepalive.yaml
+#
+# DNS over TCP(RFC 1035 §4.2.2 / RFC 7766 §6.2.1):一条 TCP 连接复用两轮问答。
+# dns 层在 TCP 承载下自动前置 2 字节大端长度;握手、对端 ACK、挥手由 flow 展开器补。
+# 第二轮响应 segment.mss=16 切段,前缀只在首段,解析端靠 TCP 重组还原。
+link_type: ethernet
+flows:
+  - name: dns-over-tcp
+    stack:
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.53", ttl: 64 }
+      - tcp:         { sport: 49152, dport: 53, client_isn: 1000, server_isn: 5000, mss: 1460 }
+      - tcp_session: { open: handshake, close: fin }
+    messages:
+      - from: src
+        stack:
+          - dns:
+              id: 0x1234
+              qr: query
+              recursion_desired: true
+              questions:
+                - { name: "example.com", type: A, class: IN }
+      - from: dst
+        stack:
+          - dns:
+              id: 0x1234
+              qr: response
+              recursion_desired: true
+              recursion_available: true
+              questions:
+                - { name: "example.com", type: A, class: IN }
+              answers:
+                - { name: "example.com", type: A, class: IN, ttl: 300, data: "93.184.216.34" }
+      - from: src
+        stack:
+          - dns:
+              id: 0x1235
+              qr: query
+              recursion_desired: true
+              questions:
+                - { name: "example.com", type: AAAA, class: IN }
+      - from: dst
+        segment: { mss: 16 }
+        stack:
+          - dns:
+              id: 0x1235
+              qr: response
+              recursion_desired: true
+              recursion_available: true
+              questions:
+                - { name: "example.com", type: AAAA, class: IN }
+              answers:
+                - { name: "example.com", type: AAAA, class: IN, ttl: 300, data: "2606:2800:220:1:248:1893:25c8:1946" }

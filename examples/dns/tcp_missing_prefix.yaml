@@ -1,0 +1,17 @@
+# examples/dns/tcp_missing_prefix.yaml
+#
+# 畸形:TCP 上缺 2 字节长度前缀的裸 DNS 消息。dns 层在 TCP 承载下无条件加前缀(无 opt-out),
+# 缺前缀形态走 payload_hex。字节 = UDP 形态的 example.com A 查询(id 0x1234, RD=1),
+# 解析端会把消息头前两字节 0x1234 误读为长度。
+link_type: ethernet
+flows:
+  - name: dns-tcp-missing-prefix
+    stack:
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.53", ttl: 64 }
+      - tcp:         { sport: 49152, dport: 53, client_isn: 1000, server_isn: 5000 }
+      - tcp_session: { open: handshake, close: rst }
+    messages:
+      - from: src
+        stack:
+          - payload_hex: "0x123401000001000000000000076578616d706c6503636f6d0000010001"

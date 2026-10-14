@@ -8,9 +8,13 @@ import (
 	"github.com/Epicccal/pMaker/internal/scenario"
 )
 
-// PayloadBytes 返回一个 payload 生产层序列化后的字节。
+// PayloadBytes 是 PayloadBytesIn 的无传输层版本(dns 不套 TCP 长度前缀)。
+func PayloadBytes(l scenario.Layer) ([]byte, error) { return PayloadBytesIn(l, false) }
+
+// PayloadBytesIn 返回一个 payload 生产层序列化后的字节。overTCP 表示由 TCP 承载,
+// 须与 serializeStack 的就近传输层判据一致。
 // 供 flow 展开器取长度并按 MSS 切段(与 serializeStack 复用同一套序列化)。
-func PayloadBytes(l scenario.Layer) ([]byte, error) {
+func PayloadBytesIn(l scenario.Layer, overTCP bool) ([]byte, error) {
 	switch f := l.Fields.(type) {
 	case *scenario.HTTPReqFields:
 		return serializeHTTPReq(f)
@@ -53,17 +57,13 @@ func PayloadBytes(l scenario.Layer) ([]byte, error) {
 		}
 		return b, nil
 	case *scenario.DNSFields:
-		// DNS 是最内层,单层 SerializeTo 即产出完整 DNS 消息字节,形态与 wire 上
-		// UDP payload 一致(buildDNS 可能返回 gopacket layers.DNS 或手写 dnsRawLayer,
-		// 两者都实现 SerializeTo)。FixLengths 必开:段计数与 RDLENGTH 由它补齐,
-		// 关掉会产出全零计数的 12 字节头。供 UDP flow 的 message.stack 产 DNS 问答;
-		// TCP flow 的拦截在校验层(DNS-over-TCP 需 2 字节长度前缀,见 dns.md)。
+		// FixLengths 必开:段计数与 RDLENGTH 由它补齐,关掉会产出全零计数的 12 字节头。
 		b, err := buildDNS(f)
 		if err != nil {
 			return nil, fmt.Errorf("dns: %w", err)
 		}
 		buf := gopacket.NewSerializeBuffer()
-		if err := b.SerializeTo(buf, gopacket.SerializeOptions{FixLengths: true}); err != nil {
+		if err := wrapDNSForTransport(b, overTCP).SerializeTo(buf, gopacket.SerializeOptions{FixLengths: true}); err != nil {
 			return nil, fmt.Errorf("dns: %w", err)
 		}
 		return buf.Bytes(), nil

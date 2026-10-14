@@ -112,6 +112,7 @@ Hex 字段都是无符号 wire 值:负数或超 0xFFFFFFFF 解析即报错(不�
 | SMTP DATA(`eml_data` 独立层) | 自动 dot-stuffing + `<CRLF>.<CRLF>` 终止符,**无 opt-out** |
 | POP3 多行响应(`pop3_response.lines` / `.eml`) | 同上 |
 | IMAP literal(`imap_*.literal`) | 长度前缀 `{n}\r\n`,**不做** dot-stuffing / 终止符 |
+| DNS over TCP(就近传输层为 `tcp` 的 `dns`) | 2 字节大端长度前缀(RFC 1035 §4.2.2),**无 opt-out** |
 
 要构造「缺终止符」「缺 dot-stuffing」「计数与实际不符之外的成帧畸形」,走 `payload` / `payload_hex`。
 

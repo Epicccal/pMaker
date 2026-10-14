@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 	"strings"
@@ -143,6 +144,41 @@ func (d *dnsRawLayer) SerializeTo(b gopacket.SerializeBuffer, _ gopacket.Seriali
 }
 
 func (d *dnsRawLayer) LayerType() gopacket.LayerType { return layers.LayerTypeDNS }
+
+// dnsTCPLayer 给 DNS 消息前置 2 字节大端长度(RFC 1035 §4.2.2),就近传输层为 tcp 时套用。
+// gopacket 不实现该前缀,TCP/53 上会把裸消息头误读为计数。
+type dnsTCPLayer struct {
+	inner gopacket.SerializableLayer
+}
+
+func (d *dnsTCPLayer) SerializeTo(b gopacket.SerializeBuffer, opts gopacket.SerializeOptions) error {
+	// opts 透传:layers.DNS 的段计数依赖 FixLengths。
+	inner := gopacket.NewSerializeBuffer()
+	if err := d.inner.SerializeTo(inner, opts); err != nil {
+		return err
+	}
+	msg := inner.Bytes()
+	if len(msg) > 0xFFFF {
+		return fmt.Errorf("DNS 消息长度 %d 超过 65535,无法写 TCP 2 字节长度前缀(RFC 1035 §4.2.2)", len(msg))
+	}
+	buf, err := b.PrependBytes(len(msg) + 2)
+	if err != nil {
+		return err
+	}
+	binary.BigEndian.PutUint16(buf, uint16(len(msg)))
+	copy(buf[2:], msg)
+	return nil
+}
+
+func (d *dnsTCPLayer) LayerType() gopacket.LayerType { return layers.LayerTypeDNS }
+
+// wrapDNSForTransport 按就近传输层决定是否套 TCP 长度前缀;standalone 与 flow 两条路径共用。
+func wrapDNSForTransport(l gopacket.SerializableLayer, overTCP bool) gopacket.SerializableLayer {
+	if overTCP {
+		return &dnsTCPLayer{inner: l}
+	}
+	return l
+}
 
 func buildDNSRRs(in []scenario.DNSRRFields) ([]layers.DNSResourceRecord, error) {
 	out := make([]layers.DNSResourceRecord, 0, len(in))

@@ -61,6 +61,7 @@ flow 分两种会话形态,由**会话层**决定(`tcp_session` / `udp_session`)
 
 - **TCP 会话**(`tcp_session`,可省略):展开成握手 + 消息 + 对端 ACK + 挥手的完整包序列,
   自动维护 seq/ack 与分段。`stack` 里的 `src` = SYN 发起方,`dst` = 接收方。
+  `message.stack` 可放 `dns`(DNS over TCP,自动加 2 字节长度前缀,见 `pmaker://schema/dns`)。
 - **UDP 会话**(`udp_session`,**必写**):无握手/挥手/ACK,每条 message 恰好一个数据报;
   `from: dst` 的消息交换端点后从对端发出。`message.stack` 允许任何 payload 生产层,
   常用 `payload` / `payload_hex` / `dns`(DNS 问答是头号用例,见 `pmaker://schema/udp_session`);
