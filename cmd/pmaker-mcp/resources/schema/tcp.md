@@ -112,4 +112,4 @@ flows:
 
 ## 相关
 
-`pmaker://schema/tcp_session`、`pmaker://schema/udp`、`pmaker://schema/overview`(flow / segment / 时间编排)
+`pmaker://schema/tcp_session`、`pmaker://schema/udp`、`pmaker://schema/dns`(DNS over TCP 长度前缀)、`pmaker://schema/overview`(flow / segment / 时间编排)

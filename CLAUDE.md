@@ -111,6 +111,8 @@ gopacket.SerializeBuffer ──(逐包)──▶ writer:pcapgo.Writer ──▶ 
 - ICMP echo 与错误报文(`quote` / `quote_from`;quote_from 复用被引包 wire 首片的
   ip-down 字节,前向引用硬错、引用环校验期拦截)
 - DNS A/AAAA/CNAME/NS/PTR/MX/TXT/SOA/SRV
+- DNS over TCP:就近传输层为 `tcp` 时 `dns` 自动加 2 字节长度前缀(RFC 1035 §4.2.2),
+  无 opt-out,缺前缀畸形走 `payload_hex`;golden 回读须手剥前缀(gopacket 不实现该前缀)
 - ARP Request/Reply/Gratuitous ARP/ARP Probe(RFC 826/5227);
   `hardware_length`/`protocol_length` 覆盖时地址字段同步补齐或截断 ——
   gopacket 的 `ARP.SerializeTo` 在 `FixLengths` 下用 `len(地址切片)` 反写那两个字节,

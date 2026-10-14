@@ -97,6 +97,7 @@ seq/ack derivation, three-way handshake, four-way teardown, and peer ACKs are al
 - HTTP Transfer-Encoding: chunked / gzip / deflate / deflate_raw / compress
 - ICMP echo/reply and error message derivation
 - DNS records: A / AAAA / CNAME / NS / PTR / MX / TXT / SOA / SRV
+- DNS over TCP (RFC 1035 §4.2.2): a 2-byte length prefix is added automatically over TCP, with the same rule for standalone packets and TCP flows; build prefix-less malformed messages with payload_hex (note: standalone tcp + dns previously emitted the bare message without a prefix, so its output bytes have changed)
 - ARP Request / Reply / Gratuitous ARP / ARP Probe (RFC 826/5227), with hardware and protocol length overrides for malformed packets
 - RFC 5322 Internet Message Format
 - RFC 2045 MIME Content-Transfer-Encoding

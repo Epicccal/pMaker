@@ -1,4 +1,4 @@
-# dns —— DNS 报文(L7,通常走 udp)
+# dns —— DNS 报文(L7,走 udp 或 tcp)
 
 一个 `dns` 层 = 一条完整 DNS 消息(报头 + questions/answers/authorities/additionals)。
 通则见 `pmaker://schema/_conventions`。
@@ -32,6 +32,32 @@ packets:
             - { name: "example.com", type: A }
           answers:
             - { name: "example.com", type: A, class: IN, ttl: 300, data: "93.184.216.34" }
+```
+
+## TCP 承载(DNS over TCP)
+
+`dns` 放进 TCP flow 即可,握手/挥手/ACK 由 flow 展开器补,2 字节长度前缀自动加:
+
+```yaml
+link_type: ethernet
+flows:
+  - name: dns-over-tcp
+    stack:
+      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
+      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.53" }
+      - tcp:         { sport: 49152, dport: 53, client_isn: 1000, server_isn: 5000 }
+      - tcp_session: {}
+    messages:
+      - from: src
+        stack:
+          - dns: { id: 0x1234, qr: query, questions: [{ name: "example.com", type: A }] }
+      - from: dst
+        stack:
+          - dns:
+              id: 0x1234
+              qr: response
+              questions: [{ name: "example.com", type: A }]
+              answers:   [{ name: "example.com", type: A, ttl: 300, data: "93.184.216.34" }]
 ```
 
 ## 字段
@@ -94,16 +120,17 @@ packets:
 - 数字 `type` 的 RR 必须配 `payload_hex`,否则出包阶段报 `暂不支持 DNS RR 类型 "99"`
   ——工具无从知道该 type 的 RDATA 结构。question 段的数字 `type` 无此限制(question 无 RDATA)。
 - 域名长度在出包阶段校验:单标签 ≤63、编码后整名 ≤255,空标签(`a..b`)报错。
-- **`dns` 可进 UDP flow 的 `messages`**(`message.stack` 允许 `dns`,单层序列化为 DNS 消息字节,
-  问答两个方向用 `from: src` / `from: dst`,见 `pmaker://schema/udp_session`);
-  **TCP flow 的 `message.stack` 不收 `dns`**(缺 2 字节长度前缀,见下)—— DNS-over-TCP
-  的会话时序请用 `packets` + `offset_time`,或整段走 `payload_hex`。
+- **`dns` 可进 UDP 与 TCP flow 的 `messages`**,问答两个方向用 `from: src` / `from: dst`
+  (UDP 见 `pmaker://schema/udp_session`)。
+- **TCP 承载自动加 2 字节长度前缀**(RFC 1035 §4.2.2):就近传输层为 `tcp` 时(standalone
+  `packets` 与 TCP flow 同一判据),每个 `dns` 层前置大端消息长度,**无 opt-out**。
+  一条 message 写多个 `dns` = 一个段内流水线多条消息,各自带前缀;`segment.mss` 切的是
+  「前缀 + 消息」字节流,前缀只在首段。端口不校验(853 等非标端口照常加前缀)。
 
 ## 静默陷阱
 
-- **DNS-over-TCP 缺 2 字节长度前缀**:把 `dns` 放在 `tcp` 之下,工具直接落 DNS 消息字节,
-  **不会**按 RFC 1035 §4.2.2 加两字节长度前缀,解析端会认不出。需要合规的 TCP 形态时,
-  自己用 `payload_hex` 拼前缀 + 消息字节。
+- **TCP 前缀判据是就近传输层,不是紧邻前一层**:`tcp` 之下 `payload_hex` 后接 `dns`,
+  `dns` 照常带前缀,`payload_hex` 不带(兜底层不掺和成帧)。
 - **只要任意一条 RR 带 `payload_hex`,整条消息切换到手写编码器**(gopacket 没有原始 RDATA 通道)。
   同一份配置下两条路径语义已对齐,但这是"整条消息"级的切换,不是"这一条 RR"级的。
 - **名字不做压缩指针**:所有域名逐标签展开。真实抓包普遍用 0xC0 压缩,字节级比对会不一致
@@ -124,7 +151,9 @@ packets:
 | 未知 / 私有 RR 类型 | `type: "99"`(或 `"0x0063"`)+ `payload_hex: "0x…"` |
 | 撒谎的 RDLENGTH、压缩指针、段计数错配 | 无字段,整层走 `payload_hex` |
 | 超长 / 非法域名 | 域名长度在出包阶段拦截,越界名字走 `payload_hex` |
-| 缺 2 字节长度前缀之外的 TCP 形态畸形 | `payload_hex` 自拼 |
+| TCP 上缺 2 字节前缀的裸 DNS 消息 | `tcp` 之下整段 `payload_hex`(DNS 消息字节,可先用 UDP 形态 `dns` 出包再取 payload) |
+| 前缀撒谎(声明长度 ≠ 实际) | `payload_hex` 自拼前缀 + 消息 |
+| 前缀与消息分属不同 TCP 段 | TCP flow 的 `segment: { mss: 2 }`,无需 `payload_hex` |
 | 响应里塞不匹配的 question(缓存投毒素材) | `qr: response` + 与 answers 不同的 `questions[].name` |
 
 ## 报错 → 改法
@@ -136,7 +165,6 @@ packets:
 | `answers[0] 需要 name` | RR 的 `name` 必填,三个 RR 段同理 |
 | `payload_hex 与 data 只能配置一个` | 结构化 RDATA 与原始 RDATA 二选一。想在结构化内容后追加字节,把整段 RDATA 拼成 `payload_hex` |
 | `需要 data 或 payload_hex` | RR 必须给 RDATA。未知 type 用 `payload_hex`,已知 type 用 `data` |
-| `DNS over TCP 暂不支持` | TCP flow 的 `message.stack` 不收 `dns`(缺 2 字节长度前缀);需前缀可用 `payload_hex` 手拼,或 UDP flow 里用 `dns` |
 
 ```yaml-bad
 link_type: ethernet
@@ -195,21 +223,6 @@ packets:
           qr: response
           answers:
             - { name: "example.com", type: A, ttl: 300 }
-```
-
-```yaml-bad
-link_type: ethernet
-flows:
-  - name: dns-over-tcp
-    stack:
-      - eth:         { src: "00:11:22:33:44:55", dst: "66:77:88:99:aa:bb" }
-      - ipv4:        { src: "10.0.0.10", dst: "10.0.0.53" }
-      - tcp:         { sport: 49152, dport: 53 }
-      - tcp_session: {}
-    messages:
-      - from: src
-        stack:
-          - dns: { id: 0x1234, qr: query, questions: [{ name: "example.com", type: A }] }
 ```
 
 ## 相关

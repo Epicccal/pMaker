@@ -95,6 +95,7 @@ seq/ack 推导、三次握手、四次挥手、对端 ACK 全部由 flow 展开�
 - HTTP Transfer-Encoding: chunked / gzip / deflate / deflate_raw / compress 编码
 - ICMP echo/reply 与错误响应推导
 - DNS Record: A / AAAA / CNAME / NS / PTR / MX / TXT / SOA / SRV 构造
+- DNS over TCP（RFC 1035 §4.2.2）：TCP 承载自动加 2 字节长度前缀，standalone 与 TCP flow 同一判据；缺前缀畸形走 payload_hex（注：此前 standalone tcp + dns 产出缺前缀裸消息，现输出字节已变）
 - ARP Request / Reply / Gratuitous ARP / ARP Probe（RFC 826/5227），支持硬件与协议长度覆盖构造畸形
 - RFC 5322: Internet Message Format 构造
 - RFC 2045: MIME Content-Transfer-Encoding 编码
