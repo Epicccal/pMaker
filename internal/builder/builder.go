@@ -233,6 +233,7 @@ func buildSerItems(ctx *buildContext, stack []scenario.Layer) ([]serItem, *fragT
 		items = append(items, serItem{layer: l, opts: o, lenFill: info})
 	}
 	var netLayer gopacket.NetworkLayer // 最近的 IP 层,供传输层 checksum 伪首部使用
+	overTCP := false                   // 就近传输层是否为 tcp,决定 dns 是否套 TCP 长度前缀
 
 	for j, l := range stack {
 		next := ""
@@ -304,12 +305,14 @@ func buildSerItems(ctx *buildContext, stack []scenario.Layer) ([]serItem, *fragT
 				_ = t.SetNetworkLayerForChecksum(netLayer)
 			}
 			add(t, f.Checksum, lengthOverrideInfo{tcpDataOffset: f.DataOffset})
+			overTCP = true
 		case *scenario.UDPFields:
 			u := buildUDP(f)
 			if netLayer != nil {
 				_ = u.SetNetworkLayerForChecksum(netLayer)
 			}
 			add(u, f.Checksum, lengthOverrideInfo{udpLength: f.Length})
+			overTCP = false
 		case *scenario.ICMPFields:
 			icmp, payload, err := buildICMP(ctx, f)
 			if err != nil {
@@ -359,7 +362,7 @@ func buildSerItems(ctx *buildContext, stack []scenario.Layer) ([]serItem, *fragT
 			if err != nil {
 				return nil, nil, fmt.Errorf("dns: %w", err)
 			}
-			add(d, nil, lengthOverrideInfo{})
+			add(wrapDNSForTransport(d, overTCP), nil, lengthOverrideInfo{})
 		case *scenario.TFTPFields:
 			b, err := serializeTFTP(f)
 			if err != nil {

@@ -612,7 +612,7 @@ func TestValidateUDPSessionAccepts(t *testing.T) {
 `)
 		})
 	}
-	// message.stack 含 dns(UDP 会话的头号用例)合法;dns 进 TCP flow 被拒,补一例。
+	// message.stack 含 dns(UDP 会话的头号用例)合法。
 	loadValid(t, "udp-dns-ok.yaml", "link_type: ethernet\nflows:\n  - name: u\n    stack:\n"+udpFlowStackYAML+`    messages:
       - from: src
         stack:
@@ -628,14 +628,12 @@ func TestValidateUDPSessionAccepts(t *testing.T) {
         stack:
           - http_request: { method: GET, url: /a }
 `)
-	err := loadValidateErr(t, "tcp-dns-bad.yaml", "link_type: ethernet\nflows:\n  - name: t\n    stack:\n"+flowStackYAML+`    messages:
+	// dns 进 TCP flow 同样合法(DNS over TCP,builder 自动加 2 字节长度前缀)。
+	loadValid(t, "tcp-dns-ok.yaml", "link_type: ethernet\nflows:\n  - name: t\n    stack:\n"+flowStackYAML+`    messages:
       - from: src
         stack:
           - dns: { id: 0x1234, qr: query, questions: [{ name: "example.com", type: A }] }
 `)
-	if err == nil || !strings.Contains(err.Error(), "DNS over TCP 暂不支持") {
-		t.Fatalf("TCP flow 的 message.stack 含 dns 应被拒,得到: %v", err)
-	}
 }
 
 // TestValidateUDPSessionRejects:UDP 会话 flow 的 message 级约束(空 messages、

@@ -258,10 +258,6 @@ func validateFlow(f FlowSpec) error {
 			if !isPayloadProducingLayer(l) {
 				return fmt.Errorf("messages[%d].stack[%d] 不支持 %q(只允许 payload 生产层,非标内容走 payload/payload_hex)", j, k, l.Type)
 			}
-			// 当前不支持 dns-over-tcp 构造
-			if !isUDP && l.Type == "dns" {
-				return fmt.Errorf("messages[%d].stack[%d] 不支持 \"dns\"(DNS over TCP 暂不支持,需 2 字节长度前缀,可用 payload_hex 手拼)", j, k)
-			}
 			// 逐层字段校验:与 standalone packet 同一套规则,尽早拦截而非推迟到 build;
 			// 报错带 messages[%d].stack[%d].<type> 定位。
 			if err := validateLayer(l); err != nil {
