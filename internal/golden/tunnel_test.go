@@ -30,7 +30,7 @@ func countLayers(pkt gopacket.Packet, lt gopacket.LayerType) int {
 	return n
 }
 
-// buildPackets 跑 plan.Plan + builder.BuildPlanned,返回字节包与错误(不 Fatal、不校验)。
+// buildPackets 跑 plan.Plan + builder.BuildPlanned,返回字节包与错误。
 func buildPackets(s *scenario.Scenario) ([]builder.OutPacket, error) {
 	planned, err := plan.Plan(s)
 	if err != nil {

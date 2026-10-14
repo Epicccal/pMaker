@@ -12,56 +12,34 @@ import (
 	"github.com/gopacket/gopacket/layers"
 	"github.com/gopacket/gopacket/pcapgo"
 
-	"github.com/Epicccal/pMaker/internal/builder"
-	"github.com/Epicccal/pMaker/internal/plan"
+	"github.com/Epicccal/pMaker/internal/pipeline"
 	"github.com/Epicccal/pMaker/internal/scenario"
 	"github.com/Epicccal/pMaker/internal/writer"
 )
 
 var update = flag.Bool("update", false, "regenerate golden pcap files")
 
-// generatePcap 跑完整链路 scenario.Load → Validate → plan.Plan →
-// builder.BuildPlanned → writer.WriteTo,返回 pcap 字节。
+// generatePcap 跑完整链路 scenario.Load → pipeline.Build →
+// writer.WriteTo,返回 pcap 字节。
 func generatePcap(t *testing.T, path string) []byte {
 	t.Helper()
 	s, err := scenario.Load(path)
 	if err != nil {
 		t.Fatalf("load %s: %v", path, err)
 	}
-	if err := scenario.Validate(s); err != nil {
-		t.Fatalf("validate %s: %v", path, err)
-	}
-	planned, err := plan.Plan(s)
-	if err != nil {
-		t.Fatalf("plan %s: %v", path, err)
-	}
-	pkts, err := builder.BuildPlanned(planned)
-	if err != nil {
-		t.Fatalf("build %s: %v", path, err)
-	}
-	var buf bytes.Buffer
-	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-	return buf.Bytes()
+	return generatePcapScenario(t, s)
 }
 
 // generatePcapScenario 对已构造的 Scenario 跑完整链路返回 pcap 字节。
+// 走 pipeline.Build(= Validate + Warnings + Plan + BuildPlanned),与 CLI/MCP 同一份实现:
 func generatePcapScenario(t *testing.T, s *scenario.Scenario) []byte {
 	t.Helper()
-	if err := scenario.Validate(s); err != nil {
-		t.Fatalf("validate: %v", err)
-	}
-	planned, err := plan.Plan(s)
-	if err != nil {
-		t.Fatalf("plan: %v", err)
-	}
-	pkts, err := builder.BuildPlanned(planned)
+	res, err := pipeline.Build(s)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
 	var buf bytes.Buffer
-	if err := writer.WriteTo(&buf, s.LinkType, pkts); err != nil {
+	if err := writer.WriteTo(&buf, s.LinkType, res.Packets); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	return buf.Bytes()

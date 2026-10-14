@@ -1,10 +1,10 @@
 // Package golden 是 pMaker 的端到端(e2e)测试包。
 //
-// 它跑完整链路 scenario.Load → scenario.Validate → plan.Plan →
-// builder.BuildPlanned → writer.WriteTo,把 examples/ 下每个 YAML 生成 pcap
+// 它跑完整链路 scenario.Load → pipeline.Build(校验 + 告警 + 时间编排 + 构包)
+// → writer.WriteTo,把 examples/ 下每个 YAML 生成 pcap
 // 并与 testdata/<协议>/<name>.pcap 的 golden 逐字节比对。
 //
-// 本包是 test-only e2e 包,无导出 API。它故意反向依赖 builder/plan/writer
+// 本包是 test-only e2e 包,无导出 API。它故意反向依赖 pipeline/writer
 // ——这正是它存在的理由:把端到端验证从最底层包(scenario)中抽出来,
 // 避免底层包的测试反向依赖整条上层链路。
 //
