@@ -1,7 +1,9 @@
-# dns —— DNS 报文(L7,走 udp 或 tcp)
+# dns —— DNS 报文(L7)
 
 一个 `dns` 层 = 一条完整 DNS 消息(报头 + questions/answers/authorities/additionals)。
 通则见 `pmaker://schema/_conventions`。
+
+**缺省走 `udp`;仅当用户明确说 "DNS over TCP" / "TCP 承载" 时才写 `tcp` 层**(自动加 2 字节长度前缀,见下)。
 
 ## 骨架
 
